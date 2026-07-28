@@ -1,0 +1,524 @@
+"""Unit tests for the command layer (spec section 8.1).
+
+Every mutating verb must return a structured, JSON-serializable state delta.
+"""
+import json
+
+import pytest
+
+from protracker.commands import CommandError, Commands
+from protracker.storage import Repository
+
+
+@pytest.fixture
+def c():
+    return Commands(Repository(":memory:"))
+
+
+def chain(c):
+    """project > milestone > goal > tasks t1, t2. Returns dict of ids."""
+    p = c.add_node(kind="project", name="P")["created"]["id"]
+    m = c.add_node(kind="milestone", name="M", parent_id=p)["created"]["id"]
+    g = c.add_node(kind="goal", name="G", parent_id=m)["created"]["id"]
+    t1 = c.add_node(kind="task", name="t1", parent_id=g)["created"]["id"]
+    t2 = c.add_node(kind="task", name="t2", parent_id=g)["created"]["id"]
+    return {"p": p, "m": m, "g": g, "t1": t1, "t2": t2}
+
+
+def two_goals(c):
+    """Two goals under one milestone, one task each."""
+    p = c.add_node(kind="project", name="P")["created"]["id"]
+    m = c.add_node(kind="milestone", name="M", parent_id=p)["created"]["id"]
+    ga = c.add_node(kind="goal", name="GA", parent_id=m)["created"]["id"]
+    gb = c.add_node(kind="goal", name="GB", parent_id=m)["created"]["id"]
+    a1 = c.add_node(kind="task", name="a1", parent_id=ga)["created"]["id"]
+    b1 = c.add_node(kind="task", name="b1", parent_id=gb)["created"]["id"]
+    return {"p": p, "m": m, "ga": ga, "gb": gb, "a1": a1, "b1": b1}
+
+
+# --- add_node ---
+
+
+def test_add_node_returns_created_with_state(c):
+    ids = chain(c)
+    r = c.get_node(ids["t1"])
+    assert r["state"] == "ready"
+    assert c.get_node(ids["t2"])["state"] == "blocked"
+
+
+def test_add_node_auto_assigns_seq_index(c):
+    ids = chain(c)
+    assert c.get_node(ids["t1"])["node"]["seq_index"] == 1
+    assert c.get_node(ids["t2"])["node"]["seq_index"] == 2
+
+
+def test_manual_task_order_is_user_provenance(c):
+    ids = chain(c)
+    assert c.get_node(ids["t1"])["node"]["seq_source"] == "user"
+
+
+def test_add_node_hierarchy_validation(c):
+    p = c.add_node(kind="project", name="P")["created"]["id"]
+    with pytest.raises(CommandError) as ei:
+        c.add_node(kind="goal", name="G", parent_id=p)
+    assert ei.value.code == "invalid_parent"
+    with pytest.raises(CommandError):
+        c.add_node(kind="milestone", name="M")  # milestone needs a project parent
+    m = c.add_node(kind="milestone", name="M", parent_id=p)["created"]["id"]
+    with pytest.raises(CommandError):
+        c.add_node(kind="task", name="t", parent_id=m)  # task under milestone
+
+
+def test_add_node_missing_parent(c):
+    with pytest.raises(CommandError) as ei:
+        c.add_node(kind="milestone", name="M", parent_id=999)
+    assert ei.value.code == "not_found"
+
+
+def test_planner_task_has_no_parent_and_no_seq(c):
+    r = c.add_node(kind="task", name="pay taxes")["created"]
+    assert r["parent_id"] is None
+    assert r["seq_index"] is None
+    assert c.get_node(r["id"])["state"] == "ready"
+
+
+def test_invalid_deadline_rejected(c):
+    with pytest.raises(CommandError) as ei:
+        c.add_node(kind="project", name="P", deadline="not-a-date")
+    assert ei.value.code == "invalid_date"
+
+
+# --- dependencies ---
+
+
+def test_add_dependency_delta_reports_status_changes(c):
+    ids = two_goals(c)
+    r = c.add_dependency(ids["ga"], ids["gb"])
+    assert r["added"]["from_id"] == ids["ga"]
+    changes = {ch["id"]: (ch["from"], ch["to"]) for ch in r["status_changes"]}
+    assert changes[ids["b1"]] == ("ready", "blocked")
+
+
+def test_remove_dependency_delta(c):
+    ids = two_goals(c)
+    c.add_dependency(ids["ga"], ids["gb"])
+    r = c.remove_dependency(ids["ga"], ids["gb"])
+    changes = {ch["id"]: (ch["from"], ch["to"]) for ch in r["status_changes"]}
+    assert changes[ids["b1"]] == ("blocked", "ready")
+
+
+def test_add_dependency_rejects_cycle_with_path(c):
+    ids = two_goals(c)
+    c.add_dependency(ids["ga"], ids["gb"])
+    with pytest.raises(CommandError) as ei:
+        c.add_dependency(ids["gb"], ids["ga"])
+    assert ei.value.code == "cycle"
+    path_ids = [n["id"] for n in ei.value.details["path"]]
+    assert ids["ga"] in path_ids and ids["gb"] in path_ids
+    # nothing was persisted
+    assert len(c.list_dependencies()) == 1
+
+
+def test_add_dependency_duplicate_and_self(c):
+    ids = two_goals(c)
+    c.add_dependency(ids["a1"], ids["b1"])
+    with pytest.raises(CommandError) as ei:
+        c.add_dependency(ids["a1"], ids["b1"])
+    assert ei.value.code == "duplicate_dependency"
+    with pytest.raises(CommandError) as ei:
+        c.add_dependency(ids["a1"], ids["a1"])
+    assert ei.value.code == "self_dependency"
+
+
+def test_dependency_endpoints_must_be_task_or_goal(c):
+    ids = chain(c)
+    with pytest.raises(CommandError) as ei:
+        c.add_dependency(ids["m"], ids["t1"])
+    assert ei.value.code == "invalid_endpoint"
+
+
+# --- task lifecycle ---
+
+
+def test_complete_task_delta_newly_ready(c):
+    ids = chain(c)
+    r = c.complete_task(ids["t1"])
+    assert r["completed"]["id"] == ids["t1"]
+    assert [t["id"] for t in r["newly_ready"]] == [ids["t2"]]
+    assert r["completed_goals"] == []
+
+
+def test_complete_last_task_rolls_up(c):
+    ids = chain(c)
+    c.complete_task(ids["t1"])
+    r = c.complete_task(ids["t2"])
+    assert [g["id"] for g in r["completed_goals"]] == [ids["g"]]
+    assert [m["id"] for m in r["completed_milestones"]] == [ids["m"]]
+    assert [p["id"] for p in r["completed_projects"]] == [ids["p"]]
+
+
+def test_complete_records_actuals_and_timestamp(c):
+    ids = chain(c)
+    c.complete_task(ids["t1"], actual_minutes=25)
+    node = c.get_node(ids["t1"])["node"]
+    assert node["status"] == "done"
+    assert node["actual_minutes"] == 25
+    assert node["completed_at"] is not None
+
+
+def test_complete_twice_is_invalid(c):
+    ids = chain(c)
+    c.complete_task(ids["t1"])
+    with pytest.raises(CommandError) as ei:
+        c.complete_task(ids["t1"])
+    assert ei.value.code == "invalid_state"
+
+
+def test_complete_non_task_is_invalid(c):
+    ids = chain(c)
+    with pytest.raises(CommandError):
+        c.complete_task(ids["g"])
+
+
+def test_start_task(c):
+    ids = chain(c)
+    r = c.start_task(ids["t1"])
+    assert r["started"]["status"] == "in_progress"
+    assert c.get_node(ids["t1"])["state"] == "in_progress"
+
+
+def test_drop_task_unblocks_successor(c):
+    ids = chain(c)
+    r = c.drop_task(ids["t1"])
+    changes = {ch["id"]: ch["to"] for ch in r["status_changes"]}
+    assert changes[ids["t2"]] == "ready"
+
+
+def test_drop_done_task_is_invalid(c):
+    ids = chain(c)
+    c.complete_task(ids["t1"])
+    with pytest.raises(CommandError) as ei:
+        c.drop_task(ids["t1"])
+    assert ei.value.code == "invalid_state"
+
+
+# --- update / move ---
+
+
+def test_update_node_reports_changed_fields(c):
+    ids = chain(c)
+    r = c.update_node(ids["t1"], name="renamed", est_minutes=30)
+    assert r["changed"]["name"] == ["t1", "renamed"]
+    assert r["changed"]["est_minutes"] == [None, 30]
+
+
+def test_update_cannot_set_task_status_directly(c):
+    ids = chain(c)
+    with pytest.raises(CommandError) as ei:
+        c.update_node(ids["t1"], status="done")
+    assert ei.value.code == "invalid_field"
+
+
+def test_update_unknown_field_rejected(c):
+    ids = chain(c)
+    with pytest.raises(CommandError) as ei:
+        c.update_node(ids["t1"], kind="goal")
+    assert ei.value.code == "invalid_field"
+
+
+def test_move_task_to_other_goal_gets_new_seq(c):
+    ids = two_goals(c)
+    r = c.move_node(ids["a1"], parent_id=ids["gb"])
+    assert r["moved"]["parent_id"] == ids["gb"]
+    assert r["moved"]["seq_index"] == 2  # after b1
+
+
+def test_move_hierarchy_validation(c):
+    ids = chain(c)
+    with pytest.raises(CommandError) as ei:
+        c.move_node(ids["t1"], parent_id=ids["p"])
+    assert ei.value.code == "invalid_parent"
+
+
+# --- delete (spec 3.3: confirmation, archival of completed work) ---
+
+
+def test_delete_leaf_without_dependents_is_immediate(c):
+    t = c.add_node(kind="task", name="scratch")["created"]["id"]
+    r = c.delete_node(t)
+    assert r["deleted"] == [t]
+
+
+def test_delete_with_children_requires_confirm(c):
+    ids = chain(c)
+    r = c.delete_node(ids["g"])
+    assert r["requires_confirm"] is True
+    assert {d["id"] for d in r["descendants"]} == {ids["t1"], ids["t2"]}
+    # still there
+    assert c.get_node(ids["g"])["node"]["id"] == ids["g"]
+    r = c.delete_node(ids["g"], confirm=True)
+    assert set(r["deleted"]) == {ids["g"], ids["t1"], ids["t2"]}
+
+
+def test_delete_preview_shows_would_unblock(c):
+    ids = two_goals(c)
+    c.add_dependency(ids["ga"], ids["gb"])
+    r = c.delete_node(ids["ga"])
+    assert r["requires_confirm"] is True
+    assert ids["b1"] in [t["id"] for t in r["would_unblock"]]
+
+
+def test_delete_completed_work_is_refused(c):
+    ids = chain(c)
+    c.complete_task(ids["t1"])
+    with pytest.raises(CommandError) as ei:
+        c.delete_node(ids["t1"])
+    assert ei.value.code == "completed_node"
+    with pytest.raises(CommandError):
+        c.delete_node(ids["g"], confirm=True)  # contains completed history
+
+
+# --- queries ---
+
+
+def test_ready_lists_only_ready_tasks_with_project(c):
+    ids = two_goals(c)
+    c.add_dependency(ids["ga"], ids["gb"])
+    ready = c.ready()
+    assert [t["id"] for t in ready] == [ids["a1"]]
+    assert ready[0]["project_name"] == "P"
+
+
+def test_get_node_blockers(c):
+    ids = two_goals(c)
+    c.add_dependency(ids["ga"], ids["gb"])
+    r = c.get_node(ids["b1"])
+    assert r["state"] == "blocked"
+    assert any(b["node_id"] == ids["ga"] for b in r["blockers"])
+
+
+def test_tree_structure(c):
+    ids = chain(c)
+    roots = c.tree()
+    assert roots[0]["node"]["id"] == ids["p"]
+    goal = roots[0]["children"][0]["children"][0]
+    assert [ch["node"]["id"] for ch in goal["children"]] == [ids["t1"], ids["t2"]]
+
+
+def test_deltas_are_json_serializable(c):
+    ids = chain(c)
+    for delta in (
+        c.add_node(kind="task", name="planner"),
+        c.complete_task(ids["t1"]),
+        c.get_node(ids["t2"]),
+        c.ready(),
+        c.tree(),
+    ):
+        json.dumps(delta)
+
+
+# --- impact: what finishing a task would move ---
+
+
+def test_ready_impact_counts_immediate_unlocks_and_total_gated(c):
+    ids = chain(c)  # t1 -> t2 by sequence rank
+    t3 = c.add_node(kind="task", name="t3", parent_id=ids["g"])["created"]["id"]
+    rows = c.ready(impact=True)
+    assert [r["id"] for r in rows] == [ids["t1"]]  # only the first rank is ready
+    t1 = rows[0]
+    assert t1["unlocks_now"] == 1          # t2 becomes ready; t3 still waits
+    assert t1["gates_total"] == 2          # t2 and t3 both sit behind t1
+    assert t3 not in [r["id"] for r in rows]
+
+
+def test_ready_impact_is_ranked_by_payoff(c):
+    ids = two_goals(c)
+    # a1 gates two tasks that form a parallel rank, so both free up at once;
+    # b1 gates nothing
+    g2 = c.add_node(kind="goal", name="GC", parent_id=ids["m"])["created"]["id"]
+    c1 = c.add_node(kind="task", name="c1", parent_id=g2)["created"]["id"]
+    c2 = c.add_node(kind="task", name="c2", parent_id=g2)["created"]["id"]
+    c.update_node(c2, seq_index=1)  # same rank as c1: parallel, not sequential
+    c.add_dependency(ids["a1"], c1)
+    c.add_dependency(ids["a1"], c2)
+    rows = c.ready(impact=True)
+    assert rows[0]["id"] == ids["a1"], "biggest unlock must rank first"
+    assert rows[0]["unlocks_now"] == 2
+    assert rows[0]["gates_total"] == 2
+    assert {r["id"] for r in rows} == {ids["a1"], ids["b1"]}
+    b1 = next(r for r in rows if r["id"] == ids["b1"])
+    assert (b1["unlocks_now"], b1["gates_total"]) == (0, 0)
+
+
+def test_a_sequential_rank_unlocks_only_the_next_task(c):
+    ids = two_goals(c)
+    g2 = c.add_node(kind="goal", name="GC", parent_id=ids["m"])["created"]["id"]
+    c1 = c.add_node(kind="task", name="c1", parent_id=g2)["created"]["id"]
+    c2 = c.add_node(kind="task", name="c2", parent_id=g2)["created"]["id"]
+    c.add_dependency(ids["a1"], c1)
+    c.add_dependency(ids["a1"], c2)
+    a1 = next(r for r in c.ready(impact=True) if r["id"] == ids["a1"])
+    # c2 sits a rank behind c1, so it is gated but not unlocked
+    assert (a1["unlocks_now"], a1["gates_total"]) == (1, 2)
+
+
+def test_ready_without_impact_keeps_its_old_shape(c):
+    chain(c)
+    rows = c.ready()
+    assert rows and "unlocks_now" not in rows[0]
+
+
+def test_impact_ignores_dropped_and_done_tasks(c):
+    ids = chain(c)
+    t3 = c.add_node(kind="task", name="t3", parent_id=ids["g"])["created"]["id"]
+    c.drop_task(t3)
+    rows = c.ready(impact=True)
+    assert rows[0]["gates_total"] == 1  # only t2; the dropped t3 does not count
+
+
+def test_impact_survives_a_goal_level_edge(c):
+    ids = two_goals(c)
+    c.add_dependency(ids["ga"], ids["gb"])  # all of GA gates all of GB
+    rows = {r["id"]: r for r in c.ready(impact=True)}
+    assert rows[ids["a1"]]["unlocks_now"] == 1
+    assert rows[ids["a1"]]["gates_total"] == 1
+
+
+# --- progress: per-project neglect radar ---
+
+
+def clock(stamps):
+    """A Commands whose clock returns each value in turn, then the last."""
+    seq = list(stamps)
+
+    def now():
+        return seq.pop(0) if len(seq) > 1 else seq[0]
+
+    return Commands(Repository(":memory:"), now=now)
+
+
+def test_progress_buckets_by_project_and_counts_open_work():
+    c = clock(["2026-07-27T09:00:00"])
+    ids = chain(c)
+    c.complete_task(ids["t1"])
+    rows = c.progress()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["project_id"] == ids["p"] and row["project_name"] == "P"
+    assert (row["tasks_total"], row["tasks_done"], row["tasks_open"]) == (2, 1, 1)
+    assert row["ready_count"] == 1  # t2 became ready
+    assert row["days_since_last_completion"] == 0
+    assert row["state"] == "active"
+
+
+def test_progress_marks_a_project_stale_past_the_window():
+    c = clock(["2026-06-01T09:00:00", "2026-07-27T09:00:00"])
+    ids = chain(c)
+    c.complete_task(ids["t1"])  # stamped 2026-06-01
+    rows = c.progress(days=30)  # "now" is 2026-07-27
+    assert rows[0]["state"] == "stale"
+    assert rows[0]["days_since_last_completion"] == 56
+    assert c.progress(days=90)[0]["state"] == "active"
+
+
+def test_never_touched_project_is_the_most_neglected():
+    c = clock(["2026-07-27T09:00:00"])
+    a = c.add_node(kind="project", name="Touched")["created"]["id"]
+    am = c.add_node(kind="milestone", name="AM", parent_id=a)["created"]["id"]
+    ag = c.add_node(kind="goal", name="AG", parent_id=am)["created"]["id"]
+    at = c.add_node(kind="task", name="at", parent_id=ag)["created"]["id"]
+    at2 = c.add_node(kind="task", name="at2", parent_id=ag)["created"]["id"]
+    b = c.add_node(kind="project", name="Untouched")["created"]["id"]
+    bm = c.add_node(kind="milestone", name="BM", parent_id=b)["created"]["id"]
+    bg = c.add_node(kind="goal", name="BG", parent_id=bm)["created"]["id"]
+    c.add_node(kind="task", name="bt", parent_id=bg)
+    c.complete_task(at)
+    rows = c.progress()
+    assert [r["project_name"] for r in rows] == ["Untouched", "Touched"]
+    assert rows[0]["days_since_last_completion"] is None
+    assert rows[0]["state"] == "stale"
+
+
+def test_finished_projects_sort_last_and_read_complete():
+    c = clock(["2026-07-27T09:00:00"])
+    ids = chain(c)
+    b = c.add_node(kind="project", name="Open")["created"]["id"]
+    bm = c.add_node(kind="milestone", name="BM", parent_id=b)["created"]["id"]
+    bg = c.add_node(kind="goal", name="BG", parent_id=bm)["created"]["id"]
+    c.add_node(kind="task", name="bt", parent_id=bg)
+    c.complete_task(ids["t1"])
+    c.complete_task(ids["t2"])
+    rows = c.progress()
+    assert rows[-1]["project_name"] == "P"
+    assert rows[-1]["state"] == "complete"
+    assert rows[-1]["tasks_open"] == 0
+
+
+def test_imported_completions_never_look_recent(c):
+    # strikethrough-done rows carry no completed_at, so they cannot make a
+    # project read as active
+    p = c.add_node(kind="project", name="P")["created"]["id"]
+    m = c.add_node(kind="milestone", name="M", parent_id=p)["created"]["id"]
+    g = c.add_node(kind="goal", name="G", parent_id=m)["created"]["id"]
+    t = c.add_node(kind="task", name="t", parent_id=g)["created"]["id"]
+    c.add_node(kind="task", name="t2", parent_id=g)
+    c.repo.update_node(t, status="done")  # importer's write-through, no stamp
+    row = c.progress()[0]
+    assert row["tasks_done"] == 1
+    assert row["last_completion"] is None
+    assert row["state"] == "stale"
+
+
+def test_planner_tasks_bucket_under_a_null_project(c):
+    c.add_node(kind="task", name="pay taxes")
+    chain(c)
+    rows = c.progress()
+    planner = [r for r in rows if r["project_id"] is None]
+    assert len(planner) == 1
+    assert planner[0]["project_name"] is None
+    assert planner[0]["tasks_total"] == 1
+
+
+def test_progress_reports_health_of_open_work_only(c):
+    ids = chain(c)
+    c.repo.update_node(ids["t1"], health="on_track")
+    c.repo.update_node(ids["t2"], health="wont_finish")
+    assert c.progress()[0]["health"] == {"on_track": 1, "wont_finish": 1}
+    c.complete_task(ids["t1"])
+    assert c.progress()[0]["health"] == {"wont_finish": 1}
+
+
+def test_progress_is_json_serializable(c):
+    chain(c)
+    json.dumps(c.progress())
+
+
+def test_a_freshly_added_project_is_visible_before_it_has_tasks(c):
+    # the add dialog creates a bare project; if progress bucketed only by task
+    # it would not appear at all, which is how it would look deleted
+    p = c.add_node(kind="project", name="Greenfield")["created"]["id"]
+    rows = c.progress()
+    row = next(r for r in rows if r["project_id"] == p)
+    assert row["state"] == "empty"
+    assert (row["tasks_total"], row["tasks_open"], row["ready_count"]) == (0, 0, 0)
+    assert row["health"] == {}
+
+
+def test_empty_projects_lead_and_complete_ones_trail(c):
+    ids = chain(c)
+    empty = c.add_node(kind="project", name="Empty")["created"]["id"]
+    c.complete_task(ids["t1"])
+    c.complete_task(ids["t2"])
+    rows = c.progress()
+    assert rows[0]["project_id"] == empty
+    assert rows[-1]["state"] == "complete"
+
+
+def test_a_project_stops_being_empty_once_it_has_a_task(c):
+    p = c.add_node(kind="project", name="P")["created"]["id"]
+    assert c.progress()[0]["state"] == "empty"
+    m = c.add_node(kind="milestone", name="M", parent_id=p)["created"]["id"]
+    assert c.progress()[0]["state"] == "empty", "containers alone are not work"
+    g = c.add_node(kind="goal", name="G", parent_id=m)["created"]["id"]
+    c.add_node(kind="task", name="t", parent_id=g)
+    assert c.progress()[0]["state"] == "stale"

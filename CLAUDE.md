@@ -1,0 +1,1 @@
+Read SPEC.md first. Strict layering per §8.1: core library has no I/O, all clients go through the command layer, every mutating verb returns a state delta. All logic must be unit-tested; the UI is not allowed to exist until M6
