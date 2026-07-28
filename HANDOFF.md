@@ -4,9 +4,6 @@ Orientation for anyone (human or agent) picking this up. The specification is
 `scheduler_spec.md`; `README.md` covers usage. This file records the decisions
 and invariants that the code alone does not explain.
 
-> `CLAUDE.md` tells you to read `SPEC.md`. No such file exists — the spec is
-> `scheduler_spec.md`. Standing doc bug, still unfixed.
-
 **State:** import → dashboard toolchain working end to end. **143 tests
 passing** (`python -m pytest -q`). Requires `openpyxl` and `pytest`.
 
@@ -109,7 +106,6 @@ Fixtures live in `tests/fixtures/` and are synthetic (a coffee shop).
    11 (serialisation format) is decided; recommended before M2 closes.
 4. **No import/export file picker** in the app — paths are typed. Adding one
    means Tauri's dialog plugin.
-5. `CLAUDE.md` still points at a nonexistent `SPEC.md`.
 
 ## Cheat sheet
 
