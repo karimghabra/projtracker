@@ -4,113 +4,296 @@
 <meta charset="utf-8">
 <title>protracker</title>
 <style>
-  :root {
-    --bg: #16181d; --panel: #1e2128; --line: #2c313b; --ink: #e6e8ec;
-    --dim: #949aa6; --accent: #6ea8fe;
-    --on-track: #70ad47; --not-begun: #ffc000;
-    --off-track: #5b9bd5; --wont-finish: #e05a5a;
+/* ---------------------------------------------------------------------------
+   Health is a STATUS axis (state), not a categorical one, so it uses the
+   reserved status palette and never a series hue. Status colour never carries
+   meaning alone: every use is paired with a text label or a legend entry.
+   Both modes are selected against their own surface, not flipped.
+--------------------------------------------------------------------------- */
+:root {
+  color-scheme: light;
+  --page:        #f9f9f7;
+  --surface:     #fcfcfb;
+  --raised:      #ffffff;
+  --ink:         #0b0b0b;
+  --ink-2:       #52514e;
+  --muted:       #898781;
+  --hairline:    rgba(11, 11, 11, .10);
+  --grid:        #e1e0d9;
+  --accent:      #2a78d6;
+  --accent-ink:  #ffffff;
+  --wash:        rgba(42, 120, 214, .08);
+
+  /* Status palette — fixed, never themed. 'not begun' is deliberately NOT a
+     status hue: it is the absence of a signal and the majority of any healthy
+     board, so it takes the neutral. That also keeps warning and serious off
+     the same bar, a pair that measures ΔE 13.6 unsimulated — below the 15
+     floor, i.e. hard to separate even with full colour vision. */
+  --good:        #0ca30c;
+  --warning:     #fab219;
+  --critical:    #d03b3b;
+  --neutral:     #898781;
+
+  --r-sm: 6px; --r-md: 10px; --r-lg: 14px;
+  --shadow: 0 1px 2px rgba(11,11,11,.04), 0 4px 16px rgba(11,11,11,.06);
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --page:     #0d0d0d;
+    --surface:  #1a1a19;
+    --raised:   #212120;
+    --ink:      #ffffff;
+    --ink-2:    #c3c2b7;
+    --muted:    #898781;
+    --hairline: rgba(255, 255, 255, .10);
+    --grid:     #2c2c2a;
+    --accent:   #3987e5;
+    --accent-ink: #0b0b0b;
+    --wash:     rgba(57, 135, 229, .14);
+    --shadow: 0 1px 2px rgba(0,0,0,.30), 0 4px 16px rgba(0,0,0,.34);
   }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0; background: var(--bg); color: var(--ink);
-    font: 14px/1.5 "Segoe UI", system-ui, sans-serif;
-  }
-  header {
-    display: flex; align-items: center; gap: 12px; padding: 10px 16px;
-    border-bottom: 1px solid var(--line); background: var(--panel);
-    position: sticky; top: 0; z-index: 5;
-  }
-  header h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: .3px; }
-  header .spacer { flex: 1; }
-  button {
-    background: #2b303a; color: var(--ink); border: 1px solid var(--line);
-    border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 13px;
-  }
-  button:hover { background: #343a46; }
-  button.primary { background: var(--accent); color: #10131a; border-color: transparent; font-weight: 600; }
-  button.primary:hover { filter: brightness(1.08); }
-  button.tiny { padding: 3px 9px; font-size: 12px; }
-  input, select, textarea {
-    background: #14161b; color: var(--ink); border: 1px solid var(--line);
-    border-radius: 6px; padding: 7px 9px; font: inherit; width: 100%;
-  }
-  main { display: grid; grid-template-columns: 420px 1fr; gap: 16px; padding: 16px; align-items: start; }
-  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
-  section > h2 {
-    font-size: 12px; text-transform: uppercase; letter-spacing: .8px;
-    color: var(--dim); margin: 0; padding: 12px 14px; border-bottom: 1px solid var(--line);
-    display: flex; align-items: center; gap: 8px;
-  }
-  section > h2 .spacer { flex: 1; }
-  .rows { max-height: calc(100vh - 160px); overflow-y: auto; }
-  .row { padding: 11px 14px; border-bottom: 1px solid var(--line); }
-  .row:last-child { border-bottom: none; }
-  .row.clickable { cursor: pointer; }
-  .row.clickable:hover { background: #232833; }
-  .row.selected { background: #232a38; box-shadow: inset 3px 0 0 var(--accent); }
-  .title { display: flex; align-items: baseline; gap: 8px; }
-  .title .name { font-weight: 500; }
-  .meta { color: var(--dim); font-size: 12px; margin-top: 3px; }
-  .pill {
-    font-size: 11px; padding: 1px 7px; border-radius: 999px;
-    border: 1px solid var(--line); color: var(--dim); white-space: nowrap;
-  }
-  .pill.empty { color: var(--accent); border-color: #2f4468; }
-  .pill.stale { color: #e0a45a; border-color: #5a4326; }
-  .pill.active { color: var(--on-track); border-color: #35502a; }
-  .pill.complete { color: var(--dim); }
-  .bar { display: flex; height: 6px; border-radius: 3px; overflow: hidden; margin-top: 8px; background: #14161b; }
-  .bar > span { display: block; }
-  .impact { font-variant-numeric: tabular-nums; color: var(--dim); font-size: 12px; }
-  .impact b { color: var(--ink); font-weight: 600; }
-  .health-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
-  .empty { padding: 24px 14px; color: var(--dim); text-align: center; }
-  dialog {
-    background: var(--panel); color: var(--ink); border: 1px solid var(--line);
-    border-radius: 12px; padding: 0; width: 460px; max-width: 92vw;
-  }
-  dialog::backdrop { background: rgba(0,0,0,.55); }
-  dialog h3 { margin: 0; padding: 14px 16px; border-bottom: 1px solid var(--line); font-size: 14px; }
-  dialog .body { padding: 16px; display: grid; gap: 12px; }
-  dialog .actions { padding: 12px 16px; border-top: 1px solid var(--line); display: flex; gap: 8px; justify-content: flex-end; }
-  label { display: grid; gap: 5px; font-size: 12px; color: var(--dim); }
-  #toast {
-    position: fixed; right: 16px; bottom: 16px; max-width: 460px; display: grid; gap: 8px; z-index: 20;
-  }
-  .toast {
-    background: #232833; border: 1px solid var(--line); border-left: 3px solid var(--accent);
-    padding: 10px 13px; border-radius: 8px; font-size: 13px; white-space: pre-wrap;
-  }
-  .toast.err { border-left-color: var(--wont-finish); }
-  code { background: #14161b; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page:     #0d0d0d;
+  --surface:  #1a1a19;
+  --raised:   #212120;
+  --ink:      #ffffff;
+  --ink-2:    #c3c2b7;
+  --muted:    #898781;
+  --hairline: rgba(255, 255, 255, .10);
+  --grid:     #2c2c2a;
+  --accent:   #3987e5;
+  --accent-ink: #0b0b0b;
+  --wash:     rgba(57, 135, 229, .14);
+  --shadow: 0 1px 2px rgba(0,0,0,.30), 0 4px 16px rgba(0,0,0,.34);
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--ink);
+  font: 14px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* --- header --------------------------------------------------------------- */
+header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 20px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--hairline);
+  position: sticky; top: 0; z-index: 5;
+}
+.brand { display: flex; align-items: baseline; gap: 9px; }
+.brand h1 { font-size: 15px; margin: 0; font-weight: 650; letter-spacing: -.01em; }
+.brand .ver { font-size: 11px; color: var(--muted); }
+.spacer { flex: 1; }
+
+button {
+  background: var(--raised); color: var(--ink);
+  border: 1px solid var(--hairline); border-radius: var(--r-sm);
+  padding: 7px 13px; cursor: pointer; font: inherit; font-size: 13px;
+  transition: background .12s ease, border-color .12s ease;
+}
+button:hover { background: var(--wash); border-color: var(--accent); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button.primary {
+  background: var(--accent); color: var(--accent-ink);
+  border-color: transparent; font-weight: 600;
+}
+button.primary:hover { filter: brightness(1.07); }
+button.tiny { padding: 4px 10px; font-size: 12px; }
+button.icon { padding: 7px 9px; line-height: 1; }
+
+.chip {
+  font-size: 12px; padding: 3px 9px; border-radius: 999px;
+  border: 1px solid var(--hairline); color: var(--ink-2);
+  background: var(--page); white-space: nowrap;
+}
+
+input, select, textarea {
+  background: var(--page); color: var(--ink);
+  border: 1px solid var(--hairline); border-radius: var(--r-sm);
+  padding: 8px 10px; font: inherit; width: 100%;
+}
+input:focus, select:focus, textarea:focus {
+  outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--wash);
+}
+
+/* --- stat row (hero numbers, not a chart) --------------------------------- */
+.stats {
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  gap: 12px; padding: 18px 20px 4px;
+}
+.stat {
+  background: var(--surface); border: 1px solid var(--hairline);
+  border-radius: var(--r-md); padding: 13px 15px; box-shadow: var(--shadow);
+}
+.stat .label {
+  font-size: 11px; text-transform: uppercase; letter-spacing: .07em;
+  color: var(--muted); font-weight: 600;
+}
+.stat .value { font-size: 27px; font-weight: 640; letter-spacing: -.02em; margin-top: 3px; }
+.stat .sub { font-size: 12px; color: var(--ink-2); }
+
+/* --- panels --------------------------------------------------------------- */
+main {
+  display: grid; grid-template-columns: minmax(380px, 460px) 1fr;
+  gap: 16px; padding: 16px 20px 22px;
+  align-items: stretch;            /* equal-height panels: either list may be
+                                      the long one, so neither should leave a
+                                      ragged gap beside the other */
+  min-height: calc(100vh - 210px);
+}
+section {
+  background: var(--surface); border: 1px solid var(--hairline);
+  border-radius: var(--r-lg); box-shadow: var(--shadow); overflow: hidden;
+  display: flex; flex-direction: column; min-height: 0;
+}
+section > h2 {
+  font-size: 12px; text-transform: uppercase; letter-spacing: .07em;
+  color: var(--muted); margin: 0; padding: 13px 16px;
+  border-bottom: 1px solid var(--hairline);
+  display: flex; align-items: center; gap: 9px; font-weight: 650;
+}
+.rows { flex: 1; overflow-y: auto; min-height: 0; }
+section > h2, .legend { flex: none; }
+.row { padding: 13px 16px; border-bottom: 1px solid var(--hairline); }
+.row:last-child { border-bottom: none; }
+.row.clickable { cursor: pointer; transition: background .1s ease; }
+.row.clickable:hover { background: var(--wash); }
+.row.selected { background: var(--wash); box-shadow: inset 3px 0 0 var(--accent); }
+.title { display: flex; align-items: center; gap: 9px; }
+.title .name { font-weight: 560; letter-spacing: -.005em; }
+.meta { color: var(--ink-2); font-size: 12.5px; margin-top: 4px; }
+.meta .num { font-variant-numeric: tabular-nums; }
+
+/* --- status ---------------------------------------------------------------
+   A status pill always carries its glyph AND its word, so the colour is
+   reinforcement rather than the message.                                     */
+.status { display: inline-flex; align-items: center; gap: 5px; font-size: 12px;
+          padding: 2px 9px 2px 7px; border-radius: 999px;
+          border: 1px solid var(--hairline); background: var(--page); }
+.status .glyph { font-size: 10px; line-height: 1; }
+.status.empty    { color: var(--accent); }
+.status.stale    { color: var(--warning); }
+.status.active   { color: var(--good); }
+.status.complete { color: var(--muted); }
+
+/* --- stacked health bar ---------------------------------------------------
+   Segments are separated by a 2px gap in the surface colour, never a stroke:
+   flex-grow carries the proportion so the gaps subtract cleanly.             */
+.bar {
+  display: flex; gap: 2px; height: 8px; margin-top: 9px;
+  background: var(--surface); border-radius: 4px;
+}
+.bar > span { display: block; border-radius: 2px; min-width: 3px; }
+.bar > span:first-child { border-top-left-radius: 4px; border-bottom-left-radius: 4px; }
+.bar > span:last-child { border-top-right-radius: 4px; border-bottom-right-radius: 4px; }
+.bar.is-empty { background: var(--grid); }
+.breakdown {
+  display: flex; flex-wrap: wrap; gap: 10px; margin-top: 7px;
+  font-size: 12px; color: var(--ink-2);
+}
+.breakdown .k { display: inline-flex; align-items: center; gap: 5px; }
+.swatch { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+.breakdown .n { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--ink); }
+
+/* legend: identity is never colour-alone */
+.legend {
+  display: flex; flex-wrap: wrap; gap: 14px;
+  padding: 10px 16px; border-top: 1px solid var(--hairline);
+  font-size: 12px; color: var(--ink-2); background: var(--page);
+}
+.legend .k { display: inline-flex; align-items: center; gap: 6px; }
+
+/* --- ready list ----------------------------------------------------------- */
+.rank {
+  font-variant-numeric: tabular-nums; font-size: 12px; color: var(--muted);
+  min-width: 20px; font-weight: 600;
+}
+.impact { display: inline-flex; gap: 10px; font-variant-numeric: tabular-nums; }
+.impact b { font-weight: 650; color: var(--ink); }
+.empty-state { padding: 30px 16px; color: var(--muted); text-align: center; font-size: 13px; }
+
+/* --- dialogs -------------------------------------------------------------- */
+dialog {
+  background: var(--surface); color: var(--ink);
+  border: 1px solid var(--hairline); border-radius: var(--r-lg);
+  padding: 0; width: 470px; max-width: 92vw; box-shadow: var(--shadow);
+}
+dialog::backdrop { background: rgba(0,0,0,.5); backdrop-filter: blur(2px); }
+dialog h3 { margin: 0; padding: 15px 18px; border-bottom: 1px solid var(--hairline); font-size: 14px; font-weight: 650; }
+dialog .body { padding: 18px; display: grid; gap: 14px; }
+dialog .actions {
+  padding: 13px 18px; border-top: 1px solid var(--hairline);
+  display: flex; gap: 9px; justify-content: flex-end; background: var(--page);
+}
+label { display: grid; gap: 6px; font-size: 12px; color: var(--ink-2); font-weight: 500; }
+.hint { font-size: 12px; color: var(--muted); line-height: 1.5; }
+
+/* --- toasts --------------------------------------------------------------- */
+#toast { position: fixed; right: 18px; bottom: 18px; max-width: 440px; display: grid; gap: 9px; z-index: 20; }
+.toast {
+  background: var(--raised); border: 1px solid var(--hairline);
+  border-left: 3px solid var(--good); padding: 11px 14px;
+  border-radius: var(--r-sm); font-size: 13px; white-space: pre-wrap;
+  box-shadow: var(--shadow); animation: rise .18s ease;
+}
+.toast.err { border-left-color: var(--critical); }
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } }
 </style>
 </head>
 <body>
+
 <header>
-  <h1>protracker</h1>
-  <span class="pill" id="dbLabel">—</span>
+  <div class="brand"><h1>protracker</h1><span class="ver" id="dbLabel">—</span></div>
   <span class="spacer"></span>
+  <button id="btnTheme" class="icon" title="Toggle light / dark">◐</button>
   <button id="btnImport">Import…</button>
   <button id="btnAdd">Add…</button>
   <button id="btnSettings">Settings</button>
   <button id="btnRefresh" class="primary">Refresh</button>
 </header>
 
+<div class="stats" id="stats"></div>
+
 <main>
   <section>
-    <h2>Projects <span class="spacer"></span><span class="pill" id="projCount"></span></h2>
-    <div class="rows" id="projects"><div class="empty">Loading…</div></div>
+    <h2>Projects <span class="spacer"></span><span class="chip" id="projCount"></span></h2>
+    <div class="rows" id="projects"><div class="empty-state">Loading…</div></div>
+    <div class="legend" id="legend"></div>
   </section>
 
   <section>
     <h2>
       Ready now <span class="spacer"></span>
-      <span class="pill" id="readyScope">all projects</span>
-      <span class="pill" id="readyCount"></span>
+      <span class="chip" id="readyScope">all projects</span>
+      <span class="chip" id="readyCount"></span>
     </h2>
-    <div class="rows" id="ready"><div class="empty">Loading…</div></div>
+    <div class="rows" id="ready"><div class="empty-state">Loading…</div></div>
   </section>
 </main>
+
+<dialog id="impDlg">
+  <h3>Import a tracker workbook</h3>
+  <div class="body">
+    <label>Workbook <input id="impPath" placeholder="Project Tracker.xlsx"></label>
+    <div class="hint">
+      A relative name resolves inside the project directory. Re-importing the
+      same file is safe — rows are matched, not duplicated.
+    </div>
+  </div>
+  <div class="actions">
+    <button id="impCancel">Cancel</button>
+    <button id="impOk" class="primary">Import</button>
+  </div>
+</dialog>
 
 <dialog id="addDlg">
   <h3>Add a node</h3>
@@ -133,27 +316,10 @@
   </div>
 </dialog>
 
-<dialog id="impDlg">
-  <h3>Import a tracker workbook</h3>
-  <div class="body">
-    <label>Workbook
-      <input id="impPath" placeholder="Project Tracker Q3 2026.xlsx">
-    </label>
-    <div class="meta">
-      A relative name is resolved inside the project directory. Re-importing
-      the same file is safe: rows are matched, not duplicated.
-    </div>
-  </div>
-  <div class="actions">
-    <button id="impCancel">Cancel</button>
-    <button id="impOk" class="primary">Import</button>
-  </div>
-</dialog>
-
 <dialog id="setDlg">
   <h3>Settings</h3>
   <div class="body">
-    <label>Project directory <input id="setDir"></label>
+    <label>Project directory <input id="setDir" placeholder="C:\path\to\projtracker"></label>
     <label>Database file <input id="setDb"></label>
     <label>Stale after (days) <input id="setDays" type="number" min="1"></label>
   </div>
@@ -167,9 +333,9 @@
 
 <script>
 // ---------------------------------------------------------------------------
-// This file renders whatever the command layer returns. It computes nothing
-// about readiness, impact, or health -- those all arrive already decided from
-// `pt`. Keeping it that way is what makes the dashboard deletable.
+// Renders whatever the command layer returns. Readiness, impact and health all
+// arrive already decided; nothing here computes them. Keeping it that way is
+// what makes this pane deletable.
 // ---------------------------------------------------------------------------
 const invoke = window.__TAURI__.core.invoke;
 
@@ -181,14 +347,16 @@ const cfg = {
 
 let state = { projects: [], ready: [], nodes: [], selected: null };
 
-const HEALTH_COLOR = {
-  on_track: "var(--on-track)", not_begun: "var(--not-begun)",
-  off_track: "var(--off-track)", wont_finish: "var(--wont-finish)",
-};
-const HEALTH_LABEL = {
-  on_track: "on track", not_begun: "not begun",
-  off_track: "off track", wont_finish: "won't finish",
-};
+// health -> reserved status role. Ordered by severity, which is also the
+// stacking order, so a bar reads left-to-right from best to worst.
+const HEALTH = [
+  { key: "on_track",    label: "on track",     css: "var(--good)",     glyph: "●" },
+  { key: "not_begun",   label: "not begun",    css: "var(--neutral)",  glyph: "○" },
+  { key: "off_track",   label: "off track",    css: "var(--warning)",  glyph: "◐" },
+  { key: "wont_finish", label: "won't finish", css: "var(--critical)", glyph: "▲" },
+];
+const BY_KEY = Object.fromEntries(HEALTH.map((h) => [h.key, h]));
+const STATE_GLYPH = { empty: "○", stale: "◐", active: "●", complete: "✓" };
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) =>
@@ -202,13 +370,11 @@ function toast(msg, isError) {
   setTimeout(() => el.remove(), isError ? 9000 : 5000);
 }
 
-/** The single door to the application. Nothing else touches data. */
 async function pt(...args) {
   try {
     return await invoke("pt", { projectDir: cfg.dir, db: cfg.db, args });
   } catch (e) {
-    const msg = typeof e === "string" ? e : JSON.stringify(e);
-    toast(msg, true);
+    toast(typeof e === "string" ? e : JSON.stringify(e), true);
     throw e;
   }
 }
@@ -216,38 +382,74 @@ async function pt(...args) {
 // --- rendering -------------------------------------------------------------
 
 function healthBar(health, total) {
-  if (!total) return "";
-  const parts = Object.entries(health || {})
-    .sort((a, b) => b[1] - a[1])
-    .map(([k, v]) =>
-      `<span style="width:${(v / total) * 100}%;background:${HEALTH_COLOR[k] || "#555"}"
-             title="${esc(HEALTH_LABEL[k] || k)}: ${v}"></span>`);
-  return `<div class="bar">${parts.join("")}</div>`;
+  if (!total) return `<div class="bar is-empty" role="img" aria-label="no open tasks"></div>`;
+  const segs = HEALTH.filter((h) => health?.[h.key])
+    .map((h) => `<span style="flex:${health[h.key]} 1 0;background:${h.css}"
+                        title="${esc(h.label)}: ${health[h.key]}"></span>`);
+  return `<div class="bar">${segs.join("")}</div>`;
+}
+
+function breakdown(health) {
+  const parts = HEALTH.filter((h) => health?.[h.key]).map((h) =>
+    `<span class="k"><span class="swatch" style="background:${h.css}"></span>
+     <span class="n">${health[h.key]}</span> ${esc(h.label)}</span>`);
+  return parts.length ? `<div class="breakdown">${parts.join("")}</div>` : "";
+}
+
+function renderStats() {
+  const p = state.projects;
+  const openTasks = p.reduce((a, r) => a + r.tasks_open, 0);
+  const doneTasks = p.reduce((a, r) => a + r.tasks_done, 0);
+  const total = p.reduce((a, r) => a + r.tasks_total, 0);
+  const attention = p.filter((r) => r.state === "stale" || r.state === "empty").length;
+  const pct = total ? Math.round((doneTasks / total) * 100) : 0;
+  const tiles = [
+    { label: "Projects", value: p.length, sub: `${attention} need attention` },
+    { label: "Ready now", value: state.ready.length, sub: "unblocked tasks" },
+    { label: "Open", value: openTasks, sub: `of ${total} tasks` },
+    { label: "Completed", value: `${pct}%`, sub: `${doneTasks} done` },
+  ];
+  $("stats").innerHTML = tiles.map((t) => `
+    <div class="stat">
+      <div class="label">${esc(t.label)}</div>
+      <div class="value">${esc(t.value)}</div>
+      <div class="sub">${esc(t.sub)}</div>
+    </div>`).join("");
+}
+
+function renderLegend() {
+  $("legend").innerHTML = HEALTH.map((h) =>
+    `<span class="k"><span class="swatch" style="background:${h.css}"></span>${esc(h.label)}</span>`
+  ).join("");
 }
 
 function renderProjects() {
   const box = $("projects");
-  $("projCount").textContent = `${state.projects.length}`;
+  $("projCount").textContent = state.projects.length;
   if (!state.projects.length) {
-    box.innerHTML = `<div class="empty">No projects yet. Use <b>Add…</b>.</div>`;
+    box.innerHTML = `<div class="empty-state">No projects yet — use <b>Add…</b> or <b>Import…</b>.</div>`;
     return;
   }
   box.innerHTML = state.projects.map((p) => {
-    const name = p.project_name || "(planner tasks)";
+    const name = p.project_name || "Planner tasks";
     const since = p.days_since_last_completion;
-    const when = since === null ? "never completed here" : `last done ${since}d ago`;
+    const when = since === null ? "nothing completed here yet" : `last completed ${since}d ago`;
     const sel = state.selected === p.project_id ? " selected" : "";
     return `
       <div class="row clickable${sel}" data-pid="${p.project_id ?? ""}">
         <div class="title">
           <span class="name">${esc(name)}</span>
           <span class="spacer"></span>
-          <span class="pill ${p.state}">${p.state}</span>
+          <span class="status ${p.state}">
+            <span class="glyph">${STATE_GLYPH[p.state] || "•"}</span>${esc(p.state)}
+          </span>
         </div>
         <div class="meta">
-          ${p.tasks_done}/${p.tasks_total} done · ${p.ready_count} ready · ${esc(when)}
+          <span class="num">${p.tasks_done}/${p.tasks_total}</span> done ·
+          <span class="num">${p.ready_count}</span> ready · ${esc(when)}
         </div>
         ${healthBar(p.health, p.tasks_open)}
+        ${breakdown(p.health)}
       </div>`;
   }).join("");
 
@@ -268,42 +470,44 @@ function renderReady() {
     ? state.ready
     : state.ready.filter((t) => t.project_id === state.selected);
 
-  const scope = state.selected === null
+  $("readyScope").textContent = state.selected === null
     ? "all projects"
-    : (state.projects.find((p) => p.project_id === state.selected)?.project_name
-       || "planner");
-  $("readyScope").textContent = scope;
-  $("readyCount").textContent = `${shown.length}`;
+    : (state.projects.find((p) => p.project_id === state.selected)?.project_name || "planner");
+  $("readyCount").textContent = shown.length;
 
   if (!shown.length) {
-    box.innerHTML = `<div class="empty">Nothing ready here.</div>`;
+    box.innerHTML = `<div class="empty-state">Nothing ready here.</div>`;
     return;
   }
-  box.innerHTML = shown.map((t) => `
+  box.innerHTML = shown.map((t, i) => {
+    const h = BY_KEY[t.health] || { label: "unset", css: "var(--muted)" };
+    return `
     <div class="row">
       <div class="title">
-        <span class="health-dot" style="background:${HEALTH_COLOR[t.health] || "#555"}"
-              title="${esc(HEALTH_LABEL[t.health] || "unset")}"></span>
+        <span class="rank">${i + 1}</span>
         <span class="name">${esc(t.name)}</span>
         <span class="spacer"></span>
         <button class="tiny" data-done="${t.id}">Done</button>
       </div>
       <div class="meta">
-        <span class="impact">unlocks <b>${t.unlocks_now}</b> · gates <b>${t.gates_total}</b></span>
-        · #${t.id} · ${esc(t.project_name || "planner")}
-        ${t.deadline ? " · due " + esc(t.deadline) : ""}
+        <span class="impact">
+          <span>unlocks <b>${t.unlocks_now}</b></span>
+          <span>gates <b>${t.gates_total}</b></span>
+        </span>
+        · <span class="k"><span class="swatch" style="display:inline-block;background:${h.css}"></span>
+        ${esc(h.label)}</span>
+        · #${t.id} · ${esc(t.project_name || "planner")}${t.deadline ? " · due " + esc(t.deadline) : ""}
       </div>
-    </div>`).join("");
+    </div>`;
+  }).join("");
 
   box.querySelectorAll("[data-done]").forEach((btn) => {
     btn.onclick = async () => {
       btn.disabled = true;
       const res = await pt("done", btn.dataset.done);
-      const unlocked = res.newly_ready || [];
       let msg = `Completed “${res.completed.name}”.`;
-      if (unlocked.length) {
-        msg += "\nNow ready: " + unlocked.map((n) => n.name).join(", ");
-      }
+      const unlocked = res.newly_ready || [];
+      if (unlocked.length) msg += "\nNow ready: " + unlocked.map((n) => n.name).join(", ");
       for (const key of ["completed_goals", "completed_milestones", "completed_projects"]) {
         for (const n of res[key] || []) msg += `\nFinished ${n.kind}: ${n.name}`;
       }
@@ -318,9 +522,9 @@ function renderReady() {
 async function refresh() {
   $("dbLabel").textContent = cfg.db;
   if (!cfg.dir) {
-    $("projects").innerHTML =
-      `<div class="empty">Set the project directory in <b>Settings</b>.</div>`;
-    $("ready").innerHTML = `<div class="empty">—</div>`;
+    $("projects").innerHTML = `<div class="empty-state">Set the project directory in <b>Settings</b>.</div>`;
+    $("ready").innerHTML = `<div class="empty-state">—</div>`;
+    $("stats").innerHTML = "";
     return;
   }
   const [projects, ready, nodes] = await Promise.all([
@@ -331,6 +535,8 @@ async function refresh() {
   state.projects = projects;
   state.ready = ready;
   state.nodes = nodes;
+  renderStats();
+  renderLegend();
   renderProjects();
   renderReady();
 }
@@ -343,10 +549,7 @@ function refreshParentOptions() {
   const kind = $("addKind").value;
   const wrap = $("addParentWrap");
   const sel = $("addParent");
-  if (kind === "project") {
-    wrap.style.display = "none";
-    return;
-  }
+  if (kind === "project") { wrap.style.display = "none"; return; }
   wrap.style.display = "grid";
   const want = PARENT_KIND[kind];
   const options = state.nodes.filter((n) => n.kind === want);
@@ -365,15 +568,12 @@ $("addOk").onclick = async () => {
   const notes = $("addNotes").value.trim();
   if (!name) return toast("Name is required.", true);
   if (kind !== "project" && !parent) return toast(`Create a ${PARENT_KIND[kind]} first.`, true);
-
   const args = ["add", kind, name];
   if (kind !== "project") args.push("--parent", parent);
   if (notes) args.push("--desc", notes);
-
   const res = await pt(...args);
   $("addDlg").close();
-  $("addName").value = "";
-  $("addNotes").value = "";
+  $("addName").value = ""; $("addNotes").value = "";
   toast(`Created ${res.created.kind} “${res.created.name}” (#${res.created.id}).`);
   await refresh();
 };
@@ -391,26 +591,20 @@ $("impOk").onclick = async () => {
     const r = await pt("import", path);
     localStorage.setItem("lastImport", path);
     $("impDlg").close();
-    let msg = `Imported: ${r.created.length} created, ${r.updated.length} updated, `
-            + `${r.unchanged} unchanged.`;
+    let msg = `Imported: ${r.created.length} created, ${r.updated.length} updated, ${r.unchanged} unchanged.`;
     for (const s of r.skipped_sheets || []) msg += `\nSkipped sheet “${s.sheet}”.`;
-    if (r.review?.length) msg += `\n${r.review.length} row(s) need review — see below.`;
+    if (r.review?.length) msg += `\n${r.review.length} row(s) need review.`;
     if (r.flagged?.length) msg += `\n${r.flagged.length} note(s) flagged as possible dependencies.`;
     toast(msg);
-    // surface the review list rather than burying it in a toast
     for (const item of (r.review || []).slice(0, 6)) {
       toast(`review · ${item.sheet} row ${item.row}: ${item.reason}`, true);
     }
     await refresh();
-  } finally {
-    $("impOk").disabled = false;
-  }
+  } finally { $("impOk").disabled = false; }
 };
 
 $("btnSettings").onclick = () => {
-  $("setDir").value = cfg.dir;
-  $("setDb").value = cfg.db;
-  $("setDays").value = cfg.days;
+  $("setDir").value = cfg.dir; $("setDb").value = cfg.db; $("setDays").value = cfg.days;
   $("setDlg").showModal();
 };
 $("setCancel").onclick = () => $("setDlg").close();
@@ -424,6 +618,15 @@ $("setOk").onclick = async () => {
   $("setDlg").close();
   await refresh();
 };
+
+$("btnTheme").onclick = () => {
+  const now = document.documentElement.getAttribute("data-theme");
+  const next = now === "dark" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  localStorage.setItem("theme", next);
+};
+const savedTheme = localStorage.getItem("theme");
+if (savedTheme) document.documentElement.setAttribute("data-theme", savedTheme);
 
 $("btnRefresh").onclick = refresh;
 refresh();

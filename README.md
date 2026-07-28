@@ -31,6 +31,16 @@ python -m pip install pytest openpyxl
 python -m pytest -q
 ```
 
+The dashboard has its own end-to-end suite. Playwright cannot drive a Tauri
+window, but it does not need to: the frontend is logic-free static HTML whose
+only door is `invoke("pt", …)`, so the tests load it in Chromium with that door
+wired to the real CLI. They skip cleanly when Playwright is absent.
+
+```bash
+python -m pip install playwright && python -m playwright install chromium
+python -m pytest tests/e2e -q
+```
+
 ```bash
 python -m protracker.cli --db mine.db import "My Tracker.xlsx"
 python -m protracker.cli --db mine.db progress          # what has gone quiet
