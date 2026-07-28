@@ -58,7 +58,16 @@ def board(tmp_path_factory):
         con.execute("UPDATE nodes SET health = ? WHERE id = ?", (health, node_id))
     con.commit()
     con.close()
+    _BOARD.clear()
+    _BOARD.append(db)
     return db
+
+
+_BOARD: list[Path] = []
+
+
+def _db(page) -> Path:
+    return _BOARD[0]
 
 
 def run_cli(db: Path, args: list[str]) -> object:
@@ -93,19 +102,49 @@ def page(board):
             localStorage.setItem("days", "30");
         """)
         pg.goto(INDEX.as_uri())
-        pg.wait_for_function("document.querySelectorAll('#projects .row').length > 0")
+        pg.wait_for_function("document.querySelectorAll('#tree .node').length > 0")
         pg.errors = errors
         yield pg
         browser.close()
 
 
-def test_projects_render_with_state_and_counts(page):
-    rows = page.locator("#projects .row")
-    assert rows.count() >= 3
-    # empty projects lead, so a bare one sorts first
-    expect(rows.first).to_contain_text("Greenfield")
-    expect(rows.first).to_contain_text("empty")
-    expect(page.locator("#projects")).to_contain_text("Bridge Retrofit")
+def test_tree_shows_the_whole_hierarchy(page):
+    tree = page.locator("#tree")
+    for name in ("Bridge Retrofit", "Construction", "Steelwork", "Survey the span"):
+        expect(tree).to_contain_text(name)
+    # every kind is present and indented below its parent
+    kinds = {"project", "milestone", "goal", "task"}
+    seen = set(page.locator("#tree .node").evaluate_all(
+        "els => els.map(e => e.dataset.kind)"))
+    assert kinds <= seen, f"missing kinds: {kinds - seen}"
+
+
+def test_ready_tasks_carry_a_green_circle(page):
+    """The whole point of the dot: ready work is findable in the tree."""
+    ready_names = {t["name"] for t in run_cli(_db(page), ["ready"])}
+    assert ready_names, "fixture must have ready work"
+    rows = page.locator('#tree .node[data-kind="task"]')
+    greens, labelled = set(), 0
+    for i in range(rows.count()):
+        row = rows.nth(i)
+        dot = row.locator(".dot")
+        colour = dot.evaluate("e => getComputedStyle(e).backgroundColor")
+        label = dot.get_attribute("title")
+        if label == "ready":
+            labelled += 1
+            greens.add(row.locator(".label").inner_text())
+            # #0ca30c
+            assert colour == "rgb(12, 163, 12)", f"ready dot is {colour}, not green"
+    assert greens == ready_names, f"green dots {greens} != ready set {ready_names}"
+    assert labelled == len(ready_names)
+
+
+def test_tree_collapses_and_expands(page):
+    before = page.locator("#tree .node").count()
+    page.locator("#btnExpand").click()          # collapse all
+    assert page.locator("#tree .node").count() < before
+    page.locator("#btnExpand").click()          # expand again
+    assert page.locator("#tree .node").count() == before
 
 
 def test_stat_row_reports_the_board(page):
@@ -114,7 +153,7 @@ def test_stat_row_reports_the_board(page):
     expect(stats.nth(0)).to_contain_text("Projects")
     expect(stats.nth(1)).to_contain_text("Ready now")
     # the tile must agree with the list it summarises, whatever the board holds
-    shown = page.locator("#projects .row").count()
+    shown = page.locator('#tree .node[data-kind="project"]').count()
     assert stats.nth(0).locator(".value").inner_text() == str(shown)
     assert (stats.nth(1).locator(".value").inner_text()
             == str(page.locator("#ready .row").count()))
@@ -126,12 +165,15 @@ def test_health_is_never_colour_alone(page):
     for label in ("on track", "not begun", "off track", "won't finish"):
         expect(legend).to_contain_text(label)
     # and the per-project breakdown carries counts beside each swatch
-    expect(page.locator("#projects .breakdown").first).to_be_visible()
+    expect(page.locator("#tree .breakdown").first).to_be_visible()
+    # the tree's own dots are named too, not just the health segments
+    for label in ("ready", "blocked", "in progress"):
+        expect(legend).to_contain_text(label)
 
 
 def test_stacked_bar_segments_have_a_surface_gap(page):
     gap = page.evaluate(
-        "getComputedStyle(document.querySelector('#projects .bar')).gap"
+        "getComputedStyle(document.querySelector('#tree .bar')).gap"
     )
     assert gap == "2px", f"stacked segments must be separated by a 2px gap, got {gap}"
 
@@ -151,19 +193,19 @@ def test_ready_list_is_ranked_by_impact(page, board):
 
 def test_selecting_a_project_filters_the_ready_list(page):
     before = page.locator("#ready .row").count()
-    page.locator("#projects .row", has_text="Bridge Retrofit").click()
+    page.locator('#tree .node[data-kind="project"]', has_text="Bridge Retrofit").click()
     expect(page.locator("#readyScope")).to_have_text("Bridge Retrofit")
     after = page.locator("#ready .row").count()
     assert after < before
     # clicking again clears the filter
-    page.locator("#projects .row", has_text="Bridge Retrofit").click()
+    page.locator('#tree .node[data-kind="project"]', has_text="Bridge Retrofit").click()
     expect(page.locator("#readyScope")).to_have_text("all projects")
 
 
 def test_completing_a_task_reports_what_it_unlocked(page):
     first = page.locator("#ready .row").first
     name = first.locator(".name").inner_text()
-    first.locator("button", has_text="Done").click()
+    first.locator(".tick").click()
     toast = page.locator(".toast").first
     expect(toast).to_contain_text(f"Completed “{name}”")
     expect(toast).to_contain_text("Now ready")
@@ -175,7 +217,7 @@ def test_add_dialog_creates_a_project_through_the_cli(page):
     page.locator("#addName").fill("Aqueduct")
     page.locator("#addOk").click()
     expect(page.locator(".toast").first).to_contain_text("Created project")
-    expect(page.locator("#projects")).to_contain_text("Aqueduct")
+    expect(page.locator("#tree")).to_contain_text("Aqueduct")
 
 
 def test_import_dialog_ingests_a_workbook(page, tmp_path):
@@ -199,7 +241,7 @@ def test_import_dialog_ingests_a_workbook(page, tmp_path):
     page.locator("#impPath").fill(str(book))  # absolute: the realistic case
     page.locator("#impOk").click()
     expect(page.locator(".toast").first).to_contain_text("Imported:")
-    expect(page.locator("#projects")).to_contain_text("Aqueduct Repair")
+    expect(page.locator("#tree")).to_contain_text("Aqueduct Repair")
 
 
 def test_import_of_a_missing_workbook_reports_a_usable_error(page):
