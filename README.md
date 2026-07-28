@@ -8,6 +8,23 @@ Structure is a hierarchy (project → milestone → goal → task) plus a depend
 DAG over tasks and goals. Readiness, impact, and completion roll-up are computed
 deterministically; nothing is guessed at query time.
 
+On top of that sit three daily surfaces, all derived from the same graph:
+
+- **Today** — a curated per-day list. Pull tasks in from the ready pool
+  (`pt today add`), quick-add standalone planner tasks (`pt today new`), and
+  reorder freely. Unfinished items roll over; completing or dropping a task
+  resolves its entry.
+- **Reminders** — plan follow-ups when the thought occurs, not when it is due:
+  `pt remind 42 --in 3` (follow up on task 42 in three days) or
+  `pt remind --new "chase the invoice" --on 2026-08-04`. Reminders wait
+  invisibly (`pt upcoming` shows them) and land on Today by themselves on
+  their day. Completing a task with `--followup-days` set does the same
+  automatically.
+- **Journal** — an append-only thought stream (`pt capture`), browsable day by
+  day (`pt journal`), searchable (`pt notes search`), and attachable to any
+  node (`pt capture "..." --node 42`). Notes are just notes: nothing parses
+  or mutates them.
+
 ## Layout
 
 | Path | Role |
@@ -42,10 +59,13 @@ python -m pytest tests/e2e -q
 ```
 
 ```bash
+python -m protracker.cli --db mine.db import "My Tracker.xlsx" --preview
 python -m protracker.cli --db mine.db import "My Tracker.xlsx"
 python -m protracker.cli --db mine.db progress          # what has gone quiet
 python -m protracker.cli --db mine.db ready --impact    # what to do next
+python -m protracker.cli --db mine.db today             # the curated daily list
 python -m protracker.cli --db mine.db done 42           # prints what it unlocked
+python -m protracker.cli --db mine.db upcoming          # reminders in waiting
 ```
 
 `PROTRACKER_DB` sets the default `--db`.
@@ -85,8 +105,16 @@ Project/Milestone/Goal/Task/Notes is valid. Richer files may add `Seq`,
 - **Strikethrough means done.** Fill colour is a separate *health* axis
   (green on track, yellow not begun, red won't finish, blue off track), because
   a task can be both completed and off track.
-- Re-import is idempotent: rows are matched by ref, then by path and name, and
-  repeated sibling names stay distinct rows.
+- **Importing never merges by coincidence.** `import --preview` shows, per file
+  project, whether it will merge into an existing project (matched by `Ref` or
+  because this same file was imported before) or be created new. A project
+  that merely *shares a name* with an existing one defaults to **create new**
+  — importing your real tracker next to someone else's sample can no longer
+  splice them together. Override per project with `--as-new NAME` /
+  `--into NAME=ID`.
+- Re-import of the same file is idempotent: rows are matched by ref, then by
+  path and name scoped to their own project, and repeated sibling names stay
+  distinct rows.
 
 Rows that cannot be classified, and non-date text in date columns, come back in
 a review list rather than being dropped or coerced.

@@ -34,7 +34,7 @@ passing** (`python -m pytest -q`). Requires `openpyxl` and `pytest`.
 | `protracker/model.py` | `Node` (incl. `seq_source`, `health`, `ref`, `completed_at`), frozen `Dependency`, `HEALTH_STATES` |
 | `protracker/graph.py` | Pure core: readiness, blockers, completion roll-up, S/E-expanded cycle detection, `downstream_incomplete`, `unlocks_if_completed`, `effective_deadline` |
 | `protracker/storage.py` | SQLite repository (spec §4.2 schema + ALTER guards) |
-| `protracker/commands.py` | The verb set, incl. `ready(impact=)`, `progress(days=)`, `import_excel`, `export_excel` |
+| `protracker/commands.py` | The verb set, incl. `ready(impact=)`, `progress(days=)`, `import_preview`/`import_excel(decisions=)`, `export_excel`, `today*`, `plan_followup`, `upcoming`, notes verbs |
 | `protracker/cli.py` | Thin argparse client, `--json` on every command, UTF-8 stdout |
 | `protracker/importer.py` | Deterministic Excel import (see semantics below) |
 | `protracker/exporter.py` | Template-format export; colour and completion round-trip |
@@ -79,7 +79,28 @@ Fixtures live in `tests/fixtures/` and are synthetic (a coffee shop).
   `empty` / `stale` / `active` / `complete`, most-neglected first. Projects with
   no tasks still appear — one just created must not look deleted. Imported
   strikethrough completions carry no timestamp and never read as recent.
-- **`ref`** stable dotted ids make re-import rename-safe.
+- **`ref`** stable dotted ids make re-import rename-safe. Generated project
+  refs that collide are suffixed deterministically (`asdf`, `asdf-2`, …) so
+  same-named projects never share a ref lineage.
+- **Import is two-phase.** `import --preview` matches each file project by
+  ref (identity), provenance (`import_sources`: this filename + project name
+  imported before), or bare name (a coincidence). Ref/provenance default to
+  merge — that is what keeps same-file re-import idempotent; name-only
+  defaults to create-new — that is the fix for unrelated trackers merging.
+  Descendant matching is scoped to the bound subtree, so same-named tasks in
+  different projects cannot cross-merge.
+- **Today list** (`today`, `today add/new/rm/move`): membership rows in
+  `schedule_log`, derived-at-read rollover (open rows from earlier days read
+  as rolled over; reads never mutate). complete/drop stamp `outcome`;
+  removal stamps `deferred`, which doubles as the tombstone keeping a
+  dismissed reminder from re-landing.
+- **Reminders**: planner tasks with `remind=1` + `earliest_start`. Created by
+  `remind` (at planning time) or by completing a task with `followup_days`.
+  They read as `waiting` (see `upcoming`) until their day, then auto-land on
+  Today. Ordinary date-gated tasks do NOT auto-land — only `remind=1`.
+- **Notes**: `daily_notes.node_id` attaches a note to any node; `notes ls
+  --node`, `notes search`, `journal --until` (paging). Notes are append-only
+  data; nothing parses or mutates them, by decision.
 
 ## Product direction
 
