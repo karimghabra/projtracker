@@ -6,10 +6,10 @@ name: installer
 # Or run it by hand from the Actions tab to get the installers as artefacts
 # without publishing a release.
 #
-# There is no npm step: the frontend is plain HTML and tauri.conf.json points
-# frontendDist straight at app/dist. That also means tauri-action cannot
-# install the Tauri CLI for us the way it would in a Node project, so we
-# install cargo-tauri explicitly below.
+# The frontend is a React + Vite app in app/ui that builds into app/dist,
+# which tauri.conf.json serves as frontendDist — so npm build runs below,
+# before cargo tauri build. tauri-action is not used, so cargo-tauri is
+# installed explicitly.
 on:
   push:
     tags: ["v*"]
@@ -40,6 +40,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: app/ui/package-lock.json
+
+      - name: Build the dashboard
+        shell: bash
+        run: |
+          npm ci --prefix app/ui
+          npm run build --prefix app/ui
+          test -f app/dist/index.html
 
       # The sidecar is what makes an installed copy self-contained: without it
       # the app needs Python and a checkout on the target machine, which is no
@@ -117,18 +130,10 @@ jobs:
           Grab `protracker_*_x64-setup.exe` below and run it. The `.msi` is the
           same app for anyone who prefers MSI deployment.
 
-          **This installs the shell only.** The app runs
-          `python -m protracker.cli --json` and renders the result, so the
-          machine also needs Python and a clone of this repository:
-
-          ```
-          git clone https://github.com/karimghabra/projtracker.git
-          cd projtracker
-          pip install -e . && pip install openpyxl
-          ```
-
-          On first launch open **Settings** and point it at that clone and a
-          database file, then use **Import…** to ingest a workbook.
+          **Self-contained**: the CLI is bundled as a sidecar, so the machine
+          needs neither Python nor a checkout. On first launch the setup
+          screen walks you through picking a database and importing a
+          workbook (or starting empty).
           EOF
           gh release create "${GITHUB_REF_NAME}" \
             --title "${GITHUB_REF_NAME}" \

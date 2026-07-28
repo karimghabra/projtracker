@@ -29,8 +29,10 @@ jobs:
         run: python -m pytest -q
 
   # The dashboard is logic-free by design, but "renders what the command layer
-  # returns" is a claim worth enforcing. These drive the real frontend in
-  # Chromium with its bridge wired to the real CLI.
+  # returns" is a claim worth enforcing. These build the real frontend and
+  # drive it in Chromium with its bridge wired to the real CLI. Note the
+  # pytest job above runs with no Node at all — deleting app/ must leave the
+  # system fully functional, and that job is the proof.
   e2e:
     runs-on: ubuntu-latest
     steps:
@@ -39,6 +41,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: app/ui/package-lock.json
+
+      - name: Build the dashboard
+        run: |
+          npm ci --prefix app/ui
+          npm run build --prefix app/ui
 
       - name: Install
         run: |

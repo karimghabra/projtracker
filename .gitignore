@@ -37,6 +37,8 @@ build/
 app/src-tauri/target/
 app/src-tauri/gen/
 app/src-tauri/binaries/
+app/dist/
+app/ui/node_modules/
 .claude/settings.local.json
 
 # stray artefact of a broken shell command in an earlier session; left on disk

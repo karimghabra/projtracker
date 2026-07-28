@@ -49,11 +49,13 @@ python -m pytest -q
 ```
 
 The dashboard has its own end-to-end suite. Playwright cannot drive a Tauri
-window, but it does not need to: the frontend is logic-free static HTML whose
-only door is `invoke("pt", …)`, so the tests load it in Chromium with that door
-wired to the real CLI. They skip cleanly when Playwright is absent.
+window, but it does not need to: the frontend is a logic-free static build
+whose only door is `invoke("pt", …)`, so the tests load it in Chromium with
+that door wired to the real CLI. They skip cleanly when Playwright is absent
+or the frontend has not been built.
 
 ```bash
+npm --prefix app/ui install && npm --prefix app/ui run build
 python -m pip install playwright && python -m playwright install chromium
 python -m pytest tests/e2e -q
 ```
@@ -72,14 +74,25 @@ python -m protracker.cli --db mine.db upcoming          # reminders in waiting
 
 ## The desktop app
 
+The frontend is a React + Vite app in `app/ui` that builds into `app/dist`,
+which the Tauri shell serves:
+
 ```bash
+npm --prefix app/ui install
+npm --prefix app/ui run build          # emits app/dist
 cargo build --manifest-path app/src-tauri/Cargo.toml
 "app/src-tauri/target/debug/protracker-app.exe"
 ```
 
-On first launch open **Settings** and point it at this directory and a database
-file. **Import…** ingests a workbook; **Add…** creates nodes; **Done** completes
-a task and reports what it freed.
+For UI work, `npm --prefix app/ui run dev` serves the full app in a plain
+browser — a dev-only Vite middleware stands in for the shell and runs the
+real CLI against `ui-dev.db` in the repo root.
+
+On first launch a **setup screen** asks for a database (create or open) and
+offers to import a workbook or start empty. **Import…** previews what each
+sheet will do before anything is written; **Add…** creates nodes (including
+standalone planner tasks); ticking a task completes it and reports what it
+freed. **Today**, **Upcoming**, and **Journal** live in the sidebar.
 
 The app shells out to the CLI with an argv list — never a shell string — so
 nothing typed into a dialog can be interpreted as a command.

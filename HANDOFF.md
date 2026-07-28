@@ -41,7 +41,7 @@ passing** (`python -m pytest -q`). Requires `openpyxl` and `pytest`.
 | `protracker/augment.py` | Offline LLM pipeline. `--emit-prompt` / `--proposals` / `--dry-run`. No network path exists |
 | `protracker/graphview.py` + `graph_template.html` | Self-contained interactive HTML view |
 | `app/src-tauri/` | Tauri shell. One Rust command: run the CLI with `--json`, return parsed JSON. Argv list, never a shell string |
-| `app/dist/index.html` | Dashboard: project health, impact-ranked ready list, import/add dialogs |
+| `app/ui/` | Dashboard source: React + TypeScript + Vite, builds into `app/dist` (gitignored). Talks only through `window.__TAURI__.core.invoke`; a dev-only Vite middleware stands in for the shell so `npm run dev` works in a plain browser |
 
 Fixtures live in `tests/fixtures/` and are synthetic (a coffee shop).
 `ANSWER_KEY_EDGES` in `test_importer.py` is the enrichment answer key.
@@ -125,8 +125,13 @@ Fixtures live in `tests/fixtures/` and are synthetic (a coffee shop).
    canonical yet.
 3. **Storage inversion** (text-as-truth, spec §4.1) deferred until open question
    11 (serialisation format) is decided; recommended before M2 closes.
-4. **No import/export file picker** in the app — paths are typed. Adding one
-   means Tauri's dialog plugin.
+4. **No native file picker yet** — paths are typed (quoted paths accepted).
+   The frontend already feature-detects `window.__TAURI__.dialog.open` and
+   falls back to the text input, so wiring `tauri-plugin-dialog` into the
+   shell (Cargo dep + `.plugin(tauri_plugin_dialog::init())` + capability)
+   lights the picker up with no frontend change. Left out deliberately: the
+   Rust side cannot be compile-verified in the environment this change was
+   authored in.
 
 ## Cheat sheet
 
