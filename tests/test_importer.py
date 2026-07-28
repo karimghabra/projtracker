@@ -680,3 +680,51 @@ def test_health_and_completion_survive_an_export_round_trip(c, tmp_path):
     after = {n["name"]: (n["health"], n["status"])
              for n in c2.list_nodes(kind="task")}
     assert after == before
+
+
+# --- paths that arrive from a human ---------------------------------------
+#
+# The desktop app passes argv straight to the CLI so nothing typed into a
+# dialog can be read as a shell command. That also means no shell strips the
+# quotes Windows Explorer's "Copy as path" puts around a path, and they end up
+# inside the filename: the extension check then fails on `.xlsx"`.
+
+
+def test_quoted_paths_are_accepted(c):
+    from protracker.commands import normalize_path
+
+    assert normalize_path('"C:\a\b.xlsx"') == "C:\a\b.xlsx"
+    assert normalize_path("'C:\a\b.xlsx'") == "C:\a\b.xlsx"
+    assert normalize_path('  "C:\a\b.xlsx"  ') == "C:\a\b.xlsx"
+    assert normalize_path("C:\a\b.xlsx") == "C:\a\b.xlsx"
+    assert normalize_path("") == ""
+
+
+def test_import_accepts_a_path_copied_with_quotes(c):
+    r = c.import_excel(f'"{SPARSE}"')
+    assert len(r["created"]) == 96
+
+
+def test_import_of_a_non_workbook_is_a_structured_error(c, tmp_path):
+    junk = tmp_path / "notes.txt"
+    junk.write_text("this is not a workbook", encoding="utf8")
+    with pytest.raises(CommandError) as ei:
+        c.import_excel(str(junk))
+    assert ei.value.code == "unreadable_workbook"
+    assert "could not read" in ei.value.message
+
+
+def test_import_of_a_truncated_workbook_is_a_structured_error(c, tmp_path):
+    broken = tmp_path / "broken.xlsx"
+    broken.write_bytes(SPARSE.read_bytes()[:400])  # valid name, corrupt content
+    with pytest.raises(CommandError) as ei:
+        c.import_excel(str(broken))
+    assert ei.value.code == "unreadable_workbook"
+
+
+def test_export_accepts_a_quoted_path(c, tmp_path):
+    c.import_excel(str(SPARSE))
+    out = tmp_path / "out.xlsx"
+    r = c.export_excel(f'"{out}"')
+    assert r["exported"] == str(out)
+    assert out.exists()

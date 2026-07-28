@@ -722,8 +722,20 @@ $("btnImport").onclick = () => {
   $("impDlg").showModal();
 };
 $("impCancel").onclick = () => $("impDlg").close();
+/* Explorer's "Copy as path" yields a quoted path. Argv goes straight to the
+   CLI with no shell to strip them, so clean them here too and show the user
+   the cleaned value rather than silently sending something else. */
+function cleanPath(raw) {
+  let p = (raw || "").trim();
+  while (p.length >= 2 && p[0] === p[p.length - 1] && (p[0] === '"' || p[0] === "'")) {
+    p = p.slice(1, -1).trim();
+  }
+  return p;
+}
+
 $("impOk").onclick = async () => {
-  const path = $("impPath").value.trim();
+  const path = cleanPath($("impPath").value);
+  $("impPath").value = path;
   if (!path) return toast("Give the workbook's name or full path.", true);
   $("impOk").disabled = true;
   try {

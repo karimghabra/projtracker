@@ -244,6 +244,43 @@ def test_import_dialog_ingests_a_workbook(page, tmp_path):
     expect(page.locator("#tree")).to_contain_text("Aqueduct Repair")
 
 
+def test_import_accepts_a_path_copied_from_explorer(page, tmp_path):
+    """Explorer's "Copy as path" wraps the path in quotes and argv carries
+    them through, so the extension check used to fail on `.xlsx"`."""
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Quoted"
+    for col, head in enumerate(("Project", "Milestone", "Goal", "Task", "Notes"), 1):
+        ws.cell(row=1, column=col, value=head)
+    ws["A2"] = "Quoted Path Project"
+    ws["B3"] = "Phase"
+    ws["C4"] = "Goal"
+    ws["D5"] = "A task"
+    book = tmp_path / "quoted.xlsx"
+    wb.save(book)
+
+    page.locator("#btnImport").click()
+    page.locator("#impPath").fill(f'"{book}"')          # exactly what is pasted
+    page.locator("#impOk").click()
+    expect(page.locator(".toast").first).to_contain_text("Imported:")
+    expect(page.locator("#tree")).to_contain_text("Quoted Path Project")
+
+
+def test_import_of_an_unreadable_file_reports_a_usable_error(page, tmp_path):
+    junk = tmp_path / "notes.txt"
+    junk.write_text("not a workbook", encoding="utf8")
+    page.locator("#btnImport").click()
+    page.locator("#impPath").fill(str(junk))
+    page.locator("#impOk").click()
+    toast = page.locator(".toast.err").first
+    expect(toast).to_be_visible()
+    # a real reason, not a traceback and not {"name":"Error"}
+    expect(toast).to_contain_text("could not read")
+    assert "Traceback" not in toast.inner_text()
+
+
 def test_import_of_a_missing_workbook_reports_a_usable_error(page):
     page.locator("#btnImport").click()
     page.locator("#impPath").fill("no-such-workbook.xlsx")

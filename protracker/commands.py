@@ -30,6 +30,21 @@ UPDATABLE_FIELDS = {
 KIND_BY_DEPTH = ("project", "milestone", "goal", "task")
 
 
+def normalize_path(raw: str) -> str:
+    """Trim a filesystem path that came from a human.
+
+    Windows Explorer's "Copy as path" wraps the path in double quotes, and a
+    client that passes argv straight through -- which the desktop app does on
+    purpose, so nothing typed can be interpreted as a shell command -- has no
+    shell to strip them. The quotes then become part of the filename and the
+    extension check fails on `.xlsx"`.
+    """
+    p = (raw or "").strip()
+    while len(p) >= 2 and p[0] == p[-1] and p[0] in "\"'":
+        p = p[1:-1].strip()
+    return p
+
+
 class CommandError(Exception):
     def __init__(self, code: str, message: str, details: dict | None = None):
         self.code = code
@@ -435,10 +450,21 @@ class Commands:
         user-set order; an explicit Seq column is user provenance."""
         from .importer import classify_workbook, generate_ref, read_workbook_rows
 
+        path = normalize_path(path)
         try:
             sheets = read_workbook_rows(path)
         except FileNotFoundError:
             raise CommandError("not_found", f"workbook not found: {path}") from None
+        except CommandError:
+            raise
+        except Exception as exc:
+            # openpyxl raises InvalidFileException for the wrong format, and
+            # zipfile/OSError for a truncated or locked file. Any of them used
+            # to escape as a traceback, which a GUI client can only show raw.
+            raise CommandError(
+                "unreadable_workbook",
+                f"could not read {path}: {exc}",
+            ) from None
         plan = classify_workbook(sheets)
 
         pre = self._graph()
@@ -628,9 +654,15 @@ class Commands:
         cell content."""
         from .exporter import build_export, write_workbook
 
+        path = normalize_path(path)  # same quoted-path hazard as import
         g = self._graph()
         sheets, node_count = build_export(g)
-        write_workbook(path, sheets)
+        try:
+            write_workbook(path, sheets)
+        except OSError as exc:
+            raise CommandError(
+                "unwritable_path", f"could not write {path}: {exc}"
+            ) from None
         return {"exported": path, "sheets": len(sheets), "nodes": node_count}
 
     # --- query verbs ---
