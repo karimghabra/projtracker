@@ -56,6 +56,11 @@ class Node:
     # tasks only: when set, completing this task auto-creates a follow-up
     # task that becomes ready this many days later (earliest_start gating)
     followup_days: int | None = None
+    # tasks only: 1 marks a reminder — it lands on the Today list by itself
+    # the day its earliest_start arrives (planner tasks spawned by follow-up
+    # timers and `remind` verbs carry this; ordinary date-gated pipeline
+    # tasks do not, so arriving dates never spam the curated list)
+    remind: int | None = None
     created_at: str | None = None
     completed_at: str | None = None
 

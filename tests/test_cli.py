@@ -149,3 +149,66 @@ def test_progress_and_impact_human_output_smoke(capsys, db):
     assert "Bridge" in capsys.readouterr().out
     assert main(["--db", db, "ready", "--impact"]) == 0
     assert "unlocks" in capsys.readouterr().out
+
+
+def test_today_cli_roundtrip(capsys, db):
+    ids = scenario(capsys, db)
+    code, r = run(capsys, db, "today", "new", "call the bank")
+    assert code == 0
+    quick = r["created"]["id"]
+    code, r = run(capsys, db, "today", "add", str(ids["t1"]))
+    assert code == 0
+    code, r = run(capsys, db, "today")
+    assert [t["id"] for t in r["items"]] == [quick, ids["t1"]]
+    code, r = run(capsys, db, "today", "move", str(ids["t1"]), "1")
+    assert r["order"] == [ids["t1"], quick]
+    code, r = run(capsys, db, "today", "rm", str(quick))
+    assert r["removed"] == quick
+    assert main(["--db", db, "today"]) == 0  # human output smoke
+
+
+def test_remind_and_upcoming_cli(capsys, db):
+    ids = scenario(capsys, db)
+    code, r = run(capsys, db, "remind", str(ids["t1"]), "--in", "3")
+    assert code == 0
+    assert r["planned"]["name"] == "Follow up: Find supplier"
+    code, r = run(capsys, db, "remind", "--new", "chase invoice",
+                  "--on", "2099-01-05")
+    assert code == 0
+    code, r = run(capsys, db, "upcoming")
+    assert code == 0
+    assert len(r) == 2
+    assert main(["--db", db, "upcoming"]) == 0
+
+
+def test_notes_cli(capsys, db):
+    ids = scenario(capsys, db)
+    code, r = run(capsys, db, "capture", "steel note", "--node", str(ids["t1"]))
+    assert code == 0
+    note_id = r["captured"]["id"]
+    code, r = run(capsys, db, "notes", "ls", "--node", str(ids["t1"]))
+    assert [n["id"] for n in r] == [note_id]
+    code, r = run(capsys, db, "notes", "search", "steel")
+    assert [n["id"] for n in r] == [note_id]
+    code, r = run(capsys, db, "notes", "rm", str(note_id))
+    assert r["deleted_note"] == note_id
+    code, r = run(capsys, db, "journal", "--days", "1",
+                  "--until", "2026-01-01")
+    assert code == 0 and r[0]["date"] == "2026-01-01"
+
+
+def test_add_priority_and_followup_flags(capsys, db):
+    code, r = run(capsys, db, "add", "task", "x", "--priority", "high",
+                  "--followup-days", "2")
+    assert code == 0
+    assert r["created"]["priority"] == "high"
+    assert r["created"]["followup_days"] == 2
+
+
+def test_rm_force_flag(capsys, db):
+    ids = scenario(capsys, db)
+    run(capsys, db, "done", str(ids["t1"]))
+    code, r = run(capsys, db, "rm", str(ids["p"]), "--yes")
+    assert code == 1 and r["error"]["code"] == "completed_node"
+    code, r = run(capsys, db, "rm", str(ids["p"]), "--yes", "--force")
+    assert code == 0 and ids["p"] in r["deleted"]

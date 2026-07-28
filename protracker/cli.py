@@ -34,6 +34,11 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--weight", type=float, default=1.0)
     a.add_argument("--est", type=int, help="estimated minutes")
     a.add_argument("--tags", help="comma-separated tags")
+    a.add_argument("--priority", choices=["pinned", "high", "normal", "low"])
+    a.add_argument(
+        "--followup-days", dest="followup_days", type=int,
+        help="auto-create a follow-up reminder N days after completion",
+    )
 
     ls = sub.add_parser("ls", help="list nodes")
     ls.add_argument("--kind", choices=["project", "milestone", "goal", "task"])
@@ -70,6 +75,10 @@ def build_parser() -> argparse.ArgumentParser:
     rm = sub.add_parser("rm", help="delete a node (previews unless --yes)")
     rm.add_argument("id", type=int)
     rm.add_argument("--yes", action="store_true")
+    rm.add_argument(
+        "--force", action="store_true",
+        help="allow deleting a subtree that contains completed work",
+    )
 
     dep = sub.add_parser("dep", help="manage dependencies")
     dsub = dep.add_subparsers(dest="dep_cmd", required=True)
@@ -113,10 +122,61 @@ def build_parser() -> argparse.ArgumentParser:
     cap = sub.add_parser("capture", help="append a note to today's journal")
     cap.add_argument("text")
     cap.add_argument("--date", default=None, help="YYYY-MM-DD (default today)")
+    cap.add_argument(
+        "--node", type=int, default=None,
+        help="attach the note to a node instead of the plain journal",
+    )
     jr = sub.add_parser(
         "journal", help="per-day history: completions and captured notes"
     )
     jr.add_argument("--days", type=int, default=1)
+    jr.add_argument(
+        "--until", default=None,
+        help="last day of the window, YYYY-MM-DD (default today)",
+    )
+
+    notes = sub.add_parser("notes", help="browse, search, and delete notes")
+    nsub = notes.add_subparsers(dest="notes_cmd", required=True)
+    nls = nsub.add_parser("ls", help="notes attached to a node")
+    nls.add_argument("--node", type=int, required=True)
+    nsearch = nsub.add_parser("search", help="substring search over all notes")
+    nsearch.add_argument("query")
+    nrm = nsub.add_parser("rm", help="delete one note")
+    nrm.add_argument("id", type=int)
+
+    td = sub.add_parser("today", help="the curated daily list")
+    tsub = td.add_subparsers(dest="today_cmd")
+    ta = tsub.add_parser("add", help="pull a task onto today's list")
+    ta.add_argument("id", type=int)
+    ta.add_argument("--pos", type=int, default=None, help="1-based position")
+    tn = tsub.add_parser("new", help="quick-add a planner task to the list")
+    tn.add_argument("name")
+    tn.add_argument("--desc")
+    tn.add_argument("--priority", choices=["pinned", "high", "normal", "low"])
+    trm = tsub.add_parser("rm", help="take a task off the list")
+    trm.add_argument("id", type=int)
+    tmv = tsub.add_parser("move", help="reorder a listed task")
+    tmv.add_argument("id", type=int)
+    tmv.add_argument("pos", type=int)
+
+    rem = sub.add_parser(
+        "remind", help="plan a reminder for a future day"
+    )
+    rem.add_argument(
+        "id", type=int, nargs="?",
+        help="task to follow up on (omit with --new)",
+    )
+    rem.add_argument("--new", dest="new_name", help="standalone reminder text")
+    rem.add_argument("--in", dest="in_days", type=int, help="due in N days")
+    rem.add_argument("--on", dest="on_date", help="due on YYYY-MM-DD")
+    rem.add_argument("--desc")
+    rem.add_argument(
+        "--priority", choices=["pinned", "high", "normal", "low"]
+    )
+
+    sub.add_parser(
+        "upcoming", help="what is waiting on a date, soonest first"
+    )
 
     start = sub.add_parser("start", help="mark a task in progress")
     start.add_argument("id", type=int)
@@ -149,6 +209,8 @@ def dispatch(args: argparse.Namespace, c: Commands):
             weight=args.weight,
             est_minutes=args.est,
             tags=_split_tags(args.tags),
+            priority=args.priority,
+            followup_days=args.followup_days,
         )
     if cmd == "ls":
         parent = args.parent if args.parent is not None else UNSET
@@ -188,7 +250,7 @@ def dispatch(args: argparse.Namespace, c: Commands):
             args.id, None if args.root else args.parent, seq_index=args.seq
         )
     if cmd == "rm":
-        return c.delete_node(args.id, confirm=args.yes)
+        return c.delete_node(args.id, confirm=args.yes, force=args.force)
     if cmd == "dep":
         if args.dep_cmd == "add":
             return c.add_dependency(args.from_id, args.to_id, note=args.note)
@@ -208,9 +270,38 @@ def dispatch(args: argparse.Namespace, c: Commands):
     if cmd == "progress":
         return c.progress(days=args.days)
     if cmd == "capture":
-        return c.capture(args.text, date_str=args.date)
+        return c.capture(args.text, date_str=args.date, node_id=args.node)
     if cmd == "journal":
-        return c.journal(days=args.days)
+        return c.journal(days=args.days, until=args.until)
+    if cmd == "notes":
+        if args.notes_cmd == "ls":
+            return c.node_notes(args.node)
+        if args.notes_cmd == "search":
+            return c.search_notes(args.query)
+        return c.delete_note(args.id)
+    if cmd == "today":
+        if args.today_cmd == "add":
+            return c.today_add(args.id, position=args.pos)
+        if args.today_cmd == "new":
+            return c.today_quick_add(
+                args.name, description=args.desc, priority=args.priority
+            )
+        if args.today_cmd == "rm":
+            return c.today_remove(args.id)
+        if args.today_cmd == "move":
+            return c.today_reorder(args.id, args.pos)
+        return c.today()
+    if cmd == "remind":
+        return c.plan_followup(
+            node_id=args.id,
+            name=args.new_name,
+            days=args.in_days,
+            on_date=args.on_date,
+            description=args.desc,
+            priority=args.priority,
+        )
+    if cmd == "upcoming":
+        return c.upcoming()
     if cmd == "start":
         return c.start_task(args.id)
     if cmd == "done":
@@ -252,7 +343,52 @@ def print_human(result, cmd: str):
             print(line)
     elif cmd == "capture":
         n = result["captured"]
-        print(f"captured note #{n['id']} for {n['date']}")
+        where = f" on '{n['node_name']}'" if n.get("node_name") else ""
+        print(f"captured note #{n['id']} for {n['date']}{where}")
+    elif cmd == "notes":
+        if isinstance(result, dict) and "deleted_note" in result:
+            print(f"deleted note #{result['deleted_note']}")
+        elif not result:
+            print("(none)")
+        else:
+            for n in result:
+                where = f"  [{n['node_name']}]" if n.get("node_name") else ""
+                print(f"#{n['id']} {n['date']}{where}  {n['text']}")
+    elif cmd == "today":
+        if "items" in result:  # the list itself
+            print(f"today {result['date']}:")
+            if not result["items"]:
+                print("(nothing planned)")
+            for t in result["items"]:
+                line = _fmt_task_line(t)
+                if t.get("rolled_over"):
+                    line += "  (rolled over)"
+                if t.get("source") == "reminder":
+                    line += "  (reminder)"
+                print(line)
+            if result["completed_today"]:
+                print(f"completed today: "
+                      f"{', '.join(t['name'] for t in result['completed_today'])}")
+        elif "created" in result:  # quick-add
+            n = result["created"]
+            print(f"created task #{n['id']} '{n['name']}' and added to today")
+        elif "added" in result:
+            t = result["added"]
+            print(f"added #{t['id']} '{t['name']}' at position {t['planned_pos']}")
+        elif "removed" in result:
+            print(f"removed #{result['removed']} from today")
+        elif "order" in result:
+            print("order: " + ", ".join(f"#{i}" for i in result["order"]))
+    elif cmd == "remind":
+        n = result["planned"]
+        print(f"planned reminder #{n['id']} '{n['name']}' for {result['due']}")
+    elif cmd == "upcoming":
+        if not result:
+            print("(nothing waiting)")
+        for t in result:
+            project = f"  [{t['project_name']}]" if t.get("project_name") else ""
+            mark = "  (reminder)" if t.get("remind") else ""
+            print(f"#{t['id']:<4} {t['until']}  {t['name']}{mark}{project}")
     elif cmd == "journal":
         for day in result:
             print(f"{day['date']}: {len(day['completed'])} completed, "
@@ -314,6 +450,9 @@ def print_human(result, cmd: str):
         if result.get("requires_confirm"):
             n = result["node"]
             print(f"#{n['id']} '{n['name']}' has dependents; re-run with --yes")
+            if result.get("completed_count"):
+                print(f"  WARNING: deletes {result['completed_count']} "
+                      f"completed task(s) — estimation training data")
             for d in result["descendants"]:
                 print(f"  would delete #{d['id']} '{d['name']}'")
             for d in result["removed_dependencies"]:

@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS nodes (
     health        TEXT,                           -- quarter outlook (tasks only)
     priority      TEXT,                           -- pinned/high/normal/low (tasks)
     followup_days INTEGER,                        -- auto follow-up on completion
+    remind        INTEGER,                        -- 1 = auto-lands on Today at earliest_start
     created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     completed_at  TIMESTAMP
 );
@@ -53,7 +54,8 @@ CREATE TABLE IF NOT EXISTS daily_notes (
     id         INTEGER PRIMARY KEY,
     date       DATE NOT NULL,                     -- the day the note belongs to
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    text       TEXT NOT NULL
+    text       TEXT NOT NULL,
+    node_id    INTEGER REFERENCES nodes(id)       -- NULL = daily journal note
 );
 
 CREATE TABLE IF NOT EXISTS schedule_log (
@@ -62,7 +64,17 @@ CREATE TABLE IF NOT EXISTS schedule_log (
     node_id     INTEGER NOT NULL REFERENCES nodes(id),
     planned_pos INTEGER,
     planned_minutes INTEGER,
-    outcome     TEXT   -- 'done' | 'partial' | 'skipped' | 'deferred'
+    outcome     TEXT,  -- 'done' | 'partial' | 'skipped' | 'deferred'; NULL = open
+    source      TEXT   -- 'manual' | 'quick' | 'reminder'; NULL rows are inert
+);
+
+CREATE TABLE IF NOT EXISTS import_sources (
+    id               INTEGER PRIMARY KEY,
+    filename         TEXT NOT NULL,               -- workbook basename, lowercased
+    file_project     TEXT NOT NULL,               -- project name as named in the file
+    project_id       INTEGER NOT NULL REFERENCES nodes(id),
+    last_imported_at TIMESTAMP,
+    UNIQUE (filename, file_project)
 );
 """
 
@@ -70,7 +82,7 @@ NODE_COLUMNS = (
     "kind", "parent_id", "name", "description", "status", "seq_index",
     "seq_source", "deadline", "earliest_start", "weight", "est_minutes",
     "est_source", "actual_minutes", "tags", "ref", "health", "priority",
-    "followup_days", "completed_at",
+    "followup_days", "remind", "completed_at",
 )
 
 
@@ -80,16 +92,30 @@ class Repository:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.executescript(SCHEMA)
-        # forward-compat: databases created before seq_source existed
-        cols = {r[1] for r in self.conn.execute("PRAGMA table_info(nodes)")}
-        types = {"followup_days": "INTEGER"}
-        for missing in {"seq_source", "ref", "health", "priority",
-                        "followup_days"} - cols:
-            self.conn.execute(
-                f"ALTER TABLE nodes ADD COLUMN {missing} "
-                f"{types.get(missing, 'TEXT')}"
-            )
+        # forward-compat: databases created before these columns existed
+        self._ensure_columns("nodes", {
+            "seq_source": "TEXT", "ref": "TEXT", "health": "TEXT",
+            "priority": "TEXT", "followup_days": "INTEGER",
+            "remind": "INTEGER",
+        })
+        self._ensure_columns("daily_notes", {
+            "node_id": "INTEGER REFERENCES nodes(id)",
+        })
+        self._ensure_columns("schedule_log", {"source": "TEXT"})
+        # one Today-list row per (day, task); tombstones share the slot
+        self.conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_schedule_day_node "
+            "ON schedule_log(date, node_id)"
+        )
         self.conn.commit()
+
+    def _ensure_columns(self, table: str, wanted: dict[str, str]):
+        cols = {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})")}
+        for name, decl in wanted.items():
+            if name not in cols:
+                self.conn.execute(
+                    f"ALTER TABLE {table} ADD COLUMN {name} {decl}"
+                )
 
     def close(self):
         self.conn.close()
@@ -118,6 +144,7 @@ class Repository:
             health=row["health"],
             priority=row["priority"],
             followup_days=row["followup_days"],
+            remind=row["remind"],
             created_at=row["created_at"],
             completed_at=row["completed_at"],
         )
@@ -203,9 +230,10 @@ class Repository:
 
     # --- daily notes (the capture stream, SQLite edition) ---
 
-    def add_note(self, date: str, text: str) -> dict:
+    def add_note(self, date: str, text: str, node_id: int | None = None) -> dict:
         cur = self.conn.execute(
-            "INSERT INTO daily_notes (date, text) VALUES (?, ?)", (date, text)
+            "INSERT INTO daily_notes (date, text, node_id) VALUES (?, ?, ?)",
+            (date, text, node_id),
         )
         self.conn.commit()
         row = self.conn.execute(
@@ -219,12 +247,131 @@ class Repository:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def notes_for_node(self, node_id: int) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT * FROM daily_notes WHERE node_id = ? "
+            "ORDER BY date DESC, id DESC",
+            (node_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def search_notes(self, query: str) -> list[dict]:
+        # substring match, case-insensitive for ASCII (SQLite LIKE default)
+        escaped = (
+            query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        )
+        rows = self.conn.execute(
+            "SELECT * FROM daily_notes WHERE text LIKE ? ESCAPE '\\' "
+            "ORDER BY date DESC, id DESC",
+            (f"%{escaped}%",),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def delete_note(self, note_id: int) -> bool:
         cur = self.conn.execute(
             "DELETE FROM daily_notes WHERE id = ?", (note_id,)
         )
         self.conn.commit()
         return cur.rowcount > 0
+
+    def delete_notes_for_nodes(self, node_ids: list[int]):
+        qs = ", ".join("?" for _ in node_ids)
+        self.conn.execute(
+            f"DELETE FROM daily_notes WHERE node_id IN ({qs})", node_ids
+        )
+        self.conn.commit()
+
+    # --- Today list (schedule_log) ---
+    # A row means "task N was put on the list on day D". outcome NULL = still
+    # open; an open row from an earlier day reads as rolled over. Rows with
+    # source NULL predate this feature and are inert.
+
+    def add_today_row(
+        self, date: str, node_id: int, planned_pos: int | None, source: str
+    ) -> dict:
+        cur = self.conn.execute(
+            "INSERT INTO schedule_log (date, node_id, planned_pos, source) "
+            "VALUES (?, ?, ?, ?)",
+            (date, node_id, planned_pos, source),
+        )
+        self.conn.commit()
+        return self.today_row(cur.lastrowid)
+
+    def today_row(self, row_id: int) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM schedule_log WHERE id = ?", (row_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def open_today_rows(self, upto_date: str) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT * FROM schedule_log "
+            "WHERE outcome IS NULL AND source IS NOT NULL AND date <= ? "
+            "ORDER BY planned_pos IS NULL, planned_pos, id",
+            (upto_date,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def today_rows_for_node(
+        self, node_id: int, open_only: bool = False
+    ) -> list[dict]:
+        cond = " AND outcome IS NULL" if open_only else ""
+        rows = self.conn.execute(
+            "SELECT * FROM schedule_log "
+            f"WHERE node_id = ? AND source IS NOT NULL{cond} ORDER BY id",
+            (node_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def update_today_row(self, row_id: int, **fields):
+        assert fields
+        sets = ", ".join(f"{c} = ?" for c in fields)
+        self.conn.execute(
+            f"UPDATE schedule_log SET {sets} WHERE id = ?",
+            (*fields.values(), row_id),
+        )
+        self.conn.commit()
+
+    def delete_today_rows_for_nodes(self, node_ids: list[int]):
+        qs = ", ".join("?" for _ in node_ids)
+        self.conn.execute(
+            f"DELETE FROM schedule_log WHERE node_id IN ({qs})", node_ids
+        )
+        self.conn.commit()
+
+    # --- import provenance ---
+
+    def record_import_source(
+        self, filename: str, file_project: str, project_id: int,
+        imported_at: str,
+    ):
+        self.conn.execute(
+            "INSERT INTO import_sources "
+            "(filename, file_project, project_id, last_imported_at) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(filename, file_project) DO UPDATE SET "
+            "project_id = excluded.project_id, "
+            "last_imported_at = excluded.last_imported_at",
+            (filename, file_project, project_id, imported_at),
+        )
+        self.conn.commit()
+
+    def import_source_for(
+        self, filename: str, file_project: str
+    ) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM import_sources "
+            "WHERE filename = ? AND file_project = ?",
+            (filename, file_project),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def delete_import_sources_for_nodes(self, node_ids: list[int]):
+        qs = ", ".join("?" for _ in node_ids)
+        self.conn.execute(
+            f"DELETE FROM import_sources WHERE project_id IN ({qs})", node_ids
+        )
+        self.conn.commit()
 
     def all_dependencies(self) -> list[Dependency]:
         rows = self.conn.execute(

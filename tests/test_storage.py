@@ -82,3 +82,79 @@ def test_delete_node(repo):
     n = repo.add_node(Node(kind="task", name="gone"))
     repo.delete_node(n.id)
     assert repo.get_node(n.id) is None
+
+
+def test_migration_from_pre_today_schema(tmp_path):
+    """A DB created before remind/node_id/source/import_sources existed must
+    open cleanly, gain the new columns, and keep its data."""
+    import sqlite3
+
+    path = str(tmp_path / "old.db")
+    conn = sqlite3.connect(path)
+    conn.executescript("""
+        CREATE TABLE nodes (
+            id INTEGER PRIMARY KEY, kind TEXT NOT NULL, parent_id INTEGER,
+            name TEXT NOT NULL, description TEXT,
+            status TEXT NOT NULL DEFAULT 'active', seq_index INTEGER,
+            deadline DATE, earliest_start DATE, weight REAL DEFAULT 1.0,
+            est_minutes INTEGER, est_source TEXT, actual_minutes INTEGER,
+            tags TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            completed_at TIMESTAMP
+        );
+        CREATE TABLE dependencies (
+            id INTEGER PRIMARY KEY, from_id INTEGER NOT NULL,
+            to_id INTEGER NOT NULL, note TEXT, UNIQUE (from_id, to_id)
+        );
+        CREATE TABLE daily_notes (
+            id INTEGER PRIMARY KEY, date DATE NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            text TEXT NOT NULL
+        );
+        CREATE TABLE schedule_log (
+            id INTEGER PRIMARY KEY, date DATE NOT NULL,
+            node_id INTEGER NOT NULL, planned_pos INTEGER,
+            planned_minutes INTEGER, outcome TEXT
+        );
+        INSERT INTO nodes (kind, name) VALUES ('project', 'Old');
+        INSERT INTO daily_notes (date, text) VALUES ('2026-01-01', 'kept');
+        INSERT INTO schedule_log (date, node_id) VALUES ('2026-01-01', 1);
+    """)
+    conn.commit()
+    conn.close()
+
+    repo = Repository(path)
+    n = repo.all_nodes()[0]
+    assert n.name == "Old" and n.remind is None
+    assert repo.notes_for("2026-01-01")[0]["text"] == "kept"
+    assert repo.notes_for("2026-01-01")[0]["node_id"] is None
+    # legacy schedule_log rows (source NULL) are inert, not Today items
+    assert repo.open_today_rows("2026-07-28") == []
+    tables = {
+        row["name"]
+        for row in repo.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+    }
+    assert "import_sources" in tables
+    repo.close()
+
+
+def test_today_rows_roundtrip(repo):
+    n = repo.add_node(Node(kind="task", name="t"))
+    row = repo.add_today_row("2026-07-28", n.id, 1, "manual")
+    assert row["planned_pos"] == 1 and row["outcome"] is None
+    assert [r["id"] for r in repo.open_today_rows("2026-07-28")] == [row["id"]]
+    assert repo.open_today_rows("2026-07-27") == []  # future rows invisible
+    repo.update_today_row(row["id"], outcome="done")
+    assert repo.open_today_rows("2026-07-28") == []
+    assert repo.today_rows_for_node(n.id)[0]["outcome"] == "done"
+
+
+def test_import_source_upsert(repo):
+    p = repo.add_node(Node(kind="project", name="P"))
+    repo.record_import_source("t.xlsx", "P", p.id, "2026-07-28T09:00:00")
+    repo.record_import_source("t.xlsx", "P", p.id, "2026-07-29T09:00:00")
+    row = repo.import_source_for("t.xlsx", "P")
+    assert row["project_id"] == p.id
+    assert row["last_imported_at"].startswith("2026-07-29")
+    assert repo.import_source_for("other.xlsx", "P") is None

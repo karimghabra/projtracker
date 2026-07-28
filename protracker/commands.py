@@ -27,7 +27,7 @@ from .storage import UNSET, Repository
 UPDATABLE_FIELDS = {
     "name", "description", "deadline", "earliest_start", "weight",
     "est_minutes", "est_source", "tags", "seq_index", "status",
-    "priority", "followup_days",
+    "priority", "followup_days", "remind",
 }
 
 KIND_BY_DEPTH = ("project", "milestone", "goal", "task")
@@ -119,6 +119,27 @@ class Commands:
                 "invalid_date", f"{field} must be YYYY-MM-DD, got {value!r}"
             ) from None
 
+    @staticmethod
+    def _validate_priority(value, kind: str):
+        if value is not None and value not in PRIORITIES:
+            raise CommandError(
+                "invalid_field",
+                f"priority must be one of {', '.join(PRIORITIES)} (or null)",
+            )
+        if value is not None and kind != "task":
+            raise CommandError("invalid_field", "priority applies to tasks only")
+
+    @staticmethod
+    def _validate_followup_days(value, kind: str):
+        if value is not None and (not isinstance(value, int) or value < 1):
+            raise CommandError(
+                "invalid_field", "followup_days must be a positive integer"
+            )
+        if value is not None and kind != "task":
+            raise CommandError(
+                "invalid_field", "followup_days applies to tasks only"
+            )
+
     def _check_parent(self, kind: str, parent_id: int | None):
         parent_kind = None
         if parent_id is not None:
@@ -159,6 +180,8 @@ class Commands:
         weight: float = 1.0,
         est_minutes: int | None = None,
         tags: list[str] | None = None,
+        priority: str | None = None,
+        followup_days: int | None = None,
     ) -> dict:
         if kind not in KINDS:
             raise CommandError("invalid_kind", f"unknown kind {kind!r}")
@@ -171,6 +194,8 @@ class Commands:
             seq_index = self._next_seq(parent_id)
         self._validate_date(deadline, "deadline")
         self._validate_date(earliest_start, "earliest_start")
+        self._validate_priority(priority, kind)
+        self._validate_followup_days(followup_days, kind)
 
         pre = self._graph()
         node = self.repo.add_node(
@@ -186,6 +211,8 @@ class Commands:
                 weight=weight,
                 est_minutes=est_minutes,
                 tags=tags or [],
+                priority=priority,
+                followup_days=followup_days,
             )
         )
         post = self._graph()
@@ -216,25 +243,18 @@ class Commands:
         if "seq_index" in fields and n.kind != "task":
             raise CommandError("invalid_field", "seq_index applies to tasks only")
         if "priority" in fields:
-            v = fields["priority"]
-            if v is not None and v not in PRIORITIES:
-                raise CommandError(
-                    "invalid_field",
-                    f"priority must be one of {', '.join(PRIORITIES)} (or null)",
-                )
-            if n.kind != "task":
-                raise CommandError(
-                    "invalid_field", "priority applies to tasks only"
-                )
+            self._validate_priority(fields["priority"], n.kind)
         if "followup_days" in fields:
-            v = fields["followup_days"]
-            if v is not None and (not isinstance(v, int) or v < 1):
+            self._validate_followup_days(fields["followup_days"], n.kind)
+        if "remind" in fields:
+            v = fields["remind"]
+            if v not in (None, 0, 1):
                 raise CommandError(
-                    "invalid_field", "followup_days must be a positive integer"
+                    "invalid_field", "remind must be 0, 1, or null"
                 )
-            if n.kind != "task":
+            if v is not None and n.kind != "task":
                 raise CommandError(
-                    "invalid_field", "followup_days applies to tasks only"
+                    "invalid_field", "remind applies to tasks only"
                 )
         self._validate_date(fields.get("deadline"), "deadline")
         self._validate_date(fields.get("earliest_start"), "earliest_start")
@@ -280,18 +300,24 @@ class Commands:
             "status_changes": self._diff(pre, post),
         }
 
-    def delete_node(self, node_id: int, confirm: bool = False) -> dict:
+    def delete_node(
+        self, node_id: int, confirm: bool = False, force: bool = False
+    ) -> dict:
         n = self._require(node_id)
         g = self._graph()
         subtree = self._subtree_ids(g, node_id)
-        if any(
-            g.nodes[i].kind == "task" and g.nodes[i].status == "done"
+        completed_count = sum(
+            1
             for i in subtree
-        ):
+            if g.nodes[i].kind == "task" and g.nodes[i].status == "done"
+        )
+        if completed_count and not force:
             raise CommandError(
                 "completed_node",
                 "completed work is never deleted, only archived (spec 3.3); "
-                "it is the training data for estimation",
+                "it is the training data for estimation. "
+                "Use force to delete anyway",
+                details={"completed_count": completed_count},
             )
         subtree_set = set(subtree)
         touching = [
@@ -311,7 +337,7 @@ class Commands:
         ]
         removed_deps = [asdict(d) for d in touching]
 
-        needs_confirm = len(subtree) > 1 or bool(touching)
+        needs_confirm = len(subtree) > 1 or bool(touching) or completed_count
         if needs_confirm and not confirm:
             return {
                 "deleted": None,
@@ -320,12 +346,17 @@ class Commands:
                 "descendants": [
                     self._node_dict(g.nodes[i], g) for i in subtree if i != node_id
                 ],
+                "completed_count": completed_count,
                 "removed_dependencies": removed_deps,
                 "would_unblock": would_unblock,
             }
 
         for d in touching:
             self.repo.remove_dependency(d.from_id, d.to_id)
+        # referencing rows must go first: FKs are ON without ON DELETE CASCADE
+        self.repo.delete_today_rows_for_nodes(subtree)
+        self.repo.delete_notes_for_nodes(subtree)
+        self.repo.delete_import_sources_for_nodes(subtree)
         for nid in subtree:  # postorder: children first
             self.repo.delete_node(nid)
         post = self._graph()
@@ -445,6 +476,14 @@ class Commands:
             for ch in status_changes
             if ch["to"] == "ready"
         ]
+        # resolve any open Today-list rows: finishing the task is the outcome
+        outcome = "done" if new_status == "done" else "skipped"
+        resolved = []
+        for row in self.repo.today_rows_for_node(node_id, open_only=True):
+            self.repo.update_today_row(row["id"], outcome=outcome)
+            resolved.append(
+                {"id": row["id"], "date": row["date"], "outcome": outcome}
+            )
         key = "completed" if new_status == "done" else "dropped"
         return {
             key: self._node_dict(updated, post),
@@ -452,8 +491,41 @@ class Commands:
             "completed_goals": flips("goal"),
             "completed_milestones": flips("milestone"),
             "completed_projects": flips("project"),
+            "today_resolved": resolved,
             "status_changes": status_changes,
         }
+
+    def _spawn_followup(
+        self,
+        origin: Node | None,
+        name: str,
+        due: str,
+        priority: str | None = None,
+        description: str | None = None,
+    ) -> Node:
+        """Create a reminder: a PLANNER task on purpose — under a goal it
+        would join the sequence pipeline and sit blocked behind every
+        remaining sibling, which defeats "surface this on its day". The
+        origin project rides along as a tag; remind=1 makes it land on the
+        Today list by itself when its earliest_start arrives. followup_days
+        is deliberately not inherited -- no infinite chains."""
+        tags = []
+        if origin is not None:
+            g = self._graph()
+            project = g.project_of(origin.id) if origin.id in g.nodes else None
+            if project:
+                tags = [project.name]
+        return self.repo.add_node(
+            Node(
+                kind="task",
+                name=name,
+                description=description,
+                earliest_start=due,
+                priority=priority,
+                tags=tags,
+                remind=1,
+            )
+        )
 
     def complete_task(self, node_id: int, actual_minutes: int | None = None) -> dict:
         extra = {"completed_at": self._now()}
@@ -462,12 +534,7 @@ class Commands:
         result = self._finish_task(node_id, "done", extra)
 
         # Follow-up timer: completing a task with followup_days set spawns a
-        # reminder that the calendar keeps in 'waiting' until its day arrives.
-        # It is a PLANNER task on purpose: under the goal it would join the
-        # sequence pipeline and sit blocked behind every remaining sibling,
-        # which defeats "surface this N days after completion". The origin
-        # project rides along as a tag. followup_days is deliberately not
-        # inherited -- no infinite chains.
+        # reminder that stays 'waiting' until its day arrives.
         n = self.repo.get_node(node_id)
         if n.followup_days:
             from datetime import date as _date, timedelta
@@ -476,16 +543,8 @@ class Commands:
                 _date.fromisoformat(self._now()[:10])
                 + timedelta(days=int(n.followup_days))
             ).isoformat()
-            g = self._graph()
-            project = g.project_of(n.id) if n.id in g.nodes else None
-            follow = self.repo.add_node(
-                Node(
-                    kind="task",
-                    name=f"Follow up: {n.name}",
-                    earliest_start=due,
-                    priority=n.priority,
-                    tags=[project.name] if project else [],
-                )
+            follow = self._spawn_followup(
+                n, f"Follow up: {n.name}", due, priority=n.priority
             )
             result["followup_created"] = self._node_dict(follow, self._graph())
         return result
@@ -723,41 +782,364 @@ class Commands:
 
     # --- daily notes & journal ---
 
-    def capture(self, text: str, date_str: str | None = None) -> dict:
+    def _named_note(self, note: dict) -> dict:
+        """Attach the node name to a node-linked note so clients need not
+        join ids themselves."""
+        if note.get("node_id"):
+            n = self.repo.get_node(note["node_id"])
+            note["node_name"] = n.name if n else None
+        else:
+            note["node_name"] = None
+        return note
+
+    def capture(
+        self,
+        text: str,
+        date_str: str | None = None,
+        node_id: int | None = None,
+    ) -> dict:
         """Append a thought to the day's notes. Notes are append-only data;
-        nothing parses or mutates them."""
+        nothing parses or mutates them. With node_id the note is attached to
+        that node (any kind) and still appears in the day's journal."""
         if not text or not text.strip():
             raise CommandError("invalid_note", "note text must be non-empty")
+        if node_id is not None:
+            self._require(node_id)
         day = date_str or self._now()[:10]
         self._validate_date(day, "date")
-        return {"captured": self.repo.add_note(day, text.strip())}
+        return {
+            "captured": self._named_note(
+                self.repo.add_note(day, text.strip(), node_id=node_id)
+            )
+        }
 
-    def journal(self, days: int = 1) -> list[dict]:
-        """The last N days, newest first: what was completed and what was
-        captured on each. Imported strikethrough completions carry no
-        timestamp and so never appear -- history begins with the tool."""
+    def journal(self, days: int = 1, until: str | None = None) -> list[dict]:
+        """N days ending at `until` (default today), newest first: what was
+        completed and what was captured on each. Imported strikethrough
+        completions carry no timestamp and so never appear -- history begins
+        with the tool."""
         from datetime import date as _date, timedelta
 
-        today = _date.fromisoformat(self._now()[:10])
+        self._validate_date(until, "until")
+        last = _date.fromisoformat(until or self._now()[:10])
         by_day: dict[str, list] = defaultdict(list)
         for n in self.repo.all_nodes():
             if n.kind == "task" and n.status == "done" and n.completed_at:
                 by_day[n.completed_at[:10]].append(n)
         out = []
         for i in range(max(1, days)):
-            day = (today - timedelta(days=i)).isoformat()
+            day = (last - timedelta(days=i)).isoformat()
             done = sorted(by_day.get(day, []), key=lambda n: n.completed_at)
             out.append({
                 "date": day,
                 "completed": [asdict(n) for n in done],
-                "notes": self.repo.notes_for(day),
+                "notes": [
+                    self._named_note(x) for x in self.repo.notes_for(day)
+                ],
             })
         return out
+
+    def node_notes(self, node_id: int) -> list[dict]:
+        """All notes attached to one node, newest first."""
+        self._require(node_id)
+        return [self._named_note(x) for x in self.repo.notes_for_node(node_id)]
+
+    def search_notes(self, query: str) -> list[dict]:
+        """Substring search over all notes, newest first."""
+        if not query or not query.strip():
+            raise CommandError("invalid_query", "search query must be non-empty")
+        return [
+            self._named_note(x)
+            for x in self.repo.search_notes(query.strip())
+        ]
 
     def delete_note(self, note_id: int) -> dict:
         if not self.repo.delete_note(note_id):
             raise CommandError("not_found", f"note {note_id} not found")
         return {"deleted_note": note_id}
+
+    # --- Today list (curated daily plan) ---
+    #
+    # A schedule_log row is a membership: "this task was put on the list on
+    # day D". The list itself is a pure read — open rows from any earlier day
+    # simply read as rolled over, so no day-rollover mutation ever runs.
+    # Resolution is stamped where it happens: complete/drop stamp 'done' /
+    # 'skipped', explicit removal stamps 'deferred' (which doubles as the
+    # tombstone that keeps a dismissed reminder from re-landing).
+
+    def _today_item(self, g: Graph, n: Node, row: dict | None, today: str) -> dict:
+        d = self._node_dict(n, g)
+        project = g.project_of(n.id)
+        d["project_id"] = project.id if project else None
+        d["project_name"] = project.name if project else None
+        if row is not None:
+            d["planned_pos"] = row["planned_pos"]
+            d["source"] = row["source"]
+            d["added_on"] = row["date"]
+            d["rolled_over"] = row["date"] < today
+        else:  # an auto-landed reminder: no membership row yet
+            d["planned_pos"] = None
+            d["source"] = "reminder"
+            d["added_on"] = n.earliest_start
+            d["rolled_over"] = bool(
+                n.earliest_start and n.earliest_start < today
+            )
+        return d
+
+    def _landed_reminders(self, g: Graph, today: str) -> list[Node]:
+        """Reminder tasks whose day has arrived and which have never been
+        listed or dismissed: they land on the Today list by themselves."""
+        out = []
+        for n in sorted(g.nodes.values(), key=lambda n: n.id):
+            if n.kind != "task" or not n.remind:
+                continue
+            if n.status in ("done", "dropped"):
+                continue
+            if not n.earliest_start:
+                continue
+            try:
+                arrived = date.fromisoformat(n.earliest_start) <= date.fromisoformat(today)
+            except ValueError:
+                continue
+            if not arrived:
+                continue
+            if self.repo.today_rows_for_node(n.id):
+                continue  # listed or tombstoned before: never auto-re-land
+            out.append(n)
+        return out
+
+    def today(self) -> dict:
+        g = self._graph()
+        today = self._now()[:10]
+        items, listed = [], set()
+        for row in self.repo.open_today_rows(today):
+            n = g.nodes.get(row["node_id"])
+            if n is None or n.kind != "task":
+                continue
+            if n.status in ("done", "dropped"):
+                continue  # resolved outside the verb set; tolerate
+            items.append(self._today_item(g, n, row, today))
+            listed.add(n.id)
+        for n in self._landed_reminders(g, today):
+            if n.id not in listed:
+                items.append(self._today_item(g, n, None, today))
+        completed = sorted(
+            (
+                n
+                for n in g.nodes.values()
+                if n.kind == "task"
+                and n.status == "done"
+                and n.completed_at
+                and n.completed_at[:10] == today
+            ),
+            key=lambda n: n.completed_at,
+        )
+        return {
+            "date": today,
+            "items": items,
+            "completed_today": [self._node_dict(n, g) for n in completed],
+        }
+
+    def _next_today_pos(self, today: str) -> int:
+        rows = self.repo.open_today_rows(today)
+        return max(
+            (r["planned_pos"] or 0 for r in rows), default=0
+        ) + 1
+
+    def today_add(self, node_id: int, position: int | None = None) -> dict:
+        n = self._require(node_id, kind="task")
+        if n.status in ("done", "dropped"):
+            raise CommandError(
+                "invalid_state", f"task {node_id} is {n.status}"
+            )
+        if self.repo.today_rows_for_node(node_id, open_only=True):
+            raise CommandError(
+                "already_listed", f"task {node_id} is already on the list"
+            )
+        today = self._now()[:10]
+        existing = [
+            r
+            for r in self.repo.today_rows_for_node(node_id)
+            if r["date"] == today
+        ]
+        if existing:
+            # removed earlier today and re-added: reopen the tombstone (the
+            # unique (date, node) index means the slot already exists)
+            row_id = existing[0]["id"]
+            self.repo.update_today_row(
+                row_id, outcome=None,
+                planned_pos=self._next_today_pos(today),
+            )
+            row = self.repo.today_row(row_id)
+        else:
+            row = self.repo.add_today_row(
+                today, node_id, self._next_today_pos(today), "manual"
+            )
+        if position is not None:
+            self.today_reorder(node_id, position)
+            row = self.repo.today_row(row["id"])
+        g = self._graph()
+        return {
+            "added": self._today_item(g, self.repo.get_node(node_id), row, today),
+            "status_changes": [],
+        }
+
+    def today_quick_add(
+        self,
+        name: str,
+        description: str | None = None,
+        priority: str | None = None,
+    ) -> dict:
+        """Create a planner task (no project) and put it straight on today's
+        list — the one-shot verb behind the UI's quick-add box."""
+        result = self.add_node(
+            "task", name, description=description, priority=priority
+        )
+        node_id = result["created"]["id"]
+        today = self._now()[:10]
+        row = self.repo.add_today_row(
+            today, node_id, self._next_today_pos(today), "quick"
+        )
+        g = self._graph()
+        return {
+            "created": result["created"],
+            "added": self._today_item(g, self.repo.get_node(node_id), row, today),
+            "status_changes": result["status_changes"],
+        }
+
+    def today_remove(self, node_id: int) -> dict:
+        self._require(node_id, kind="task")
+        today = self._now()[:10]
+        open_rows = self.repo.today_rows_for_node(node_id, open_only=True)
+        if open_rows:
+            for row in open_rows:
+                self.repo.update_today_row(row["id"], outcome="deferred")
+            return {"removed": node_id, "tombstoned": [r["id"] for r in open_rows]}
+        g = self._graph()
+        n = g.nodes.get(node_id)
+        if n is not None and any(
+            r.id == node_id for r in self._landed_reminders(g, today)
+        ):
+            # dismissing an auto-landed reminder: materialize the tombstone
+            row = self.repo.add_today_row(today, node_id, None, "reminder")
+            self.repo.update_today_row(row["id"], outcome="deferred")
+            return {"removed": node_id, "tombstoned": [row["id"]]}
+        raise CommandError(
+            "not_listed", f"task {node_id} is not on the Today list"
+        )
+
+    def today_reorder(self, node_id: int, position: int) -> dict:
+        """Move a listed task to a 1-based position; every open row is then
+        renumbered 1..n in the new order."""
+        self._require(node_id, kind="task")
+        if position < 1:
+            raise CommandError("invalid_field", "position is 1-based")
+        today = self._now()[:10]
+        rows = [
+            r
+            for r in self.repo.open_today_rows(today)
+            if self.repo.get_node(r["node_id"]) is not None
+        ]
+        target = next((r for r in rows if r["node_id"] == node_id), None)
+        if target is None:
+            g = self._graph()
+            if any(r.id == node_id for r in self._landed_reminders(g, today)):
+                target = self.repo.add_today_row(
+                    today, node_id, None, "reminder"
+                )
+                rows.append(target)
+            else:
+                raise CommandError(
+                    "not_listed", f"task {node_id} is not on the Today list"
+                )
+        rest = [r for r in rows if r["node_id"] != node_id]
+        idx = min(position - 1, len(rest))
+        ordered = rest[:idx] + [target] + rest[idx:]
+        for pos, r in enumerate(ordered, start=1):
+            if r["planned_pos"] != pos:
+                self.repo.update_today_row(r["id"], planned_pos=pos)
+        return {"order": [r["node_id"] for r in ordered]}
+
+    # --- reminders ---
+
+    def plan_followup(
+        self,
+        node_id: int | None = None,
+        name: str | None = None,
+        days: int | None = None,
+        on_date: str | None = None,
+        description: str | None = None,
+        priority: str | None = None,
+    ) -> dict:
+        """Plan a reminder now, for later: from an existing task ("I'm doing
+        X today; surface its follow-up in three days") or standalone. The
+        reminder is a planner task that stays waiting until its day, then
+        lands on the Today list."""
+        if (days is None) == (on_date is None):
+            raise CommandError(
+                "invalid_field", "give exactly one of days or on_date"
+            )
+        if days is not None:
+            if not isinstance(days, int) or days < 1:
+                raise CommandError(
+                    "invalid_field", "days must be a positive integer"
+                )
+            from datetime import timedelta
+
+            due = (
+                date.fromisoformat(self._now()[:10]) + timedelta(days=days)
+            ).isoformat()
+        else:
+            self._validate_date(on_date, "on_date")
+            due = on_date
+        origin = None
+        if node_id is not None:
+            origin = self._require(node_id, kind="task")
+            if name is None:
+                name = f"Follow up: {origin.name}"
+            if priority is None:
+                priority = origin.priority
+        if not name or not name.strip():
+            raise CommandError(
+                "invalid_name", "a standalone reminder needs a name"
+            )
+        self._validate_priority(priority, "task")
+        follow = self._spawn_followup(
+            origin, name.strip(), due,
+            priority=priority, description=description,
+        )
+        return {
+            "planned": self._node_dict(follow, self._graph()),
+            "due": due,
+            "status_changes": [],
+        }
+
+    def upcoming(self) -> list[dict]:
+        """Everything waiting on a date: reminders not yet due and tasks
+        gated by earliest_start, soonest first."""
+        g = self._graph()
+        out = []
+        for n in sorted(g.nodes.values(), key=lambda n: n.id):
+            if n.kind != "task":
+                continue
+            if g.computed_status(n.id) != "waiting":
+                continue
+            until = next(
+                (
+                    b["until"]
+                    for b in g.blockers(n.id)
+                    if b["type"] == "date"
+                ),
+                None,
+            )
+            d = self._node_dict(n, g)
+            project = g.project_of(n.id)
+            d["project_id"] = project.id if project else None
+            d["project_name"] = project.name if project else None
+            d["until"] = until
+            out.append(d)
+        out.sort(key=lambda d: (d["until"] or "9999-12-31", d["id"]))
+        return out
 
     # --- query verbs ---
 
