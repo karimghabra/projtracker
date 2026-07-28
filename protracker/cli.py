@@ -95,6 +95,20 @@ def build_parser() -> argparse.ArgumentParser:
         "import", help="import an Excel workbook (stage-1, deterministic)"
     )
     imp.add_argument("path")
+    imp.add_argument(
+        "--preview", action="store_true",
+        help="dry-run: show the per-project match plan, write nothing",
+    )
+    imp.add_argument(
+        "--as-new", dest="as_new", action="append", metavar="NAME",
+        help="force create-new for this file project (repeatable). "
+             "Unmentioned projects merge only on a ref or same-file "
+             "re-import match; a bare name coincidence creates new",
+    )
+    imp.add_argument(
+        "--into", action="append", metavar="NAME=ID",
+        help="merge this file project into existing project ID (repeatable)",
+    )
 
     exp = sub.add_parser(
         "export", help="export the graph as a template-format workbook"
@@ -258,7 +272,19 @@ def dispatch(args: argparse.Namespace, c: Commands):
             return c.remove_dependency(args.from_id, args.to_id)
         return c.list_dependencies()
     if cmd == "import":
-        return c.import_excel(args.path)
+        if args.preview:
+            return c.import_preview(args.path)
+        decisions = {}
+        for name in args.as_new or []:
+            decisions[name] = "new"
+        for pair in args.into or []:
+            name, sep, target = pair.rpartition("=")
+            if not sep:
+                raise CommandError(
+                    "invalid_choice", f"--into expects NAME=ID, got {pair!r}"
+                )
+            decisions[name] = target
+        return c.import_excel(args.path, decisions=decisions or None)
     if cmd == "export":
         return c.export_excel(args.path)
     if cmd == "graph":
@@ -475,6 +501,22 @@ def print_human(result, cmd: str):
             for d in result:
                 note = f"  ({d['note']})" if d.get("note") else ""
                 print(f"#{d['from_id']} -> #{d['to_id']}{note}")
+    elif cmd == "import" and "projects" in result:  # --preview
+        for p in result["projects"]:
+            m = p["match"]
+            if m is None:
+                fate = "NEW"
+            else:
+                fate = (f"{p['suggested'].upper()} -> #{m['id']} '{m['name']}'"
+                        f" (matched by {m['via']})")
+            c = p["counts"]
+            print(f"{p['name']}: {c['tasks']} tasks ({c['done']} done)  {fate}")
+        if result["planner_tasks"]:
+            print(f"planner tasks: {result['planner_tasks']}")
+        for s in result["skipped_sheets"]:
+            print(f"  skipped sheet '{s['sheet']}': {s['reason']}")
+        for r in result["review"]:
+            print(f"  REVIEW {r['sheet']} row {r['row']}: {r['reason']}")
     elif cmd == "import":
         print(
             f"imported: {len(result['created'])} created, "
@@ -482,6 +524,8 @@ def print_human(result, cmd: str):
             f"{result['unchanged']} unchanged, "
             f"{len(result['dependencies_added'])} dependencies"
         )
+        for name, b in result.get("bindings", {}).items():
+            print(f"  {b['action']}: '{name}' -> project #{b['project_id']}")
         for s in result["skipped_sheets"]:
             print(f"  skipped sheet '{s['sheet']}': {s['reason']}")
         for r in result["review"]:

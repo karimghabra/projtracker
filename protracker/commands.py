@@ -554,16 +554,13 @@ class Commands:
 
     # --- import / export (spec 4.3) ---
 
-    def import_excel(self, path: str) -> dict:
-        """Stage-1 deterministic import (no LLM). Idempotent: nodes are
-        matched by ref first (renames never break links), then by
-        (kind, hierarchy path, name). Explicit 'Depends on' / kept
-        'Proposed: Depends on' names are applied as edges; unresolvable names
-        and unclassifiable rows go to review. Notes that smell like
-        dependencies are returned in 'flagged' — surfaced, never applied.
-        Imported row order is seq_source='assumed' and never overwrites a
-        user-set order; an explicit Seq column is user provenance."""
-        from .importer import classify_workbook, generate_ref, read_workbook_rows
+    # marker for the bucket of parentless planner tasks; the NUL byte can
+    # never collide with a project name coming out of a spreadsheet cell
+    _PLANNER_BUCKET = "\x00planner"
+
+    def _load_plan(self, path: str):
+        """Read and classify a workbook; structured errors, zero writes."""
+        from .importer import classify_workbook, read_workbook_rows
 
         path = normalize_path(path)
         try:
@@ -580,41 +577,223 @@ class Commands:
                 "unreadable_workbook",
                 f"could not read {path}: {exc}",
             ) from None
-        plan = classify_workbook(sheets)
+        return path, classify_workbook(sheets)
+
+    def _match_projects(self, path: str, plan) -> list[dict]:
+        """Per file project: which existing project it corresponds to, and
+        how certain that is. Ref and provenance (this file created it before)
+        are identity; a bare name match is a coincidence and suggests 'new' —
+        that is the fix for two unrelated trackers silently merging."""
+        import os
+
+        from .importer import slugify
+
+        filename = os.path.basename(path).lower()
+        existing_projects = self.repo.list_nodes(kind="project")
+        by_ref = {p.ref: p for p in existing_projects if p.ref}
+        by_name: dict[str, Node] = {}
+        for p in existing_projects:
+            by_name.setdefault(p.name, p)
+        out = []
+        for spec in [s for s in plan.nodes if s.kind == "project"]:
+            match, via = None, None
+            if spec.ref and spec.ref in by_ref:
+                match, via = by_ref[spec.ref], "ref"
+            if match is None:
+                prov = self.repo.import_source_for(filename, spec.name)
+                if prov:
+                    node = self.repo.get_node(prov["project_id"])
+                    if node is not None and node.kind == "project":
+                        match, via = node, "provenance"
+            if match is None:
+                # same name, or a ref that is just this name's slug (stamped
+                # before provenance existed): a weak match, surfaced so one
+                # explicit merge re-records provenance
+                m = by_name.get(spec.name) or by_ref.get(slugify(spec.name))
+                if m is not None:
+                    match, via = m, "name"
+            counts = {"nodes": 0, "tasks": 0, "done": 0}
+            for s in plan.nodes:
+                if s is spec or (s.path and s.path[0] == spec.name):
+                    counts["nodes"] += 1
+                    if s.kind == "task":
+                        counts["tasks"] += 1
+                        if s.status == "done":
+                            counts["done"] += 1
+            out.append({
+                "name": spec.name,
+                "sheet": spec.sheet,
+                "file_ref": spec.ref,
+                "match": (
+                    {
+                        "id": match.id, "name": match.name,
+                        "ref": match.ref, "via": via,
+                    }
+                    if match is not None
+                    else None
+                ),
+                "suggested": "merge" if via in ("ref", "provenance") else "new",
+                "counts": counts,
+            })
+        return out
+
+    def import_preview(self, path: str) -> dict:
+        """Dry-run: what an import of this workbook would do, per project.
+        Read-only — nothing is written."""
+        path, plan = self._load_plan(path)
+        return {
+            "path": path,
+            "projects": self._match_projects(path, plan),
+            "planner_tasks": sum(
+                1 for s in plan.nodes if s.kind == "task" and not s.path
+            ),
+            "review": plan.review,
+            "flagged": plan.flags,
+            "skipped_sheets": plan.skipped,
+        }
+
+    def import_excel(self, path: str, decisions: dict | None = None) -> dict:
+        """Stage-1 deterministic import (no LLM). Two-phase friendly: run
+        import_preview first, then pass decisions — a map of file project
+        name to 'new', 'merge', or an existing project id. Unmentioned
+        projects take the preview's suggestion: merge when matched by ref or
+        by provenance (this file imported before — that keeps same-file
+        re-import idempotent), otherwise create new (a bare name coincidence
+        no longer merges two unrelated trackers).
+
+        Within a merged project, nodes are matched by ref first (renames
+        never break links), then by (kind, relative path, name, occurrence)
+        — scoped to that project's subtree, so same-named tasks in different
+        projects never cross-merge. Explicit 'Depends on' / kept 'Proposed:
+        Depends on' names are applied as edges; unresolvable names and
+        unclassifiable rows go to review. Notes that smell like dependencies
+        are returned in 'flagged' — surfaced, never applied. Imported row
+        order is seq_source='assumed' and never overwrites a user-set order;
+        an explicit Seq column is user provenance."""
+        import os
+
+        from .importer import generate_ref
+
+        path, plan = self._load_plan(path)
+        filename = os.path.basename(path).lower()
+        matches = self._match_projects(path, plan)
+        decisions = decisions or {}
+        unknown = set(decisions) - {m["name"] for m in matches}
+        if unknown:
+            raise CommandError(
+                "invalid_choice",
+                f"no such project in the file: {', '.join(sorted(unknown))}",
+            )
+        bindings: dict[str, int | None] = {}
+        for m in matches:
+            choice = decisions.get(m["name"], m["suggested"])
+            if choice == "new":
+                bindings[m["name"]] = None
+            elif choice == "merge":
+                if m["match"] is None:
+                    raise CommandError(
+                        "invalid_choice",
+                        f"no existing project matches '{m['name']}' "
+                        "to merge into",
+                    )
+                bindings[m["name"]] = m["match"]["id"]
+            else:
+                try:
+                    pid = int(choice)
+                except (TypeError, ValueError):
+                    raise CommandError(
+                        "invalid_choice",
+                        f"decision for '{m['name']}' must be 'new', 'merge', "
+                        "or an existing project id",
+                    ) from None
+                self._require(pid, kind="project")
+                bindings[m["name"]] = pid
 
         pre = self._graph()
         nodes_by_id = {n.id: n for n in self.repo.all_nodes()}
+        ref_owner = {n.ref: n.id for n in nodes_by_id.values() if n.ref}
 
-        def path_of(n: Node) -> tuple[str, ...]:
-            parts = []
-            cur = n
-            while cur.parent_id is not None:
-                cur = nodes_by_id[cur.parent_id]
-                parts.append(cur.name)
-            return tuple(reversed(parts))
-
-        # Identity is (kind, path + name, occurrence): sibling rows may legally
-        # share a name ('placeholder' three times under one goal), so the nth
-        # such row matches the nth such node rather than collapsing onto the
-        # first. Occurrence is assigned in id order, which is import row order.
-        existing = {}
+        # Identity is (kind, bucket + relative path + name, occurrence),
+        # scoped per bound subtree: sibling rows may legally share a name
+        # ('placeholder' three times under one goal), so the nth such row
+        # matches the nth such node. Occurrence is assigned in id order,
+        # which is import row order. Projects themselves are matched only
+        # through the bindings, never by name — that is the merge-bug fix.
+        existing: dict[tuple, Node] = {}
         occurrences: dict[tuple, int] = {}
-        for n in sorted(nodes_by_id.values(), key=lambda x: x.id):
-            base = (n.kind, path_of(n) + (n.name,))
-            occurrences[base] = occurrences.get(base, 0) + 1
-            existing[base + (occurrences[base],)] = n
-        by_ref = {n.ref: n for n in nodes_by_id.values() if n.ref}
+        scoped_refs: dict[str, dict[str, Node]] = {}
+
+        def index_nodes(marker: str, nodes: list[Node], root_id=None):
+            for n in sorted(nodes, key=lambda x: x.id):
+                parts = []
+                cur = n
+                while cur.parent_id is not None and cur.parent_id != root_id:
+                    cur = nodes_by_id[cur.parent_id]
+                    parts.append(cur.name)
+                base = (n.kind, (marker,) + tuple(reversed(parts)) + (n.name,))
+                occurrences[base] = occurrences.get(base, 0) + 1
+                existing[base + (occurrences[base],)] = n
+
+        def collect_subtree(root_id: int) -> list[Node]:
+            out = []
+
+            def walk(nid):
+                for ch in pre.children(nid):
+                    out.append(ch)
+                    walk(ch.id)
+
+            walk(root_id)
+            return out
+
+        for m in matches:
+            bound = bindings.get(m["name"])
+            if bound is not None:
+                subtree = collect_subtree(bound)
+                index_nodes(m["name"], subtree, root_id=bound)
+                scoped_refs[m["name"]] = {
+                    n.ref: n
+                    for n in subtree + [nodes_by_id[bound]]
+                    if n.ref
+                }
+            else:
+                scoped_refs[m["name"]] = {}
+        planner_nodes = [
+            n
+            for n in nodes_by_id.values()
+            if n.kind == "task" and n.parent_id is None
+        ]
+        index_nodes(self._PLANNER_BUCKET, planner_nodes)
+        scoped_refs[self._PLANNER_BUCKET] = {
+            n.ref: n for n in planner_nodes if n.ref
+        }
+
         created, updated = [], []
         unchanged = 0
         dep_requests = []  # (spec, target_node_id) resolved after all nodes exist
+        project_ids: dict[str, int] = {}  # file project name -> bound/created id
 
         for spec in plan.nodes:
-            key = (spec.kind, spec.path + (spec.name,), spec.occurrence)
-            match = by_ref.get(spec.ref) if spec.ref else None
-            if match is not None and match.kind != spec.kind:
-                match = None
-            if match is None:
-                match = existing.get(key)
+            if spec.kind == "project":
+                marker = spec.name
+                bound = bindings.get(spec.name)
+                match = nodes_by_id.get(bound) if bound is not None else None
+                key = ("project", (marker, spec.name), spec.occurrence)
+            else:
+                marker = spec.path[0] if spec.path else self._PLANNER_BUCKET
+                key = (
+                    spec.kind,
+                    (marker,) + spec.path[1:] + (spec.name,),
+                    spec.occurrence,
+                )
+                match = (
+                    scoped_refs.get(marker, {}).get(spec.ref)
+                    if spec.ref
+                    else None
+                )
+                if match is not None and match.kind != spec.kind:
+                    match = None
+                if match is None:
+                    match = existing.get(key)
 
             if match is not None:
                 fields = {}
@@ -630,7 +809,15 @@ class Commands:
                 if spec.tags and list(spec.tags) != match.tags:
                     fields["tags"] = list(spec.tags)
                 if spec.ref and spec.ref != match.ref:
-                    fields["ref"] = spec.ref
+                    owner = ref_owner.get(spec.ref)
+                    if owner is not None and owner != match.id:
+                        plan.review.append({
+                            "sheet": spec.sheet, "row": spec.row,
+                            "values": [spec.ref],
+                            "reason": "ref belongs to another node; not applied",
+                        })
+                    else:
+                        fields["ref"] = spec.ref
                 if spec.health is not None and spec.health != match.health:
                     fields["health"] = spec.health
                 if (
@@ -647,21 +834,50 @@ class Commands:
                 else:
                     node = match
                     unchanged += 1
+                nodes_by_id[node.id] = node
             else:
                 parent_id = None
-                if spec.path:
-                    # containers never share a name with a sibling (duplicates
-                    # are merged and surfaced for review), so occurrence is 1
-                    parent_key = (KIND_BY_DEPTH[len(spec.path) - 1], spec.path, 1)
-                    parent = existing.get(parent_key)
-                    if parent is None:
-                        plan.review.append({
-                            "sheet": spec.sheet, "row": spec.row,
-                            "values": [spec.name],
-                            "reason": "parent was not importable",
-                        })
-                        continue
-                    parent_id = parent.id
+                if spec.kind != "project" and spec.path:
+                    if len(spec.path) == 1:
+                        # direct child of a file project: its root came from
+                        # the bindings, not the identity index
+                        parent_id = project_ids.get(marker)
+                        if parent_id is None:
+                            plan.review.append({
+                                "sheet": spec.sheet, "row": spec.row,
+                                "values": [spec.name],
+                                "reason": "parent was not importable",
+                            })
+                            continue
+                    else:
+                        # containers never share a name with a sibling
+                        # (duplicates are merged and surfaced for review),
+                        # so occurrence is 1
+                        parent_key = (
+                            KIND_BY_DEPTH[len(spec.path) - 1],
+                            (marker,) + spec.path[1:],
+                            1,
+                        )
+                        parent = existing.get(parent_key)
+                        if parent is None:
+                            plan.review.append({
+                                "sheet": spec.sheet, "row": spec.row,
+                                "values": [spec.name],
+                                "reason": "parent was not importable",
+                            })
+                            continue
+                        parent_id = parent.id
+                ref = spec.ref
+                if ref and ref in ref_owner:
+                    # the file names a ref owned by a node outside the bound
+                    # subtree; never steal it — a fresh one is stamped below
+                    plan.review.append({
+                        "sheet": spec.sheet, "row": spec.row,
+                        "values": [ref],
+                        "reason": "ref belongs to another node; a new ref "
+                                  "was generated",
+                    })
+                    ref = None
                 node = self.repo.add_node(
                     Node(
                         kind=spec.kind,
@@ -676,14 +892,18 @@ class Commands:
                         est_minutes=spec.est_minutes,
                         est_source="user" if spec.est_minutes is not None else None,
                         tags=list(spec.tags),
-                        ref=spec.ref,
+                        ref=ref,
                         health=spec.health,
                     )
                 )
+                nodes_by_id[node.id] = node
                 created.append(asdict(node))
+            if spec.kind == "project":
+                project_ids[spec.name] = node.id
             existing[key] = node
             if node.ref:
-                by_ref[node.ref] = node
+                scoped_refs.setdefault(marker, {})[node.ref] = node
+                ref_owner[node.ref] = node.id
             for origin, deps in (("Depends on", spec.depends_on),
                                  ("Proposed: Depends on", spec.proposed)):
                 for dep_kind, dep_name in deps:
@@ -695,12 +915,27 @@ class Commands:
         # resolve and apply dependency edges
         deps_added = self._apply_dep_requests(dep_requests, plan.review)
 
+        # remember which file project landed where, so the next import of
+        # this same file suggests merging rather than duplicating
+        now = self._now()
+        for name, nid in project_ids.items():
+            self.repo.record_import_source(filename, name, nid, now)
+
         post = self._graph()
         return {
             "created": created,
             "updated": updated,
             "unchanged": unchanged,
             "dependencies_added": deps_added,
+            "bindings": {
+                name: {
+                    "project_id": nid,
+                    "action": (
+                        "merged" if bindings.get(name) is not None else "created"
+                    ),
+                }
+                for name, nid in project_ids.items()
+            },
             "review": plan.review,
             "flagged": plan.flags,
             "skipped_sheets": plan.skipped,
@@ -709,6 +944,7 @@ class Commands:
 
     def _ensure_refs(self, generate_ref) -> None:
         g = self._graph()
+        taken = {n.ref for n in g.nodes.values() if n.ref}
 
         def ordinal(n: Node) -> int:
             if n.parent_id is None:
@@ -720,6 +956,15 @@ class Commands:
             ref = n.ref
             if ref is None:
                 ref = generate_ref(n, parent_ref, ordinal(n))
+                if ref in taken:
+                    # two projects named alike must not share a ref lineage:
+                    # suffix deterministically with the lowest free ordinal,
+                    # and every descendant namespaces itself automatically
+                    i = 2
+                    while f"{ref}-{i}" in taken:
+                        i += 1
+                    ref = f"{ref}-{i}"
+                taken.add(ref)
                 self.repo.update_node(n.id, ref=ref)
             for child in g.children(n.id):
                 walk(child, ref)
