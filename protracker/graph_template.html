@@ -234,6 +234,7 @@
     min-height: min(620px, calc(100vh - 120px));
   }
   #dagsvg { position: absolute; inset: 0; z-index: 0; pointer-events: none; overflow: visible; }
+  .dcard.planner { border-style: dashed; }
   .dcol {
     position: relative;
     display: flex; flex-direction: column; justify-content: center; gap: 20px;
@@ -367,7 +368,7 @@
     <span><i class="edgekey down"></i>unblocks</span>
   </div>
   <div class="controls">
-    <label id="allLinksWrap"><input type="checkbox" id="allLinks"> show all links</label>
+    <label id="allLinksWrap"><input type="checkbox" id="allLinks" checked> links</label>
     <label id="zoomWrap" title="zoom">&#128269;
       <input type="range" id="zoom" min="50" max="100" value="80" style="width:90px;vertical-align:middle">
     </label>
@@ -422,10 +423,11 @@
     return n && n.kind === "project" ? n : null;
   };
 
-  /* goal-level condensation for the DAG view */
+  /* goal-level condensation for the DAG view; a parentless planner task
+     lifts to itself so its edges are drawn rather than dropped */
   const liftGoal = id => {
     const n = byId.get(id);
-    return n.kind === "task" ? n.parent_id : id;
+    return n.kind === "task" ? (n.parent_id ?? id) : id;
   };
   const liftedMap = new Map();
   deps.forEach(d => {
@@ -458,8 +460,13 @@
     linkCounts.set(g.id, { cin, cout });
   });
 
-  /* longest-path layering over goals (DAG view) */
-  const goals = nodes.filter(n => n.kind === "goal");
+  /* longest-path layering over goals plus any planner task that carries a
+     lifted edge (DAG view) */
+  const liftedIds = new Set();
+  lifted.forEach(e => { liftedIds.add(e.from); liftedIds.add(e.to); });
+  const dagNodes = nodes.filter(n =>
+    n.kind === "goal" ||
+    (n.kind === "task" && n.parent_id == null && liftedIds.has(n.id)));
   const layerOf = new Map();
   function depth(id, seen) {
     if (layerOf.has(id)) return layerOf.get(id);
@@ -470,10 +477,10 @@
     layerOf.set(id, d);
     return d;
   }
-  goals.forEach(g => depth(g.id, new Set()));
-  const nLayers = goals.length ? Math.max(...layerOf.values()) + 1 : 0;
+  dagNodes.forEach(g => depth(g.id, new Set()));
+  const nLayers = dagNodes.length ? Math.max(...layerOf.values()) + 1 : 0;
   const layers = Array.from({ length: nLayers }, () => []);
-  goals.forEach(g => layers[layerOf.get(g.id)].push(g.id));
+  dagNodes.forEach(g => layers[layerOf.get(g.id)].push(g.id));
   layers.forEach(l => l.sort((a, b) => a - b));
   const runPass = (indices, mapNeighbors, key) => {
     const rows = new Map();
@@ -568,6 +575,19 @@
     dagHtml += `<div class="dcol"><span class="depthlab">depth ${li}</span>`;
     for (const gid of layer) {
       const g = byId.get(gid);
+      if (g.kind === "task") {  // a planner task carrying dependencies
+        const st = stateOf(g);
+        dagHtml += `<div class="dcard planner" data-nid="${gid}" tabindex="0"
+          title="${esc(g.name)} - planner task">
+          <div class="crumbs">planner</div>
+          <div class="gname">${esc(g.name)}</div>
+          <div class="meta">
+            <span class="dots"><i class="dot ${st}"></i></span>
+            ${st === "ready" ? `<span class="nowchip">now</span>` : ""}
+          </div>
+        </div>`;
+        continue;
+      }
       const proj = projectOf(gid);
       const milestone = g.parent_id != null ? byId.get(g.parent_id) : null;
       const code = (g.ref || "").split(".")[0] || (proj ? proj.name : "");
@@ -595,10 +615,29 @@
     <span class="chip"><i class="dot ready"></i>${readyCount} ready</span>`;
 
   /* ===== edge drawing ===== */
+  /* The SVGs live INSIDE the zoom-scaled containers, so screen-pixel rects
+     from getBoundingClientRect() must be divided by the container's actual
+     scale before they become SVG coordinates — otherwise the CSS transform
+     scales them a second time and every arrow misses its box. */
+  const localRect = (el, cRect, s) => {
+    const r = el.getBoundingClientRect();
+    return {
+      left: (r.left - cRect.left) / s,
+      right: (r.right - cRect.left) / s,
+      top: (r.top - cRect.top) / s,
+      width: r.width / s,
+      height: r.height / s,
+    };
+  };
+  const scaleOf = el => {
+    const w = el.getBoundingClientRect().width;
+    return el.offsetWidth ? (w / el.offsetWidth) : 1;
+  };
   function drawDag(focus) {
     const g = dagsvg.querySelector("g");
     g.innerHTML = "";
     const cRect = dag.getBoundingClientRect();
+    const s = scaleOf(dag);
     dagsvg.setAttribute("width", dag.scrollWidth);
     dagsvg.setAttribute("height", dag.scrollHeight);
     const outN = new Map(), inN = new Map(), outI = new Map(), inI = new Map();
@@ -611,12 +650,12 @@
       const aEl = dag.querySelector(`.dcard[data-nid="${e.from}"]`);
       const bEl = dag.querySelector(`.dcard[data-nid="${e.to}"]`);
       if (!aEl || !bEl) continue;
-      const ra = aEl.getBoundingClientRect(), rb = bEl.getBoundingClientRect();
+      const ra = localRect(aEl, cRect, s), rb = localRect(bEl, cRect, s);
       const oi = (outI.get(e.from) || 0) + 1; outI.set(e.from, oi);
       const ii = (inI.get(e.to) || 0) + 1; inI.set(e.to, ii);
-      const ya = ra.top - cRect.top + ra.height * oi / ((outN.get(e.from) || 1) + 1);
-      const yb = rb.top - cRect.top + rb.height * ii / ((inN.get(e.to) || 1) + 1);
-      const x1 = ra.right - cRect.left, x2 = rb.left - cRect.left;
+      const ya = ra.top + ra.height * oi / ((outN.get(e.from) || 1) + 1);
+      const yb = rb.top + rb.height * ii / ((inN.get(e.to) || 1) + 1);
+      const x1 = ra.right, x2 = rb.left;
       const dx = Math.max(30, Math.abs(x2 - x1) * 0.4);
       appendEdge(g, `M ${x1} ${ya} C ${x1 + dx} ${ya}, ${x2 - dx} ${yb}, ${x2} ${yb}`,
         `M ${x2} ${yb} l -7 -3.6 v 7.2 z`, e, focus);
@@ -650,6 +689,7 @@
     const all = document.getElementById("allLinks").checked;
     if (!all && !emphasis) return;
     const cRect = forest.getBoundingClientRect();
+    const s = scaleOf(forest);
     ovsvg.setAttribute("width", forest.scrollWidth);
     ovsvg.setAttribute("height", forest.scrollHeight);
     const hEdges = forestEdges(); // same objects focus/hover chains hold
@@ -665,7 +705,7 @@
     for (const e of visible) {
       const a = ovAnchor(e.from), b = ovAnchor(e.to);
       if (!a || !b || a === b) continue;
-      const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+      const ra = localRect(a, cRect, s), rb = localRect(b, cRect, s);
       const item = { e, ra, rb };
       if (a.classList.contains("gcard") && b.classList.contains("gcard")) gEdges.push(item);
       else tEdges.push(item);
@@ -687,9 +727,9 @@
       const { e, ra, rb } = o;
       const oi = (outI.get(e.from) || 0) + 1; outI.set(e.from, oi);
       const ii = (inI.get(e.to) || 0) + 1; inI.set(e.to, ii);
-      const x1 = ra.left - cRect.left + ra.width * oi / ((outN.get(e.from) || 1) + 1);
-      const x2 = rb.left - cRect.left + rb.width * ii / ((inN.get(e.to) || 1) + 1);
-      const y1 = ra.top - cRect.top, y2 = rb.top - cRect.top;
+      const x1 = ra.left + ra.width * oi / ((outN.get(e.from) || 1) + 1);
+      const x2 = rb.left + rb.width * ii / ((inN.get(e.to) || 1) + 1);
+      const y1 = ra.top, y2 = rb.top;
       const laneY = Math.min(y1, y2) - 16 - lane * 7;
       const r = 6, dir = x2 > x1 ? 1 : -1;
       let d;
@@ -706,10 +746,10 @@
     });
     for (const { e, ra, rb } of tEdges) {
       const forward = rb.left >= ra.right - 4;
-      const x1 = (forward ? ra.right : ra.left) - cRect.left;
-      const x2 = (forward ? rb.left : rb.right) - cRect.left;
-      const y1 = ra.top + ra.height / 2 - cRect.top;
-      const y2 = rb.top + rb.height / 2 - cRect.top;
+      const x1 = forward ? ra.right : ra.left;
+      const x2 = forward ? rb.left : rb.right;
+      const y1 = ra.top + ra.height / 2;
+      const y2 = rb.top + rb.height / 2;
       const dx = Math.max(24, Math.abs(x2 - x1) * 0.3) * (forward ? 1 : -1);
       appendEdge(g, `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`,
         `M ${x2} ${y2} l ${forward ? -7 : 7} -3.6 v 7.2 z`, e, emphasis);
@@ -916,6 +956,9 @@
       el.style.transform = `scale(${s})`;
       el.style.width = `${100 / s}%`;
     }
+    // edge geometry depends on the scale: the main script's resize
+    // listener redraws with fresh rects
+    window.dispatchEvent(new Event("resize"));
   }
   zoom.addEventListener("input", applyZoom);
   applyZoom();
