@@ -266,6 +266,34 @@ section > h2, .legend { flex: none; }
 .impact b { font-weight: 650; color: var(--ink); }
 .empty-state { padding: 30px 16px; color: var(--muted); text-align: center; font-size: 13px; }
 
+/* waiting: calendar-gated, not pipeline-blocked */
+.node .dot.waiting { background: transparent !important; border: 1.5px solid var(--warning); }
+.node .edit {
+  visibility: hidden; border: none; background: none; color: var(--muted);
+  cursor: pointer; padding: 2px 5px; font-size: 12px; border-radius: 4px; flex: none;
+}
+.node:hover .edit { visibility: visible; }
+.node .edit:hover { background: var(--hairline); color: var(--ink); }
+.prio {
+  font-size: 10px; font-weight: 700; letter-spacing: .05em; padding: 1px 6px;
+  border-radius: 4px; text-transform: uppercase; flex: none;
+}
+.prio.pinned { background: var(--accent); color: var(--accent-ink); }
+.prio.high { border: 1px solid var(--warning); color: var(--warning); }
+.prio.low { border: 1px solid var(--hairline); color: var(--muted); }
+.deps-list { display: grid; gap: 6px; }
+.dep-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
+.dep-row .x { border: none; background: none; color: var(--muted); cursor: pointer; }
+.dep-row .x:hover { color: var(--critical); }
+.dep-add { display: flex; gap: 8px; }
+#graphDlg { width: 92vw; max-width: 92vw; height: 88vh; }
+#graphDlg iframe { width: 100%; height: calc(88vh - 100px); border: none; background: white; border-radius: 8px; }
+.capture-row { display: flex; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--hairline); }
+.jr-day { padding: 10px 16px; border-bottom: 1px solid var(--hairline); }
+.jr-day h4 { margin: 0 0 6px; font-size: 12px; color: var(--muted); font-weight: 650; }
+.jr-item { display: flex; gap: 8px; font-size: 13px; padding: 2px 0; align-items: baseline; }
+.jr-item .when { color: var(--muted); font-size: 11px; flex: none; font-variant-numeric: tabular-nums; }
+
 /* --- dialogs -------------------------------------------------------------- */
 dialog {
   background: var(--surface); color: var(--ink);
@@ -300,6 +328,7 @@ label { display: grid; gap: 6px; font-size: 12px; color: var(--ink-2); font-weig
   <div class="brand"><h1>protracker</h1><span class="ver" id="dbLabel">—</span></div>
   <span class="spacer"></span>
   <button id="btnTheme" class="icon" title="Toggle light / dark">◐</button>
+  <button id="btnGraph">Graph</button>
   <button id="btnImport">Import…</button>
   <button id="btnAdd">Add…</button>
   <button id="btnSettings">Settings</button>
@@ -325,7 +354,13 @@ label { display: grid; gap: 6px; font-size: 12px; color: var(--ink-2); font-weig
       <span class="chip" id="readyScope">all projects</span>
       <span class="chip" id="readyCount"></span>
     </h2>
-    <div class="rows" id="ready"><div class="empty-state">Loading…</div></div>
+    <div class="rows" id="ready" style="flex:2"><div class="empty-state">Loading…</div></div>
+    <h2>Today <span class="spacer"></span><span class="chip" id="todayDate"></span></h2>
+    <div class="capture-row">
+      <input id="capText" placeholder="Thought vomit — notes, results, anything…">
+      <button id="capOk" class="primary">Capture</button>
+    </div>
+    <div class="rows" id="journal" style="flex:1"></div>
   </section>
 </main>
 
@@ -363,6 +398,50 @@ label { display: grid; gap: 6px; font-size: 12px; color: var(--ink-2); font-weig
     <button id="addCancel">Cancel</button>
     <button id="addOk" class="primary">Create</button>
   </div>
+</dialog>
+
+<dialog id="editDlg">
+  <h3 id="editTitle">Edit</h3>
+  <div class="body">
+    <label>Name <input id="edName"></label>
+    <label>Notes <textarea id="edNotes" rows="2"></textarea></label>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <label>Deadline <input id="edDeadline" placeholder="YYYY-MM-DD"></label>
+      <label id="edStartWrap">Start (waits until) <input id="edStart" placeholder="YYYY-MM-DD"></label>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px" id="edTaskRow">
+      <label>Priority
+        <select id="edPriority">
+          <option value="">normal</option>
+          <option value="pinned">pinned</option>
+          <option value="high">high</option>
+          <option value="low">low</option>
+        </select>
+      </label>
+      <label>Follow-up after done (days) <input id="edFollow" type="number" min="1"></label>
+    </div>
+    <label id="edDepsWrap">Depends on
+      <div class="deps-list" id="edDeps"></div>
+      <div class="dep-add">
+        <select id="edDepPick"></select>
+        <button id="edDepAdd" class="tiny">Add</button>
+      </div>
+    </label>
+    <label id="edParentWrap">Parent <select id="edParent"></select></label>
+  </div>
+  <div class="actions">
+    <button id="edDelete" style="margin-right:auto;color:var(--critical)">Delete…</button>
+    <button id="edCancel">Cancel</button>
+    <button id="edOk" class="primary">Save</button>
+  </div>
+</dialog>
+
+<dialog id="graphDlg">
+  <h3>Dependency graph <span class="spacer"></span></h3>
+  <div class="body" style="padding:10px">
+    <iframe id="graphFrame" title="dependency graph"></iframe>
+  </div>
+  <div class="actions"><button id="graphClose">Close</button></div>
 </dialog>
 
 <dialog id="setDlg">
@@ -491,6 +570,7 @@ function renderStats() {
 function renderLegend() {
   const dots = [
     ["ready", "var(--good)", false],
+    ["waiting", "var(--warning)", true],
     ["blocked", "var(--neutral)", true],
     ["in progress", "var(--accent)", false],
   ].map(([label, css, hollow]) =>
@@ -505,6 +585,7 @@ function renderLegend() {
 // Derived task state -> how its dot reads. 'ready' is the green circle.
 const TASK_STATE = {
   ready:       { css: "var(--good)",    hollow: false, label: "ready" },
+  waiting:     { css: "var(--warning)", hollow: true,  label: "waiting", cls: "waiting" },
   in_progress: { css: "var(--accent)",  hollow: false, label: "in progress" },
   blocked:     { css: "var(--neutral)", hollow: true,  label: "blocked" },
   done:        { css: "var(--neutral)", hollow: false, label: "done" },
@@ -526,7 +607,7 @@ function nodeRow(entry, depth) {
   let dot = "", extra = "", cls = "";
   if (n.kind === "task") {
     const st = TASK_STATE[n.state] || TASK_STATE.blocked;
-    dot = `<span class="dot${st.hollow ? " hollow" : ""}"
+    dot = `<span class="dot${st.cls ? " " + st.cls : st.hollow ? " hollow" : ""}"
                  style="background:${st.css}"
                  title="${esc(st.label)}" aria-label="${esc(st.label)}"></span>`;
     if (n.state === "done") cls = " is-done";
@@ -550,6 +631,7 @@ function nodeRow(entry, depth) {
       ${twisty}${dot}
       <span class="label" title="${esc(n.name)}">${esc(n.name)}</span>
       ${tag}
+      <button class="edit" data-edit="${n.id}" title="Edit" aria-label="Edit ${esc(n.name)}">✎</button>
     </div>`];
   if (n.kind === "project" && open && extra) rows.push(extra);
   if (open) for (const c of kids) rows.push(nodeRow(c, depth + 1));
@@ -572,6 +654,9 @@ function renderTree() {
       state.collapsed.has(id) ? state.collapsed.delete(id) : state.collapsed.add(id);
       renderTree();
     };
+  });
+  box.querySelectorAll("[data-edit]").forEach((el) => {
+    el.onclick = (ev) => { ev.stopPropagation(); openEdit(Number(el.dataset.edit)); };
   });
   // clicking a project row scopes the to-do list to it
   box.querySelectorAll('.node[data-kind="project"]').forEach((el) => {
@@ -614,7 +699,8 @@ function renderReady() {
         <button class="tick" data-done="${t.id}" title="Mark done"
                 aria-label="Mark “${esc(t.name)}” done">✓</button>
         <div style="flex:1;min-width:0">
-          <div class="title"><span class="name">${esc(t.name)}</span></div>
+          <div class="title"><span class="name">${esc(t.name)}</span>${
+            t.priority ? `<span class="prio ${t.priority}">${esc(t.priority)}</span>` : ""}</div>
           <div class="meta">
             <span class="impact">
               <span>unlocks <b>${t.unlocks_now}</b></span>
@@ -652,21 +738,54 @@ async function refresh() {
   $("dbLabel").textContent = cfg.db;
   // No directory gate: an installed build carries its own CLI and falls back
   // to a per-user data directory, so it works before anything is configured.
-  const [projects, ready, nodes, tree] = await Promise.all([
+  const [projects, ready, nodes, tree, journal] = await Promise.all([
     pt("progress", "--days", String(cfg.days)),
     pt("ready", "--impact"),
     pt("ls"),
     pt("tree"),
+    pt("journal", "--days", "7"),
   ]);
   state.projects = projects;
   state.ready = ready;
   state.nodes = nodes;
   state.tree = tree;
+  state.journal = journal;
   renderStats();
   renderLegend();
   renderTree();
   renderReady();
+  renderJournal();
 }
+
+function renderJournal() {
+  const days = state.journal || [];
+  $("todayDate").textContent = days[0]?.date || "";
+  const shown = days.filter((d, i) => i === 0 || d.completed.length || d.notes.length);
+  $("journal").innerHTML = shown.map((d) => `
+    <div class="jr-day">
+      <h4>${esc(d.date)}</h4>
+      ${d.completed.map((n) => `
+        <div class="jr-item"><span class="when">${esc((n.completed_at || "").slice(11, 16))}</span>
+          <span style="color:var(--good)">✓</span> <span>${esc(n.name)}</span></div>`).join("")}
+      ${d.notes.map((n) => `
+        <div class="jr-item"><span class="when">${esc((n.created_at || "").slice(11, 16))}</span>
+          <span style="color:var(--muted)">✎</span> <span>${esc(n.text)}</span></div>`).join("")}
+      ${!d.completed.length && !d.notes.length
+        ? `<div class="jr-item" style="color:var(--muted)">nothing yet — capture a thought above</div>` : ""}
+    </div>`).join("");
+}
+
+$("capOk").onclick = async () => {
+  const text = $("capText").value.trim();
+  if (!text) return;
+  await pt("capture", text);
+  $("capText").value = "";
+  state.journal = await pt("journal", "--days", "7");
+  renderJournal();
+};
+$("capText").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") $("capOk").click();
+});
 
 $("btnExpand").onclick = () => {
   const all = collectIds(state.tree);
@@ -780,6 +899,133 @@ $("setOk").onclick = async () => {
   $("setDlg").close();
   await refresh();
 };
+
+// --- edit dialog -----------------------------------------------------------
+const PARENT_OF = { milestone: "project", goal: "milestone", task: "goal" };
+let editing = null;
+
+async function openEdit(id) {
+  const detail = await pt("show", String(id));
+  const n = detail.node;
+  editing = { id, node: n, deps: detail.dependencies_in || [] };
+  $("editTitle").textContent = `Edit ${n.kind} #${n.id}`;
+  $("edName").value = n.name || "";
+  $("edNotes").value = n.description || "";
+  $("edDeadline").value = n.deadline || "";
+  $("edStart").value = n.earliest_start || "";
+  const isTask = n.kind === "task";
+  $("edTaskRow").style.display = isTask ? "grid" : "none";
+  $("edStartWrap").style.display = isTask ? "grid" : "none";
+  if (isTask) {
+    $("edPriority").value = n.priority || "";
+    $("edFollow").value = n.followup_days || "";
+  }
+  // deps apply to tasks and goals
+  const depOk = isTask || n.kind === "goal";
+  $("edDepsWrap").style.display = depOk ? "grid" : "none";
+  if (depOk) renderDeps();
+  // parent picker (projects stay roots)
+  const wantParent = PARENT_OF[n.kind];
+  $("edParentWrap").style.display = wantParent ? "grid" : "none";
+  if (wantParent) {
+    $("edParent").innerHTML = state.nodes
+      .filter((x) => x.kind === wantParent)
+      .map((x) => `<option value="${x.id}" ${x.id === n.parent_id ? "selected" : ""}>${esc(x.name)} (#${x.id})</option>`)
+      .join("") + (isTask ? `<option value="" ${n.parent_id == null ? "selected" : ""}>— planner (no parent) —</option>` : "");
+  }
+  $("editDlg").showModal();
+}
+
+function renderDeps() {
+  const n = editing.node;
+  $("edDeps").innerHTML = editing.deps.map((d) => `
+    <div class="dep-row">
+      <button class="x" data-deprm="${d.from_id}" title="Remove dependency">✕</button>
+      <span>${esc(d.from_name)} (#${d.from_id})</span>
+    </div>`).join("") || `<div class="dep-row" style="color:var(--muted)">none</div>`;
+  $("edDeps").querySelectorAll("[data-deprm]").forEach((el) => {
+    el.onclick = async () => {
+      await pt("dep", "rm", el.dataset.deprm, String(n.id));
+      editing.deps = editing.deps.filter((d) => d.from_id !== Number(el.dataset.deprm));
+      renderDeps();
+      await refresh();
+    };
+  });
+  $("edDepPick").innerHTML = state.nodes
+    .filter((x) => (x.kind === "goal" || x.kind === "task") && x.id !== n.id)
+    .map((x) => `<option value="${x.id}">${esc(x.kind)}: ${esc(x.name)} (#${x.id})</option>`)
+    .join("");
+}
+
+$("edDepAdd").onclick = async () => {
+  const from = $("edDepPick").value;
+  if (!from) return;
+  const r = await pt("dep", "add", from, String(editing.id));
+  editing.deps.push({ from_id: Number(from), from_name:
+    state.nodes.find((x) => x.id === Number(from))?.name || `#${from}` });
+  renderDeps();
+  await refresh();
+};
+
+$("edCancel").onclick = () => $("editDlg").close();
+$("edOk").onclick = async () => {
+  const n = editing.node;
+  const args = ["set", String(editing.id)];
+  const name = $("edName").value.trim();
+  if (name && name !== n.name) args.push("--name", name);
+  const notes = $("edNotes").value.trim();
+  if (notes !== (n.description || "")) args.push("--desc", notes || " ");
+  const dl = $("edDeadline").value.trim();
+  if (dl !== (n.deadline || "") && dl) args.push("--deadline", dl);
+  if (n.kind === "task") {
+    const st = $("edStart").value.trim();
+    if (st !== (n.earliest_start || "") && st) args.push("--earliest-start", st);
+    const pr = $("edPriority").value || "none";
+    if ((n.priority || "") !== ($("edPriority").value || "")) args.push("--priority", pr);
+    const fu = $("edFollow").value;
+    if (fu && Number(fu) !== n.followup_days) args.push("--followup-days", fu);
+  }
+  if (args.length > 2) {
+    await pt(...args);
+    toast(`Saved ${n.kind} “${name || n.name}”.`);
+  }
+  // re-parent if changed
+  const wantParent = PARENT_OF[n.kind];
+  if (wantParent) {
+    const sel = $("edParent").value;
+    const target = sel === "" ? null : Number(sel);
+    if (target !== n.parent_id) {
+      await pt(...(target === null ? ["mv", String(editing.id), "--root"]
+                                   : ["mv", String(editing.id), "--parent", String(target)]));
+      toast("Moved.");
+    }
+  }
+  $("editDlg").close();
+  await refresh();
+};
+
+$("edDelete").onclick = async () => {
+  const n = editing.node;
+  const preview = await pt("rm", String(editing.id));
+  if (preview.requires_confirm) {
+    const what = (preview.descendants || []).length;
+    if (!confirm(`Delete ${n.kind} “${n.name}” and ${what} node(s) beneath/depending on it?`)) return;
+    await pt("rm", String(editing.id), "--yes");
+  }
+  toast(`Deleted ${n.kind} “${n.name}”.`);
+  $("editDlg").close();
+  await refresh();
+};
+
+// --- graph modal ------------------------------------------------------------
+$("btnGraph").onclick = async () => {
+  try {
+    const html = await invoke("graph_html", { projectDir: cfg.dir, db: cfg.db });
+    $("graphFrame").srcdoc = html;
+    $("graphDlg").showModal();
+  } catch (e) { toast(errText(e), true); }
+};
+$("graphClose").onclick = () => $("graphDlg").close();
 
 $("btnTheme").onclick = () => {
   const now = document.documentElement.getAttribute("data-theme");

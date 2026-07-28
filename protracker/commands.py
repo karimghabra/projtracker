@@ -16,6 +16,8 @@ from .model import (
     CONTAINER_STATES,
     DEFAULT_HEALTH,
     KINDS,
+    PRIORITIES,
+    PRIORITY_RANK,
     VALID_PARENT_KINDS,
     Dependency,
     Node,
@@ -25,6 +27,7 @@ from .storage import UNSET, Repository
 UPDATABLE_FIELDS = {
     "name", "description", "deadline", "earliest_start", "weight",
     "est_minutes", "est_source", "tags", "seq_index", "status",
+    "priority", "followup_days",
 }
 
 KIND_BY_DEPTH = ("project", "milestone", "goal", "task")
@@ -70,7 +73,10 @@ class Commands:
     # --- helpers ---
 
     def _graph(self) -> Graph:
-        return Graph(self.repo.all_nodes(), self.repo.all_dependencies())
+        return Graph(
+            self.repo.all_nodes(), self.repo.all_dependencies(),
+            today=self._now()[:10],
+        )
 
     def _require(self, node_id: int, kind: str | None = None) -> Node:
         n = self.repo.get_node(node_id)
@@ -209,6 +215,27 @@ class Commands:
                 )
         if "seq_index" in fields and n.kind != "task":
             raise CommandError("invalid_field", "seq_index applies to tasks only")
+        if "priority" in fields:
+            v = fields["priority"]
+            if v is not None and v not in PRIORITIES:
+                raise CommandError(
+                    "invalid_field",
+                    f"priority must be one of {', '.join(PRIORITIES)} (or null)",
+                )
+            if n.kind != "task":
+                raise CommandError(
+                    "invalid_field", "priority applies to tasks only"
+                )
+        if "followup_days" in fields:
+            v = fields["followup_days"]
+            if v is not None and (not isinstance(v, int) or v < 1):
+                raise CommandError(
+                    "invalid_field", "followup_days must be a positive integer"
+                )
+            if n.kind != "task":
+                raise CommandError(
+                    "invalid_field", "followup_days applies to tasks only"
+                )
         self._validate_date(fields.get("deadline"), "deadline")
         self._validate_date(fields.get("earliest_start"), "earliest_start")
         if "seq_index" in fields:
@@ -432,7 +459,36 @@ class Commands:
         extra = {"completed_at": self._now()}
         if actual_minutes is not None:
             extra["actual_minutes"] = int(actual_minutes)
-        return self._finish_task(node_id, "done", extra)
+        result = self._finish_task(node_id, "done", extra)
+
+        # Follow-up timer: completing a task with followup_days set spawns a
+        # reminder that the calendar keeps in 'waiting' until its day arrives.
+        # It is a PLANNER task on purpose: under the goal it would join the
+        # sequence pipeline and sit blocked behind every remaining sibling,
+        # which defeats "surface this N days after completion". The origin
+        # project rides along as a tag. followup_days is deliberately not
+        # inherited -- no infinite chains.
+        n = self.repo.get_node(node_id)
+        if n.followup_days:
+            from datetime import date as _date, timedelta
+
+            due = (
+                _date.fromisoformat(self._now()[:10])
+                + timedelta(days=int(n.followup_days))
+            ).isoformat()
+            g = self._graph()
+            project = g.project_of(n.id) if n.id in g.nodes else None
+            follow = self.repo.add_node(
+                Node(
+                    kind="task",
+                    name=f"Follow up: {n.name}",
+                    earliest_start=due,
+                    priority=n.priority,
+                    tags=[project.name] if project else [],
+                )
+            )
+            result["followup_created"] = self._node_dict(follow, self._graph())
+        return result
 
     def drop_task(self, node_id: int) -> dict:
         return self._finish_task(node_id, "dropped", {})
@@ -665,6 +721,44 @@ class Commands:
             ) from None
         return {"exported": path, "sheets": len(sheets), "nodes": node_count}
 
+    # --- daily notes & journal ---
+
+    def capture(self, text: str, date_str: str | None = None) -> dict:
+        """Append a thought to the day's notes. Notes are append-only data;
+        nothing parses or mutates them."""
+        if not text or not text.strip():
+            raise CommandError("invalid_note", "note text must be non-empty")
+        day = date_str or self._now()[:10]
+        self._validate_date(day, "date")
+        return {"captured": self.repo.add_note(day, text.strip())}
+
+    def journal(self, days: int = 1) -> list[dict]:
+        """The last N days, newest first: what was completed and what was
+        captured on each. Imported strikethrough completions carry no
+        timestamp and so never appear -- history begins with the tool."""
+        from datetime import date as _date, timedelta
+
+        today = _date.fromisoformat(self._now()[:10])
+        by_day: dict[str, list] = defaultdict(list)
+        for n in self.repo.all_nodes():
+            if n.kind == "task" and n.status == "done" and n.completed_at:
+                by_day[n.completed_at[:10]].append(n)
+        out = []
+        for i in range(max(1, days)):
+            day = (today - timedelta(days=i)).isoformat()
+            done = sorted(by_day.get(day, []), key=lambda n: n.completed_at)
+            out.append({
+                "date": day,
+                "completed": [asdict(n) for n in done],
+                "notes": self.repo.notes_for(day),
+            })
+        return out
+
+    def delete_note(self, note_id: int) -> dict:
+        if not self.repo.delete_note(note_id):
+            raise CommandError("not_found", f"note {note_id} not found")
+        return {"deleted_note": note_id}
+
     # --- query verbs ---
 
     def get_node(self, node_id: int) -> dict:
@@ -681,6 +775,16 @@ class Commands:
                 if n.kind == "task" and state not in ("done", "dropped")
                 else []
             ),
+            # incoming edges, named, so an editing client need not join ids
+            "dependencies_in": [
+                {
+                    "from_id": d.from_id,
+                    "from_name": g.nodes[d.from_id].name,
+                    "note": d.note,
+                }
+                for d in g.deps
+                if d.to_id == node_id
+            ],
         }
 
     def list_nodes(self, kind: str | None = None, parent_id=UNSET) -> list[dict]:
@@ -709,9 +813,18 @@ class Commands:
                 d["gates_total"] = len(g.downstream_incomplete(t.id))
             out.append(d)
         if impact:
-            out.sort(
-                key=lambda d: (-d["unlocks_now"], -d["gates_total"], d["id"])
-            )
+            # priority groups first (pinned > high > normal > low); impact
+            # ranks within a group; the effective deadline (own or inherited)
+            # breaks remaining ties, soonest first, none last.
+            for d in out:
+                d["effective_deadline"] = g.effective_deadline(d["id"])
+            out.sort(key=lambda d: (
+                PRIORITY_RANK.get(d.get("priority"), 2),
+                -d["unlocks_now"],
+                -d["gates_total"],
+                d["effective_deadline"] or "9999-12-31",
+                d["id"],
+            ))
         return out
 
     def progress(self, days: int = 30) -> list[dict]:

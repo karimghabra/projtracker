@@ -412,9 +412,13 @@ def test_progress_buckets_by_project_and_counts_open_work():
 
 
 def test_progress_marks_a_project_stale_past_the_window():
-    c = clock(["2026-06-01T09:00:00", "2026-07-27T09:00:00"])
+    # an explicitly settable clock: pop-per-call ordering broke the moment
+    # _graph() started reading the clock too
+    box = ["2026-06-01T09:00:00"]
+    c = Commands(Repository(":memory:"), now=lambda: box[0])
     ids = chain(c)
     c.complete_task(ids["t1"])  # stamped 2026-06-01
+    box[0] = "2026-07-27T09:00:00"
     rows = c.progress(days=30)  # "now" is 2026-07-27
     assert rows[0]["state"] == "stale"
     assert rows[0]["days_since_last_completion"] == 56
@@ -522,3 +526,92 @@ def test_a_project_stops_being_empty_once_it_has_a_task(c):
     g = c.add_node(kind="goal", name="G", parent_id=m)["created"]["id"]
     c.add_node(kind="task", name="t", parent_id=g)
     assert c.progress()[0]["state"] == "stale"
+
+
+# --- priority, follow-up timers, and the journal ---
+
+
+def test_priority_groups_lead_the_ready_ranking(c):
+    ids = two_goals(c)
+    extra = c.add_node(kind="goal", name="GC", parent_id=ids["m"])["created"]["id"]
+    c1 = c.add_node(kind="task", name="c1", parent_id=extra)["created"]["id"]
+    c.add_dependency(ids["a1"], c1)          # a1 has the most impact
+    c.update_node(ids["b1"], priority="pinned")
+    rows = c.ready(impact=True)
+    assert rows[0]["id"] == ids["b1"], "pinned beats impact"
+    assert rows[1]["id"] == ids["a1"]
+    c.update_node(ids["b1"], priority="low")
+    rows = c.ready(impact=True)
+    assert rows[-1]["id"] == ids["b1"], "low sinks below normal"
+
+
+def test_priority_validation(c):
+    ids = chain(c)
+    with pytest.raises(CommandError) as ei:
+        c.update_node(ids["t1"], priority="urgent")
+    assert ei.value.code == "invalid_field"
+    with pytest.raises(CommandError):
+        c.update_node(ids["p"], priority="high")  # tasks only
+    c.update_node(ids["t1"], priority="high")
+    c.update_node(ids["t1"], priority=None)  # clearing is allowed
+    assert c.get_node(ids["t1"])["node"]["priority"] is None
+
+
+def test_completing_a_followup_task_spawns_a_waiting_sibling():
+    box = ["2026-07-28T09:00:00"]
+    c = Commands(Repository(":memory:"), now=lambda: box[0])
+    ids = chain(c)
+    c.update_node(ids["t1"], followup_days=3)
+    r = c.complete_task(ids["t1"])
+    f = r["followup_created"]
+    assert f["name"] == "Follow up: t1"
+    assert f["earliest_start"] == "2026-07-31"
+    # a planner task on purpose: under the goal, the sequence pipeline would
+    # block it behind every remaining sibling
+    assert f["parent_id"] is None
+    assert f["tags"] == ["P"], "origin project rides along as a tag"
+    assert f["state"] == "waiting", "not ready until its day arrives"
+    assert f["followup_days"] is None, "follow-ups must not chain"
+    # the calendar turning over makes it ready with no other change
+    box[0] = "2026-07-31T09:00:00"
+    states = {t["id"]: t["state"] for t in c.list_nodes(kind="task")}
+    assert states[f["id"]] == "ready"
+
+
+def test_waiting_is_not_blocked_and_not_ready():
+    box = ["2026-07-28T09:00:00"]
+    c = Commands(Repository(":memory:"), now=lambda: box[0])
+    t = c.add_node(kind="task", name="later",
+                   earliest_start="2026-08-01")["created"]["id"]
+    assert c.get_node(t)["state"] == "waiting"
+    assert all(r["id"] != t for r in c.ready())
+    blockers = c.get_node(t)["blockers"]
+    assert blockers == [{"type": "date", "until": "2026-08-01"}]
+
+
+def test_capture_and_journal_roundtrip():
+    box = ["2026-07-28T09:00:00"]
+    c = Commands(Repository(":memory:"), now=lambda: box[0])
+    ids = chain(c)
+    c.capture("tried the new crosslinking protocol")
+    c.complete_task(ids["t1"])
+    days = c.journal(days=2)
+    assert days[0]["date"] == "2026-07-28"
+    assert [n["name"] for n in days[0]["completed"]] == ["t1"]
+    assert [n["text"] for n in days[0]["notes"]] == [
+        "tried the new crosslinking protocol"
+    ]
+    assert days[1]["completed"] == [] and days[1]["notes"] == []
+
+
+def test_capture_rejects_empty_and_bad_dates(c):
+    with pytest.raises(CommandError):
+        c.capture("   ")
+    with pytest.raises(CommandError):
+        c.capture("x", date_str="not-a-date")
+
+
+def test_journal_ignores_untimestamped_imports(c):
+    ids = chain(c)
+    c.repo.update_node(ids["t1"], status="done")  # importer write-through
+    assert c.journal()[0]["completed"] == []

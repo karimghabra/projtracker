@@ -26,6 +26,12 @@ CONTAINER_STATES = ("active", "paused", "archived")
 HEALTH_STATES = ("on_track", "not_begun", "off_track", "wont_finish")
 DEFAULT_HEALTH = "not_begun"
 
+# User-set priority, tasks only. 'pinned' means "today, regardless"; None
+# reads as normal. Priority groups the to-do list; impact ranks within a
+# group -- deterministic, no scheduler.
+PRIORITIES = ("pinned", "high", "normal", "low")
+PRIORITY_RANK = {"pinned": 0, "high": 1, None: 2, "normal": 2, "low": 3}
+
 
 @dataclass
 class Node:
@@ -46,6 +52,10 @@ class Node:
     tags: list[str] = field(default_factory=list)
     ref: str | None = None  # stable dotted id; survives renames across imports
     health: str | None = None  # HEALTH_STATES; tasks only, None on containers
+    priority: str | None = None  # PRIORITIES; tasks only, None = normal
+    # tasks only: when set, completing this task auto-creates a follow-up
+    # task that becomes ready this many days later (earliest_start gating)
+    followup_days: int | None = None
     created_at: str | None = None
     completed_at: str | None = None
 

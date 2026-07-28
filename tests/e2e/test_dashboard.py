@@ -94,6 +94,8 @@ def page(board):
         # stand in for the Tauri runtime before any app script runs
         pg.add_init_script("""
             window.__TAURI__ = { core: { invoke: async (cmd, payload) => {
+                if (cmd === "graph_html")
+                    return "<html><body data-graph-stub>graph</body></html>";
                 if (cmd !== "pt") throw new Error("unexpected command: " + cmd);
                 return await window.__ptBridge(payload.args);
             } } };
@@ -296,3 +298,66 @@ def test_no_console_or_page_errors(page):
     page.locator("#btnRefresh").click()
     page.wait_for_timeout(300)
     assert page.errors == [], f"page reported errors: {page.errors}"
+
+
+# --- editing, journal, priorities, graph ------------------------------------
+
+
+def test_edit_dialog_renames_through_the_cli(page):
+    row = page.locator('#tree .node[data-kind="goal"]').first
+    row.hover()
+    row.locator(".edit").click()
+    expect(page.locator("#editDlg")).to_be_visible()
+    page.locator("#edName").fill("Steelwork (revised)")
+    page.locator("#edOk").click()
+    expect(page.locator(".toast").first).to_contain_text("Saved")
+    expect(page.locator("#tree")).to_contain_text("Steelwork (revised)")
+
+
+def test_edit_dialog_adds_a_dependency(page, board):
+    # goal Optics depends on goal Steelwork* -> Lens spec becomes blocked
+    row = page.locator('#tree .node[data-kind="goal"]', has_text="Optics")
+    row.hover()
+    row.locator(".edit").click()
+    pick = page.locator("#edDepPick")
+    steel = pick.locator("option", has_text="Steelwork").first.get_attribute("value")
+    pick.select_option(steel)
+    page.locator("#edDepAdd").click()
+    page.locator("#edCancel").click()
+    deps = run_cli(board, ["dep", "ls"])
+    assert any(d["to_id"] and d["from_id"] == int(steel) for d in deps)
+    # visible consequence: Lens spec is no longer ready
+    ready = {t["name"] for t in run_cli(board, ["ready"])}
+    assert "Lens spec" not in ready
+    # clean up for other tests
+    optics = next(n for n in run_cli(board, ["ls"]) if n["name"] == "Optics")
+    run_cli(board, ["dep", "rm", steel, str(optics["id"])])
+
+
+def test_capture_appears_in_the_journal(page):
+    page.locator("#capText").fill("tried the elastic modulus rig")
+    page.locator("#capOk").click()
+    expect(page.locator("#journal")).to_contain_text("tried the elastic modulus rig")
+
+
+def test_pinned_task_leads_the_todo_list(page, board):
+    last = page.locator("#ready .row").last.locator(".meta").inner_text()
+    tid = last.split("#")[1].split(" ")[0]
+    run_cli(board, ["set", tid, "--priority", "pinned"])
+    page.locator("#btnRefresh").click()
+    page.wait_for_timeout(400)
+    first = page.locator("#ready .row").first
+    expect(first.locator(".prio")).to_have_text("pinned")
+    run_cli(board, ["set", tid, "--priority", "none"])
+
+
+def test_graph_button_opens_the_viewer(page):
+    page.locator("#btnGraph").click()
+    expect(page.locator("#graphDlg")).to_be_visible()
+    frame = page.frame_locator("#graphFrame")
+    expect(frame.locator("body")).to_contain_text("graph")
+    page.locator("#graphClose").click()
+
+
+def test_waiting_is_named_in_the_legend(page):
+    expect(page.locator("#legend")).to_contain_text("waiting")

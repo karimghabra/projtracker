@@ -34,7 +34,12 @@ def _seq_key(n: Node):
 
 
 class Graph:
-    def __init__(self, nodes: list[Node], deps: list[Dependency]):
+    def __init__(self, nodes: list[Node], deps: list[Dependency],
+                 today: str | None = None):
+        # The core owns no clock (spec 8.1): date-aware readiness only exists
+        # when the caller supplies `today`. With None, dates gate nothing and
+        # the graph is exactly as deterministic as its node list.
+        self.today = today
         self.nodes: dict[int, Node] = {n.id: n for n in nodes}
         self.deps: list[Dependency] = list(deps)
         self._children: dict[int, list[Node]] = defaultdict(list)
@@ -117,11 +122,26 @@ class Graph:
             and (s.seq_index if s.seq_index is not None else 0) < my_rank
         ]
 
+    def _waiting_until(self, t: Node) -> str | None:
+        """The future earliest_start gating this task, if any. Non-ISO text
+        (legacy imports) gates nothing."""
+        if self.today is None or not t.earliest_start:
+            return None
+        try:
+            starts = date.fromisoformat(t.earliest_start)
+        except ValueError:
+            return None
+        return t.earliest_start if starts > date.fromisoformat(self.today) else None
+
     def blockers(self, tid: int) -> list[dict]:
-        """Why a task is not ready: unsatisfied sequence predecessors and/or
-        incomplete dependency sources gating the task or its parent goal."""
+        """Why a task is not ready: unsatisfied sequence predecessors,
+        incomplete dependency sources gating the task or its parent goal,
+        and/or a start date that has not arrived."""
         t = self.nodes[tid]
         out = []
+        waiting = self._waiting_until(t)
+        if waiting:
+            out.append({"type": "date", "until": waiting})
         for pred in self._seq_blockers(t):
             out.append({"type": "sequence", "node_id": pred.id, "name": pred.name})
         gate_targets = [tid]
@@ -142,7 +162,13 @@ class Graph:
             raise ValueError(f"node {tid} is a {t.kind}, not a task")
         if t.status in ("in_progress", "done", "dropped"):
             return t.status
-        return "blocked" if self.blockers(tid) else "ready"
+        blockers = self.blockers(tid)
+        if not blockers:
+            return "ready"
+        # gated only by the calendar reads as waiting, not blocked
+        if all(b["type"] == "date" for b in blockers):
+            return "waiting"
+        return "blocked"
 
     def ready_tasks(self) -> list[Node]:
         return [
@@ -191,7 +217,9 @@ class Graph:
             dataclasses.replace(n, status="done") if n.id == tid else n
             for n in self.nodes.values()
         ]
-        after = {n.id for n in Graph(simulated, self.deps).ready_tasks()}
+        after = {
+            n.id for n in Graph(simulated, self.deps, self.today).ready_tasks()
+        }
         return sorted(after - before)
 
     # --- effective deadlines (spec 3.3) ---

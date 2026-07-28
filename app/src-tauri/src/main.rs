@@ -65,12 +65,49 @@ fn env_info(project_dir: String) -> Value {
     })
 }
 
+/// Build the interactive dependency-graph page and return its HTML.
+///
+/// The graph verb writes a self-contained file; this runs it against a temp
+/// path, reads the result back and deletes the file, so the webview can show
+/// it in an iframe without the app gaining any general file access.
+#[tauri::command]
+async fn graph_html(project_dir: String, db: String) -> Result<String, String> {
+    let dir = working_dir(&project_dir);
+    let tmp = dir.join(".graph_preview.html");
+    let mut cmd = match sidecar() {
+        Some(path) => Command::new(path),
+        None => {
+            let mut c = Command::new("python");
+            c.arg("-m").arg("protracker.cli");
+            c
+        }
+    };
+    cmd.current_dir(&dir)
+        .arg("--db")
+        .arg(&db)
+        .arg("--json")
+        .arg("graph")
+        .arg(&tmp);
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    let out = cmd.output().map_err(|e| format!("could not run the CLI: {e}"))?;
+    if !out.status.success() {
+        let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        return Err(if stdout.is_empty() { stderr } else { stdout });
+    }
+    let html = std::fs::read_to_string(&tmp)
+        .map_err(|e| format!("graph file unreadable: {e}"))?;
+    let _ = std::fs::remove_file(&tmp);
+    Ok(html)
+}
+
 /// Run the CLI with `--json` and return its parsed output.
 ///
 /// Arguments are passed as an argv list, never a shell string, so nothing the
 /// user types in a dialog can be interpreted as a command.
 #[tauri::command]
-fn pt(project_dir: String, db: String, args: Vec<String>) -> Result<Value, String> {
+async fn pt(project_dir: String, db: String, args: Vec<String>) -> Result<Value, String> {
     let mut cmd = match sidecar() {
         Some(path) => Command::new(path),
         None => {
@@ -118,7 +155,7 @@ fn pt(project_dir: String, db: String, args: Vec<String>) -> Result<Value, Strin
 
 fn main() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![pt, env_info])
+        .invoke_handler(tauri::generate_handler![pt, env_info, graph_html])
         .run(tauri::generate_context!())
         .expect("error while running protracker");
 }

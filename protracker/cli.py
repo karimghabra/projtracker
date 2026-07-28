@@ -57,6 +57,8 @@ def build_parser() -> argparse.ArgumentParser:
     st.add_argument("--seq", type=int)
     st.add_argument("--tags")
     st.add_argument("--status")
+    st.add_argument("--priority", choices=["pinned", "high", "normal", "low", "none"])
+    st.add_argument("--followup-days", dest="followup_days", type=int)
 
     mv = sub.add_parser("mv", help="re-parent a node")
     mv.add_argument("id", type=int)
@@ -108,6 +110,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--days", type=int, default=30,
         help="a project is 'active' if something was completed within N days",
     )
+    cap = sub.add_parser("capture", help="append a note to today's journal")
+    cap.add_argument("text")
+    cap.add_argument("--date", default=None, help="YYYY-MM-DD (default today)")
+    jr = sub.add_parser(
+        "journal", help="per-day history: completions and captured notes"
+    )
+    jr.add_argument("--days", type=int, default=1)
 
     start = sub.add_parser("start", help="mark a task in progress")
     start.add_argument("id", type=int)
@@ -157,6 +166,8 @@ def dispatch(args: argparse.Namespace, c: Commands):
                 ("deadline", args.deadline),
                 ("earliest_start", args.earliest_start),
                 ("weight", args.weight),
+                ("priority", args.priority),
+                ("followup_days", args.followup_days),
                 ("est_minutes", args.est),
                 ("est_source", args.est_source),
                 ("seq_index", args.seq),
@@ -167,6 +178,10 @@ def dispatch(args: argparse.Namespace, c: Commands):
         }
         if not fields:
             raise CommandError("invalid_field", "nothing to update")
+        # 'none' is the explicit clear sentinel; the is-not-None filter above
+        # would otherwise make clearing a priority impossible
+        if fields.get("priority") == "none":
+            fields["priority"] = None
         return c.update_node(args.id, **fields)
     if cmd == "mv":
         return c.move_node(
@@ -192,6 +207,10 @@ def dispatch(args: argparse.Namespace, c: Commands):
         return c.ready(impact=args.impact)
     if cmd == "progress":
         return c.progress(days=args.days)
+    if cmd == "capture":
+        return c.capture(args.text, date_str=args.date)
+    if cmd == "journal":
+        return c.journal(days=args.days)
     if cmd == "start":
         return c.start_task(args.id)
     if cmd == "done":
@@ -231,6 +250,17 @@ def print_human(result, cmd: str):
             if "unlocks_now" in t:
                 line += f"  [unlocks {t['unlocks_now']}, gates {t['gates_total']}]"
             print(line)
+    elif cmd == "capture":
+        n = result["captured"]
+        print(f"captured note #{n['id']} for {n['date']}")
+    elif cmd == "journal":
+        for day in result:
+            print(f"{day['date']}: {len(day['completed'])} completed, "
+                  f"{len(day['notes'])} notes")
+            for n in day["completed"]:
+                print(f"  done  {n['name']}")
+            for note in day["notes"]:
+                print(f"  note  {note['text']}")
     elif cmd == "progress":
         if not result:
             print("(no projects)")

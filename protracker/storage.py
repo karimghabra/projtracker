@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS nodes (
     tags          TEXT,                           -- JSON array
     ref           TEXT,                           -- stable dotted id (import)
     health        TEXT,                           -- quarter outlook (tasks only)
+    priority      TEXT,                           -- pinned/high/normal/low (tasks)
+    followup_days INTEGER,                        -- auto follow-up on completion
     created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     completed_at  TIMESTAMP
 );
@@ -47,6 +49,13 @@ CREATE TABLE IF NOT EXISTS protocols (
     embedding BLOB                                 -- populated in phase 3
 );
 
+CREATE TABLE IF NOT EXISTS daily_notes (
+    id         INTEGER PRIMARY KEY,
+    date       DATE NOT NULL,                     -- the day the note belongs to
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    text       TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS schedule_log (
     id          INTEGER PRIMARY KEY,
     date        DATE NOT NULL,
@@ -60,7 +69,8 @@ CREATE TABLE IF NOT EXISTS schedule_log (
 NODE_COLUMNS = (
     "kind", "parent_id", "name", "description", "status", "seq_index",
     "seq_source", "deadline", "earliest_start", "weight", "est_minutes",
-    "est_source", "actual_minutes", "tags", "ref", "health", "completed_at",
+    "est_source", "actual_minutes", "tags", "ref", "health", "priority",
+    "followup_days", "completed_at",
 )
 
 
@@ -72,8 +82,13 @@ class Repository:
         self.conn.executescript(SCHEMA)
         # forward-compat: databases created before seq_source existed
         cols = {r[1] for r in self.conn.execute("PRAGMA table_info(nodes)")}
-        for missing in {"seq_source", "ref", "health"} - cols:
-            self.conn.execute(f"ALTER TABLE nodes ADD COLUMN {missing} TEXT")
+        types = {"followup_days": "INTEGER"}
+        for missing in {"seq_source", "ref", "health", "priority",
+                        "followup_days"} - cols:
+            self.conn.execute(
+                f"ALTER TABLE nodes ADD COLUMN {missing} "
+                f"{types.get(missing, 'TEXT')}"
+            )
         self.conn.commit()
 
     def close(self):
@@ -101,6 +116,8 @@ class Repository:
             tags=json.loads(row["tags"]) if row["tags"] else [],
             ref=row["ref"],
             health=row["health"],
+            priority=row["priority"],
+            followup_days=row["followup_days"],
             created_at=row["created_at"],
             completed_at=row["completed_at"],
         )
@@ -183,6 +200,31 @@ class Repository:
             (from_id, to_id),
         )
         self.conn.commit()
+
+    # --- daily notes (the capture stream, SQLite edition) ---
+
+    def add_note(self, date: str, text: str) -> dict:
+        cur = self.conn.execute(
+            "INSERT INTO daily_notes (date, text) VALUES (?, ?)", (date, text)
+        )
+        self.conn.commit()
+        row = self.conn.execute(
+            "SELECT * FROM daily_notes WHERE id = ?", (cur.lastrowid,)
+        ).fetchone()
+        return dict(row)
+
+    def notes_for(self, date: str) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT * FROM daily_notes WHERE date = ? ORDER BY id", (date,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def delete_note(self, note_id: int) -> bool:
+        cur = self.conn.execute(
+            "DELETE FROM daily_notes WHERE id = ?", (note_id,)
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
 
     def all_dependencies(self) -> list[Dependency]:
         rows = self.conn.execute(
