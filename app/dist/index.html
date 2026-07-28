@@ -1002,6 +1002,7 @@ $("edOk").onclick = async () => {
   }
   $("editDlg").close();
   await refresh();
+  if ($("graphDlg").open) await regenGraph();
 };
 
 $("edDelete").onclick = async () => {
@@ -1015,17 +1016,46 @@ $("edDelete").onclick = async () => {
   toast(`Deleted ${n.kind} “${n.name}”.`);
   $("editDlg").close();
   await refresh();
+  if ($("graphDlg").open) await regenGraph();
 };
 
 // --- graph modal ------------------------------------------------------------
+async function regenGraph() {
+  const html = await invoke("graph_html", { projectDir: cfg.dir, db: cfg.db });
+  $("graphFrame").srcdoc = html;
+}
 $("btnGraph").onclick = async () => {
   try {
-    const html = await invoke("graph_html", { projectDir: cfg.dir, db: cfg.db });
-    $("graphFrame").srcdoc = html;
+    await regenGraph();
     $("graphDlg").showModal();
   } catch (e) { toast(errText(e), true); }
 };
 $("graphClose").onclick = () => $("graphDlg").close();
+
+/* The embedded graph is a live client: it posts verb requests up, we run
+   them through the same pt() door, and any successful mutation regenerates
+   the embedded page so it always shows the graph as the core computes it. */
+const MUTATING = new Set(["done", "dep", "set", "mv", "rm", "start", "drop"]);
+window.addEventListener("message", async (e) => {
+  const d = e.data || {};
+  if (d.editReq) { openEdit(Number(d.editReq)); return; }
+  if (!d.ptReq) return;
+  const frame = $("graphFrame").contentWindow;
+  try {
+    const result = await pt(...d.ptReq.args);
+    if (d.ptReq.args[0] === "done" && result?.completed) {
+      let msg = `Completed “${result.completed.name}”.`;
+      const unlocked = result.newly_ready || [];
+      if (unlocked.length) msg += "\nNow ready: " + unlocked.map((n) => n.name).join(", ");
+      toast(msg);
+    }
+    if (d.ptReq.args[0] === "dep" && d.ptReq.args[1] === "add") toast("Dependency added.");
+    frame.postMessage({ ptRes: { id: d.ptReq.id, result } }, "*");
+    if (MUTATING.has(d.ptReq.args[0])) { await refresh(); await regenGraph(); }
+  } catch (err) {
+    frame.postMessage({ ptRes: { id: d.ptReq.id, error: errText(err) } }, "*");
+  }
+});
 
 $("btnTheme").onclick = () => {
   const now = document.documentElement.getAttribute("data-theme");

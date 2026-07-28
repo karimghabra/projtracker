@@ -328,6 +328,21 @@
     font-family: var(--mono); font-size: 9.5px; color: var(--muted);
     pointer-events: none;
   }
+
+  /* live mode: embedded in the app with a verb bridge */
+  .tickb, .editb {
+    display: none; border: none; background: none; cursor: pointer;
+    font-size: 10px; padding: 0 3px; color: var(--muted); flex: none; line-height: 1;
+  }
+  .tickb:hover { color: var(--ready, #0ca30c); }
+  .editb:hover { color: var(--fg); }
+  body.live .task:hover .tickb, body.live .task:hover .editb,
+  body.live .gcard:hover .editb { display: inline-block; }
+  #linkMode.armed { outline: 2px solid var(--up, #2a78d6); }
+  .linksrc { outline: 2px dashed var(--up, #2a78d6); outline-offset: 1px; }
+  body.linking .gcard, body.linking .task { cursor: crosshair; }
+  /* density: the board scales as one unit so every project fits on screen */
+  #forest, #dag { transform-origin: top left; }
 </style>
 
 <header>
@@ -353,6 +368,10 @@
   </div>
   <div class="controls">
     <label id="allLinksWrap"><input type="checkbox" id="allLinks"> show all links</label>
+    <label id="zoomWrap" title="zoom">&#128269;
+      <input type="range" id="zoom" min="50" max="100" value="80" style="width:90px;vertical-align:middle">
+    </label>
+    <button id="linkMode" hidden title="click a source, then a target, to add a dependency">+ draw link</button>
   </div>
 </header>
 
@@ -885,4 +904,81 @@
   window.addEventListener("resize", redraw);
 
   setView("forest");
+</script>
+
+<script>
+(() => {
+  const zoom = document.getElementById("zoom");
+  function applyZoom() {
+    const s = Number(zoom.value) / 100;
+    for (const id of ["forest", "dag"]) {
+      const el = document.getElementById(id);
+      el.style.transform = `scale(${s})`;
+      el.style.width = `${100 / s}%`;
+    }
+  }
+  zoom.addEventListener("input", applyZoom);
+  applyZoom();
+
+  /* bridge to the app: absent in a standalone export, so that stays read-only */
+  if (window.parent === window) return;
+  document.body.classList.add("live");
+  let seq = 0; const pending = new Map();
+  const pt = (...args) => new Promise((res, rej) => {
+    const id = ++seq; pending.set(id, { res, rej });
+    window.parent.postMessage({ ptReq: { id, args } }, "*");
+  });
+  window.addEventListener("message", (e) => {
+    const r = e.data && e.data.ptRes;
+    if (!r || !pending.has(r.id)) return;
+    const pr = pending.get(r.id); pending.delete(r.id);
+    r.error != null ? pr.rej(r.error) : pr.res(r.result);
+  });
+  const editReq = (id) => window.parent.postMessage({ editReq: id }, "*");
+
+  document.querySelectorAll("li.task").forEach((li) => {
+    const id = Number(li.dataset.nid);
+    const n = byId.get(id);
+    if (n && n.status !== "done" && n.status !== "dropped") {
+      const b = document.createElement("button");
+      b.className = "tickb"; b.textContent = "\u2713"; b.title = "mark done";
+      b.onclick = (ev) => { ev.stopPropagation(); b.disabled = true;
+        pt("done", String(id)).catch(() => { b.disabled = false; }); };
+      li.appendChild(b);
+    }
+    const e = document.createElement("button");
+    e.className = "editb"; e.textContent = "\u270e"; e.title = "edit";
+    e.onclick = (ev) => { ev.stopPropagation(); editReq(id); };
+    li.appendChild(e);
+  });
+  document.querySelectorAll(".gcard[data-nid]").forEach((card) => {
+    const e = document.createElement("button");
+    e.className = "editb"; e.textContent = "\u270e"; e.title = "edit";
+    e.onclick = (ev) => { ev.stopPropagation(); editReq(Number(card.dataset.nid)); };
+    card.appendChild(e);
+  });
+
+  const btn = document.getElementById("linkMode");
+  btn.hidden = false;
+  let src = null;
+  const disarm = () => {
+    btn.classList.remove("armed"); document.body.classList.remove("linking");
+    document.querySelectorAll(".linksrc").forEach((el) => el.classList.remove("linksrc"));
+    src = null;
+  };
+  btn.onclick = () => {
+    if (btn.classList.contains("armed")) return disarm();
+    btn.classList.add("armed"); document.body.classList.add("linking");
+  };
+  document.addEventListener("click", (ev) => {
+    if (!btn.classList.contains("armed")) return;
+    const hit = ev.target.closest("li.task, .gcard[data-nid]");
+    if (!hit) return;
+    ev.stopPropagation(); ev.preventDefault();
+    const id = Number(hit.dataset.nid);
+    if (src === null) { src = id; hit.classList.add("linksrc"); return; }
+    if (id === src) return disarm();
+    pt("dep", "add", String(src), String(id)).catch(() => {}).finally(disarm);
+  }, true);
+})();
 </script>

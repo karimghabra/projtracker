@@ -91,11 +91,19 @@ def page(board):
         pg.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
 
         pg.expose_function("__ptBridge", lambda args: run_cli(board, list(args)))
+
+        def graph_html() -> str:
+            import tempfile
+            with tempfile.TemporaryDirectory() as td:
+                out = Path(td) / "g.html"
+                run_cli(board, ["graph", str(out)])
+                return out.read_text(encoding="utf8")
+
+        pg.expose_function("__graphHtml", graph_html)
         # stand in for the Tauri runtime before any app script runs
         pg.add_init_script("""
             window.__TAURI__ = { core: { invoke: async (cmd, payload) => {
-                if (cmd === "graph_html")
-                    return "<html><body data-graph-stub>graph</body></html>";
+                if (cmd === "graph_html") return await window.__graphHtml();
                 if (cmd !== "pt") throw new Error("unexpected command: " + cmd);
                 return await window.__ptBridge(payload.args);
             } } };
@@ -355,9 +363,69 @@ def test_graph_button_opens_the_viewer(page):
     page.locator("#btnGraph").click()
     expect(page.locator("#graphDlg")).to_be_visible()
     frame = page.frame_locator("#graphFrame")
-    expect(frame.locator("body")).to_contain_text("graph")
+    expect(frame.locator(".pcard").first).to_be_visible()
     page.locator("#graphClose").click()
 
 
 def test_waiting_is_named_in_the_legend(page):
     expect(page.locator("#legend")).to_contain_text("waiting")
+
+
+# --- the live graph: mutations drawn directly on the viewer -----------------
+
+
+def graph_frame(page):
+    page.locator("#btnGraph").click()
+    expect(page.locator("#graphDlg")).to_be_visible()
+    return page.frame_locator("#graphFrame")
+
+
+def test_graph_check_off_completes_through_the_bridge(page, board):
+    frame = graph_frame(page)
+    # pick a ready task the CLI agrees is ready
+    ready = run_cli(board, ["ready"])[0]
+    li = frame.locator(f'li.task[data-nid="{ready["id"]}"]')
+    li.hover()
+    li.locator(".tickb").click()
+    expect(page.locator(".toast").first).to_contain_text("Completed")
+    node = next(n for n in run_cli(board, ["ls"]) if n["id"] == ready["id"])
+    assert node["status"] == "done", "the graph tick must run the done verb"
+    page.locator("#graphClose").click()
+
+
+def test_graph_edit_button_opens_the_app_edit_dialog(page):
+    frame = graph_frame(page)
+    card = frame.locator(".gcard[data-nid]").first
+    card.hover()
+    card.locator(".editb").click()
+    expect(page.locator("#editDlg")).to_be_visible()
+    page.locator("#edCancel").click()
+    page.locator("#graphClose").click()
+
+
+def test_graph_draws_a_dependency_and_rejects_cycles_gracefully(page, board):
+    before = len(run_cli(board, ["dep", "ls"]))
+    frame = graph_frame(page)
+    frame.locator("#linkMode").click()
+    cards = frame.locator(".gcard[data-nid]")
+    src = cards.nth(0).get_attribute("data-nid")
+    dst = cards.nth(1).get_attribute("data-nid")
+    cards.nth(0).click()
+    cards.nth(1).click()
+    expect(page.locator(".toast").first).to_contain_text("Dependency added")
+    deps = run_cli(board, ["dep", "ls"])
+    assert len(deps) == before + 1
+    assert any(d["from_id"] == int(src) and d["to_id"] == int(dst) for d in deps)
+    # drawing the reverse edge must fail with a structured cycle error, not
+    # silently corrupt the graph. The parent regenerates the iframe after a
+    # successful mutation, so wait for the fresh document before clicking.
+    page.wait_for_timeout(3000)
+    frame2 = page.frame_locator("#graphFrame")
+    frame2.locator("#linkMode").click()
+    cards2 = frame2.locator(".gcard[data-nid]")
+    frame2.locator(f'.gcard[data-nid="{dst}"]').click()
+    frame2.locator(f'.gcard[data-nid="{src}"]').click()
+    expect(page.locator(".toast.err").first).to_be_visible()
+    assert len(run_cli(board, ["dep", "ls"])) == before + 1
+    run_cli(board, ["dep", "rm", src, dst])  # leave the board as found
+    page.locator("#graphClose").click()
