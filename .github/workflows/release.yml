@@ -68,9 +68,28 @@ jobs:
             --name "protracker-cli-${TRIPLE}" \
             --distpath app/src-tauri/binaries \
             --hidden-import openpyxl \
+            --add-data "protracker/graph_template.html;protracker" \
             --paths . --noconfirm app/cli_entry.py
           ls -l app/src-tauri/binaries
           test -f "app/src-tauri/binaries/protracker-cli-${TRIPLE}.exe"
+
+      # The sidecar must work *as bundled* -- data files the source tree takes
+      # for granted (the graph template) only exist inside the onefile archive
+      # if the step above packed them. Exercise every verb the app calls,
+      # including graph, against a scratch database before promising it in an
+      # installer.
+      - name: Smoke-test the sidecar
+        shell: bash
+        run: |
+          TRIPLE=$(rustc -vV | sed -n 's/host: //p')
+          CLI="app/src-tauri/binaries/protracker-cli-${TRIPLE}.exe"
+          DB=$(mktemp -u).db
+          "$CLI" --db "$DB" --json add project "Smoke" > /dev/null
+          "$CLI" --db "$DB" --json ready --impact > /dev/null
+          "$CLI" --db "$DB" --json progress > /dev/null
+          "$CLI" --db "$DB" --json graph "$RUNNER_TEMP/smoke_graph.html" > /dev/null
+          test -s "$RUNNER_TEMP/smoke_graph.html"
+          echo "sidecar smoke test passed"
 
       # prebuilt binary, so this takes seconds rather than compiling the CLI
       - name: Install cargo-binstall

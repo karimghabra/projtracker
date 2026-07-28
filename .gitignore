@@ -34,6 +34,7 @@ __pycache__/
 .ruff_cache/
 build/
 *.egg-info/
+/protracker-cli-*.spec
 app/src-tauri/target/
 app/src-tauri/gen/
 app/src-tauri/binaries/

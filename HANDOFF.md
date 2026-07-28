@@ -4,8 +4,11 @@ Orientation for anyone (human or agent) picking this up. The specification is
 `scheduler_spec.md`; `README.md` covers usage. This file records the decisions
 and invariants that the code alone does not explain.
 
-**State:** import → dashboard toolchain working end to end. **143 tests
-passing** (`python -m pytest -q`). Requires `openpyxl` and `pytest`.
+**State:** import → dashboard toolchain working end to end. **247 tests
+passing** (`python -m pytest -q`): 212 unit + 35 dashboard e2e. Requires
+`openpyxl` and `pytest`; the e2e portion additionally needs `playwright`
+(any recent version + `playwright install chromium`) and a built frontend
+(`npm --prefix app/ui run build`), and skips with a clear message otherwise.
 
 ## Non-negotiable invariants (spec §8.1)
 
@@ -40,7 +43,7 @@ passing** (`python -m pytest -q`). Requires `openpyxl` and `pytest`.
 | `protracker/exporter.py` | Template-format export; colour and completion round-trip |
 | `protracker/augment.py` | Offline LLM pipeline. `--emit-prompt` / `--proposals` / `--dry-run`. No network path exists |
 | `protracker/graphview.py` + `graph_template.html` | Self-contained interactive HTML view |
-| `app/src-tauri/` | Tauri shell. One Rust command: run the CLI with `--json`, return parsed JSON. Argv list, never a shell string |
+| `app/src-tauri/` | Tauri shell. One Rust command: run the CLI with `--json`, return parsed JSON. Argv list, never a shell string. **Sidecar footgun:** the PyInstaller onefile CLI only contains data files passed via `--add-data` — `graph_template.html` broke silently once. The release workflow bundles it and smoke-tests the built sidecar (including `graph`) before publishing; keep that step in sync with any new data file read via `__file__`. Local dev: `tauri-build` refuses to compile until the sidecar exe exists in `binaries/` and `app/dist` is built — run the PyInstaller line from `release.yml` plus `npm --prefix app/ui run build` once before `cargo check` |
 | `app/ui/` | Dashboard source: React + TypeScript + Vite, builds into `app/dist` (gitignored). Talks only through `window.__TAURI__.core.invoke`; a dev-only Vite middleware stands in for the shell so `npm run dev` works in a plain browser |
 
 Fixtures live in `tests/fixtures/` and are synthetic (a coffee shop).
@@ -125,13 +128,11 @@ Fixtures live in `tests/fixtures/` and are synthetic (a coffee shop).
    canonical yet.
 3. **Storage inversion** (text-as-truth, spec §4.1) deferred until open question
    11 (serialisation format) is decided; recommended before M2 closes.
-4. **No native file picker yet** — paths are typed (quoted paths accepted).
-   The frontend already feature-detects `window.__TAURI__.dialog.open` and
-   falls back to the text input, so wiring `tauri-plugin-dialog` into the
-   shell (Cargo dep + `.plugin(tauri_plugin_dialog::init())` + capability)
-   lights the picker up with no frontend change. Left out deliberately: the
-   Rust side cannot be compile-verified in the environment this change was
-   authored in.
+4. ~~No native file picker~~ **Done (2026-07-28).** `tauri-plugin-dialog` is
+   wired into the shell (`Cargo.toml` + `.plugin(...)` in `main.rs` +
+   `capabilities/default.json` granting `core:default` and `dialog:default`),
+   verified in the running app: the folder buttons appear and open the native
+   picker with title and xlsx filter. No frontend change was needed.
 
 ## Cheat sheet
 
