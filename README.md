@@ -61,9 +61,15 @@ On first launch open **Settings** and point it at this directory and a database
 file. **Import…** ingests a workbook; **Add…** creates nodes; **Done** completes
 a task and reports what it freed.
 
-The app shells out to `python -m protracker.cli --json` with an argv list — never
-a shell string — so it needs Python and this repository present. The installer
-from the `installer` workflow ships the shell, not the Python side.
+The app shells out to the CLI with an argv list — never a shell string — so
+nothing typed into a dialog can be interpreted as a command.
+
+Installed copies are **self-contained**: the `installer` workflow bundles the
+CLI as a sidecar with PyInstaller, so a machine needs neither Python nor a
+checkout. Run from source and the sidecar is absent, so it falls back to
+`python -m protracker.cli` against the live tree — which is what you want while
+developing. **Settings** reports which of the two is in use and where data is
+written; with no working directory set it uses a per-user data directory.
 
 ## Importing a workbook
 

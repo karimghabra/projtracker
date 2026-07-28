@@ -178,6 +178,41 @@ def test_add_dialog_creates_a_project_through_the_cli(page):
     expect(page.locator("#projects")).to_contain_text("Aqueduct")
 
 
+def test_import_dialog_ingests_a_workbook(page, tmp_path):
+    """The path most likely to be used first, and the one that has to work on
+    a machine where the workbook does not sit next to the code."""
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Aqueduct"
+    for col, head in enumerate(("Project", "Milestone", "Goal", "Task", "Notes"), 1):
+        ws.cell(row=1, column=col, value=head)
+    ws["A2"] = "Aqueduct Repair"
+    ws["B3"] = "Phase 1"
+    ws["C4"] = "Masonry"
+    ws["D5"] = "Point the arches"
+    book = tmp_path / "imported.xlsx"
+    wb.save(book)
+
+    page.locator("#btnImport").click()
+    page.locator("#impPath").fill(str(book))  # absolute: the realistic case
+    page.locator("#impOk").click()
+    expect(page.locator(".toast").first).to_contain_text("Imported:")
+    expect(page.locator("#projects")).to_contain_text("Aqueduct Repair")
+
+
+def test_import_of_a_missing_workbook_reports_a_usable_error(page):
+    page.locator("#btnImport").click()
+    page.locator("#impPath").fill("no-such-workbook.xlsx")
+    page.locator("#impOk").click()
+    toast = page.locator(".toast.err").first
+    expect(toast).to_be_visible()
+    expect(toast).to_contain_text("workbook not found")
+    # the dialog must stay open so the path can be corrected
+    assert page.locator("#impDlg").is_visible()
+
+
 def test_no_console_or_page_errors(page):
     page.locator("#btnRefresh").click()
     page.wait_for_timeout(300)

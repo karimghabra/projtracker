@@ -37,6 +37,28 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('app/src-tauri/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The sidecar is what makes an installed copy self-contained: without it
+      # the app needs Python and a checkout on the target machine, which is no
+      # use to someone who just downloaded an installer.
+      - name: Build the CLI sidecar
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyinstaller openpyxl
+          TRIPLE=$(rustc -vV | sed -n 's/host: //p')
+          echo "building sidecar for $TRIPLE"
+          python -m PyInstaller --onefile \
+            --name "protracker-cli-${TRIPLE}" \
+            --distpath app/src-tauri/binaries \
+            --hidden-import openpyxl \
+            --paths . --noconfirm app/cli_entry.py
+          ls -l app/src-tauri/binaries
+          test -f "app/src-tauri/binaries/protracker-cli-${TRIPLE}.exe"
+
       # prebuilt binary, so this takes seconds rather than compiling the CLI
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@main

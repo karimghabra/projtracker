@@ -319,9 +319,12 @@ label { display: grid; gap: 6px; font-size: 12px; color: var(--ink-2); font-weig
 <dialog id="setDlg">
   <h3>Settings</h3>
   <div class="body">
-    <label>Project directory <input id="setDir" placeholder="C:\path\to\projtracker"></label>
+    <label>Working directory (optional)
+      <input id="setDir" placeholder="leave blank to use the default">
+    </label>
     <label>Database file <input id="setDb"></label>
     <label>Stale after (days) <input id="setDays" type="number" min="1"></label>
+    <div class="hint" id="envInfo"></div>
   </div>
   <div class="actions">
     <button id="setCancel">Cancel</button>
@@ -370,11 +373,29 @@ function toast(msg, isError) {
   setTimeout(() => el.remove(), isError ? 9000 : 5000);
 }
 
+/* Turn whatever the bridge rejected with into something a person can act on.
+   Three shapes arrive here: a plain string (Tauri's Err), a JSON document
+   (the CLI's structured CommandError, handed back verbatim on a non-zero
+   exit), and an Error object. JSON.stringify on the last of those yields
+   "{\"name\":\"Error\"}", which is how a failed import used to report itself. */
+function errText(e) {
+  if (e && typeof e === "object") e = e.message ?? e.error ?? String(e);
+  if (typeof e !== "string") {
+    try { return JSON.stringify(e); } catch { return String(e); }
+  }
+  try {
+    const parsed = JSON.parse(e);
+    const msg = parsed?.error?.message ?? parsed?.message;
+    if (msg) return String(msg);
+  } catch { /* not JSON: it is already the message */ }
+  return e.trim() || "the command failed without a message";
+}
+
 async function pt(...args) {
   try {
     return await invoke("pt", { projectDir: cfg.dir, db: cfg.db, args });
   } catch (e) {
-    toast(typeof e === "string" ? e : JSON.stringify(e), true);
+    toast(errText(e), true);
     throw e;
   }
 }
@@ -521,12 +542,8 @@ function renderReady() {
 
 async function refresh() {
   $("dbLabel").textContent = cfg.db;
-  if (!cfg.dir) {
-    $("projects").innerHTML = `<div class="empty-state">Set the project directory in <b>Settings</b>.</div>`;
-    $("ready").innerHTML = `<div class="empty-state">—</div>`;
-    $("stats").innerHTML = "";
-    return;
-  }
+  // No directory gate: an installed build carries its own CLI and falls back
+  // to a per-user data directory, so it works before anything is configured.
   const [projects, ready, nodes] = await Promise.all([
     pt("progress", "--days", String(cfg.days)),
     pt("ready", "--impact"),
@@ -603,9 +620,20 @@ $("impOk").onclick = async () => {
   } finally { $("impOk").disabled = false; }
 };
 
-$("btnSettings").onclick = () => {
+$("btnSettings").onclick = async () => {
   $("setDir").value = cfg.dir; $("setDb").value = cfg.db; $("setDays").value = cfg.days;
+  $("envInfo").textContent = "";
   $("setDlg").showModal();
+  // say plainly what the app is talking to and where it will write
+  try {
+    const info = await invoke("env_info", { projectDir: cfg.dir });
+    $("envInfo").textContent =
+      (info.bundled
+        ? "Using the bundled CLI — no Python needed. "
+        : "Using system Python — this build has no bundled CLI, so it needs "
+          + "Python and the protracker package. ")
+      + `Data is written to ${info.working_dir}.`;
+  } catch { /* older build without env_info: leave the hint blank */ }
 };
 $("setCancel").onclick = () => $("setDlg").close();
 $("setOk").onclick = async () => {

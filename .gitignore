@@ -36,6 +36,7 @@ build/
 *.egg-info/
 app/src-tauri/target/
 app/src-tauri/gen/
+app/src-tauri/binaries/
 .claude/settings.local.json
 
 # stray artefact of a broken shell command in an earlier session; left on disk
