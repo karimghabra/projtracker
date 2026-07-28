@@ -155,6 +155,7 @@ async fn pt(project_dir: String, db: String, args: Vec<String>) -> Result<Value,
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![pt, env_info, graph_html])
         .run(tauri::generate_context!())
         .expect("error while running protracker");
