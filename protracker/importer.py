@@ -18,7 +18,7 @@ import colorsys
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
-from .model import DEFAULT_HEALTH
+from .model import DEFAULT_HEALTH, PRIORITIES
 
 # header-name aliases -> canonical role
 COLUMN_ROLES = {
@@ -41,10 +41,23 @@ COLUMN_ROLES = {
     "est": "est",
     "est (min)": "est",
     "est (minutes)": "est",
+    "priority": "priority",
+    "follow-up (days)": "followup",
+    "follow-up days": "followup",
+    "followup (days)": "followup",
+    "followup days": "followup",
+    "follow-up": "followup",
+    "followup": "followup",
+    "remind": "remind",
+    "today": "today",
     "tags": "tags",
     "notes": "notes",
     "ref": "ref",
 }
+
+# an explicit "no" in a flag-style cell (Remind, Today); any other non-empty
+# value counts as set, so a hand-typed "yes" or "x" does what it looks like
+FLAG_FALSE = ("0", "no", "false", "n", "-")
 
 STRUCTURAL_ROLES = ("project", "milestone", "goal", "task")
 
@@ -119,6 +132,11 @@ class NodeSpec:
     ref: str | None = None
     status: str | None = None  # 'done' when the row is struck through
     health: str | None = None  # quarter outlook from fill colour; tasks only
+    priority: str | None = None  # PRIORITIES; tasks only
+    followup_days: int | None = None  # tasks only
+    remind: int | None = None  # 1 = reminder; tasks only
+    today_listed: bool = False  # non-empty Today cell; tasks only
+    today_pos: int | None = None  # 1-based Today order when the cell is numeric
     extras: tuple = ()  # ((header, value), ...) from unrecognized columns
     sheet: str | None = None
     row: int | None = None
@@ -178,6 +196,12 @@ def _parse_date(value) -> tuple[str | None, str | None]:
     except ValueError:
         return None, text
     return text, None
+
+
+def _parse_flag(value) -> bool:
+    """Flag-style cell (Remind, Today): set unless empty or an explicit no."""
+    text = _clean(value)
+    return text is not None and text.lower() not in FLAG_FALSE
 
 
 def _parse_dep_names(raw: str | None) -> tuple:
@@ -313,14 +337,14 @@ def _classify_sheet(
             containers_seen.add(ckey)
         # dates: only real dates reach a DATE column; anything else is kept
         # verbatim as an extra and surfaced for review
-        date_extras = []
+        kept_extras = []
         parsed_dates = {}
         for role in ("deadline", "earliest"):
             iso, rejected = _parse_date(cell(cells, role))
             parsed_dates[role] = iso
             if rejected is not None:
                 hname = header_name(role)
-                date_extras.append((hname, rejected))
+                kept_extras.append((hname, rejected))
                 plan.review.append({
                     "sheet": title, "row": rownum, "values": [name],
                     "reason": (
@@ -334,6 +358,44 @@ def _classify_sheet(
             p for p in _parse_dep_names(_clean(cell(cells, "proposed")))
             if not p[1].upper().startswith("INVESTIGATE")
         )
+        # planner fields: tasks only, like the model. A value the model would
+        # reject is kept as an extra and surfaced, mirroring the date rule.
+        priority = followup = remind_flag = None
+        today_listed, today_pos = False, None
+        if kind == "task":
+            raw_priority = _clean(cell(cells, "priority"))
+            if raw_priority is not None:
+                if raw_priority.lower() in PRIORITIES:
+                    priority = raw_priority.lower()
+                else:
+                    hname = header_name("priority")
+                    kept_extras.append((hname, raw_priority))
+                    plan.review.append({
+                        "sheet": title, "row": rownum, "values": [name],
+                        "reason": (
+                            f"{hname!r} value {raw_priority!r} is not one of "
+                            f"{', '.join(PRIORITIES)}; kept as an extra"
+                        ),
+                    })
+            raw_followup = _clean(cell(cells, "followup"))
+            if raw_followup is not None:
+                parsed = _parse_seq(raw_followup)
+                if parsed is not None and parsed >= 1:
+                    followup = parsed
+                else:
+                    hname = header_name("followup")
+                    kept_extras.append((hname, raw_followup))
+                    plan.review.append({
+                        "sheet": title, "row": rownum, "values": [name],
+                        "reason": (
+                            f"{hname!r} value {raw_followup!r} is not a "
+                            "positive number of days; kept as an extra"
+                        ),
+                    })
+            remind_flag = 1 if _parse_flag(cell(cells, "remind")) else None
+            today_listed = _parse_flag(cell(cells, "today"))
+            if today_listed:
+                today_pos = _parse_seq(cell(cells, "today"))
         spec = NodeSpec(
             kind=kind, name=name, path=path, description=note,
             seq_index=seq, seq_source=seq_source,
@@ -349,10 +411,15 @@ def _classify_sheet(
             ref=_clean(cell(cells, "ref")),
             status=status,
             health=health,
+            priority=priority,
+            followup_days=followup,
+            remind=remind_flag,
+            today_listed=today_listed,
+            today_pos=today_pos,
             extras=tuple(
                 (h, _clean(cells[i])) for i, h in unknown_cols
                 if i < len(cells) and _clean(cells[i]) is not None
-            ) + tuple(date_extras),
+            ) + tuple(kept_extras),
             sheet=title, row=rownum, occurrence=occurrence,
         )
         plan.nodes.append(spec)

@@ -4,8 +4,8 @@ Orientation for anyone (human or agent) picking this up. The specification is
 `scheduler_spec.md`; `README.md` covers usage. This file records the decisions
 and invariants that the code alone does not explain.
 
-**State:** import → dashboard toolchain working end to end. **247 tests
-passing** (`python -m pytest -q`): 212 unit + 35 dashboard e2e. Requires
+**State:** import → dashboard toolchain working end to end. **256 tests
+passing** (`python -m pytest -q`): 218 unit + 38 dashboard e2e. Requires
 `openpyxl` and `pytest`; the e2e portion additionally needs `playwright`
 (any recent version + `playwright install chromium`) and a built frontend
 (`npm --prefix app/ui run build`), and skips with a clear message otherwise.
@@ -84,7 +84,17 @@ Fixtures live in `tests/fixtures/` and are synthetic (a coffee shop).
   strikethrough completions carry no timestamp and never read as recent.
 - **`ref`** stable dotted ids make re-import rename-safe. Generated project
   refs that collide are suffixed deterministically (`asdf`, `asdf-2`, …) so
-  same-named projects never share a ref lineage.
+  same-named projects never share a ref lineage. **Export stamps refs on the
+  database first** (idempotent), not just in the file — otherwise re-importing
+  your own export of a hand-built board matches by name and duplicates the
+  tree (caught by the fixed-point e2e test).
+- **Export round trip is lossless.** Start/Priority/Follow-up (days)/Remind
+  columns carry the planner fields (tasks only; blank never clears on
+  re-import). Today carries current list membership as 1-based order;
+  importing it is idempotent and a same-day tombstone (removed from the
+  list today) outranks the file. Auto-landed reminders are deliberately
+  not written to Today — remind + Start round-trip on the task, so they
+  re-land by themselves. `import` returns `today_added`.
 - **Import is two-phase.** `import --preview` matches each file project by
   ref (identity), provenance (`import_sources`: this filename + project name
   imported before), or bare name (a coincidence). Ref/provenance default to

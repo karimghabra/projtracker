@@ -5,7 +5,10 @@ template contract: header-name columns, explicit edges in 'Depends on'
 (task-level sources prefixed 'task: '), Seq written only where order is
 user-asserted (parallel ranks), refs stamped, and dependency-smelling notes
 marked in 'Proposed: Depends on' with an INVESTIGATE sentinel for later
-human/LLM adjudication. Deterministic: identical graph -> identical cells.
+human/LLM adjudication. Start/Priority/Follow-up/Remind carry the planner
+fields and Today carries current list membership (1-based order), so an
+export -> re-import round trip is lossless. Deterministic: identical graph
+and Today list -> identical cells.
 
 `build_export` is pure; `write_workbook` is the thin openpyxl shell.
 """
@@ -19,9 +22,13 @@ from .model import Node
 
 PROJECT_HEADER = (
     "Project", "Milestone", "Goal", "Task", "Seq", "Depends on",
-    "Proposed: Depends on", "Deadline", "Est (min)", "Tags", "Notes", "Ref",
+    "Proposed: Depends on", "Start", "Deadline", "Est (min)", "Priority",
+    "Follow-up (days)", "Remind", "Today", "Tags", "Notes", "Ref",
 )
-PLANNER_HEADER = ("Task", "Deadline", "Est (min)", "Tags", "Notes", "Ref")
+PLANNER_HEADER = (
+    "Task", "Start", "Deadline", "Est (min)", "Priority", "Follow-up (days)",
+    "Remind", "Today", "Tags", "Notes", "Ref",
+)
 
 INVESTIGATE_PREFIX = "INVESTIGATE"
 
@@ -41,12 +48,20 @@ def _sheet_title(name: str) -> str:
     return cleaned[:31] or "Sheet"
 
 
-def build_export(g: Graph) -> tuple[list[tuple], int]:
+def build_export(
+    g: Graph, today_pos: dict[int, int] | None = None
+) -> tuple[list[tuple], int]:
     """Returns ([(sheet_title, header, rows, styles), ...], node_count).
 
     `styles` runs parallel to `rows`: each entry is None, or a dict naming the
     cell that carries the legend ({'col', 'health', 'done'}). Keeping it beside
-    the values rather than inside them leaves this function pure data."""
+    the values rather than inside them leaves this function pure data.
+
+    `today_pos` maps task id -> 1-based position on the Today list; those
+    positions are written to the Today column so list membership and order
+    survive a round trip. Membership lives in schedule_log, not the graph,
+    so the caller resolves it and this function stays pure."""
+    today_pos = today_pos or {}
     incoming = defaultdict(list)  # to_id -> [Dependency]
     for d in g.deps:
         incoming[d.to_id].append(d)
@@ -112,15 +127,22 @@ def build_export(g: Graph) -> tuple[list[tuple], int]:
 
         def row(n: Node, col: int, parent_ref: str | None, seq=None):
             cells = [None] * len(PROJECT_HEADER)
+            is_task = n.kind == "task"
             cells[col] = n.name
             cells[4] = seq
             cells[5] = depends_cell(n)
             cells[6] = proposed_cell(n)
-            cells[7] = n.deadline
-            cells[8] = n.est_minutes
-            cells[9] = tags_cell(n)
-            cells[10] = n.description
-            cells[11] = ref_of(n, parent_ref)
+            cells[7] = n.earliest_start
+            cells[8] = n.deadline
+            cells[9] = n.est_minutes
+            # tasks only, matching the model: containers never carry these
+            cells[10] = n.priority if is_task else None
+            cells[11] = n.followup_days if is_task else None
+            cells[12] = (1 if n.remind else None) if is_task else None
+            cells[13] = today_pos.get(n.id) if is_task else None
+            cells[14] = tags_cell(n)
+            cells[15] = n.description
+            cells[16] = ref_of(n, parent_ref)
             rows.append(tuple(cells))
             styles.append(
                 {"col": col, "health": n.health, "done": n.status == "done"}
@@ -156,8 +178,10 @@ def build_export(g: Graph) -> tuple[list[tuple], int]:
         for task in planner:
             node_count += 1
             rows.append((
-                task.name, task.deadline, task.est_minutes, tags_cell(task),
-                task.description, ref_of(task, None),
+                task.name, task.earliest_start, task.deadline,
+                task.est_minutes, task.priority, task.followup_days,
+                1 if task.remind else None, today_pos.get(task.id),
+                tags_cell(task), task.description, ref_of(task, None),
             ))
             styles.append({
                 "col": 0, "health": task.health, "done": task.status == "done",

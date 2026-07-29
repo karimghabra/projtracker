@@ -837,7 +837,168 @@ def test_graph_dag_shows_a_dashed_planner_card(page):
     close_graph(page)
 
 
-# --- deleting a project that holds completed work ---------------------------
+# --- export / re-import round trip ------------------------------------------
+#
+# remind, priority, followup_days, earliest_start and Today membership now
+# have columns in the export. These drive the full loop through the real UI:
+# a board seeded over the CLI, exported, imported into a fresh database via
+# the import wizard, and verified screen by screen — then re-imported to
+# prove idempotence, and cycled export->import->export to prove stability.
+
+
+def _fresh_page(browser, app_url, db):
+    """A dashboard context of its own, bound to `db` (module page shares
+    state across tests; round-trip tests need a deterministic board)."""
+    ctx = browser.new_context(viewport={"width": 1360, "height": 900})
+    pg = ctx.new_page()
+    errors: list[str] = []
+    _wire(pg, db, errors)
+    pg.add_init_script(TAURI_STUB + CONFIG_KEYS)
+    pg.goto(app_url)
+    pg.errors = errors
+    return ctx, pg
+
+
+def _seed_rich_board(db: Path) -> None:
+    """Every planner field in play, exactly as a user would set them."""
+    for args in [
+        ("add", "project", "Dyno Cell"),
+        ("add", "milestone", "Commissioning", "--parent", "1"),
+        ("add", "goal", "Sensors", "--parent", "2"),
+        ("add", "task", "Mount load cell", "--parent", "3",
+         "--priority", "high", "--followup-days", "3"),
+        ("add", "task", "Wire thermocouples", "--parent", "3",
+         "--priority", "low"),
+        ("add", "task", "Order spare fuses", "--parent", "3"),
+        ("today", "add", "5"),
+        ("today", "add", "4"),
+        ("remind", "--new", "Check calibration drift", "--in", "7"),
+    ]:
+        run_cli(db, list(args))
+
+
+def test_export_import_round_trip_survives_the_real_ui(
+    browser, app_url, tmp_path
+):
+    src = tmp_path / "src.db"
+    _seed_rich_board(src)
+    book = tmp_path / "handoff.xlsx"
+    run_cli(src, ["export", str(book)])
+
+    dst = tmp_path / "dst.db"
+    ctx, pg = _fresh_page(browser, app_url, dst)
+    try:
+        expect(pg.locator(".stat")).to_have_count(4)
+        import_workbook(pg, str(book))
+        expect(tree(pg)).to_contain_text("Dyno Cell")
+
+        # Today survived with its order (Wire thermocouples was added first)
+        nav(pg, "today")
+        expect(today_rows(pg)).to_have_count(2)
+        expect(today_rows(pg).nth(0)).to_contain_text("Wire thermocouples")
+        expect(today_rows(pg).nth(1)).to_contain_text("Mount load cell")
+
+        # the reminder is still waiting on its day
+        nav(pg, "upcoming")
+        expect(
+            pg.locator('[data-testid="upcoming-row"]',
+                       has_text="Check calibration drift")
+        ).to_be_visible()
+
+        # priority survived and renders: the ready task carries its badge
+        # (the other two are chained behind it, so only this one is ready)
+        nav(pg, "board")
+        row = ready_rows(pg).filter(has_text="Mount load cell")
+        expect(row.locator(".prio")).to_have_text("high")
+
+        # and the database agrees cell for cell
+        by_name = {n["name"]: n for n in run_cli(dst, ["ls"])}
+        assert by_name["Mount load cell"]["priority"] == "high"
+        assert by_name["Mount load cell"]["followup_days"] == 3
+        assert by_name["Wire thermocouples"]["priority"] == "low"
+        assert by_name["Check calibration drift"]["remind"] == 1
+        assert by_name["Check calibration drift"]["earliest_start"] is not None
+        assert pg.errors == [], f"page reported errors: {pg.errors}"
+    finally:
+        ctx.close()
+
+
+def test_reimport_through_the_wizard_is_idempotent(browser, app_url, tmp_path):
+    """Importing our own export twice adds nothing: the wizard suggests
+    merge (ref identity), and the Today list neither duplicates nor
+    resurrects anything — including a task dismissed in the meantime."""
+    src = tmp_path / "src.db"
+    _seed_rich_board(src)
+    book = tmp_path / "handoff.xlsx"
+    run_cli(src, ["export", str(book)])
+
+    dst = tmp_path / "dst.db"
+    ctx, pg = _fresh_page(browser, app_url, dst)
+    try:
+        import_workbook(pg, str(book))
+        before = len(run_cli(dst, ["ls"]))
+
+        nav(pg, "today")
+        row = today_rows(pg).filter(has_text="Mount load cell")
+        row.hover()
+        row.locator('[data-testid="today-remove"]').click()
+        expect(today_rows(pg)).to_have_count(1)
+
+        # second pass: preview must suggest merge, not a duplicate project
+        pg.locator('[data-testid="import-open"]').click()
+        pg.locator('[data-testid="import-path"]').fill(str(book))
+        pg.locator('[data-testid="import-next"]').click()
+        choice = pg.locator('[data-testid="import-project-choice"]').first
+        expect(choice).to_have_value("merge")
+        pg.locator('[data-testid="import-apply"]').click()
+        expect(pg.locator('[data-testid="import-result"]')).to_be_visible()
+        pg.locator('[data-testid="import-done"]').click()
+
+        assert len(run_cli(dst, ["ls"])) == before  # not one node duplicated
+        nav(pg, "today")
+        expect(today_rows(pg)).to_have_count(1)  # tombstone outranked the file
+        expect(today_rows(pg).first).to_contain_text("Wire thermocouples")
+        assert pg.errors == [], f"page reported errors: {pg.errors}"
+    finally:
+        ctx.close()
+
+
+def test_round_trip_reaches_a_fixed_point_over_three_cycles(tmp_path):
+    """export -> import -> export ... must stabilise: after the first cycle
+    every later workbook carries identical cell content, and the database
+    stops changing. Guards against drift bugs (a column that re-imports
+    slightly differently and mutates on every sync)."""
+    db = tmp_path / "cycle.db"
+    _seed_rich_board(db)
+
+    def snapshot(d):
+        nodes = run_cli(d, ["ls"])
+        keep = ("name", "priority", "followup_days", "remind",
+                "earliest_start", "deadline", "est_minutes", "ref", "status")
+        return sorted(tuple(n.get(k) for k in keep) for n in nodes)
+
+    def cells(path):
+        from protracker.importer import read_workbook_rows
+
+        return {
+            title: [(r[0], r[1]) for r in rows]
+            for title, rows in read_workbook_rows(str(path)).items()
+        }
+
+    books = []
+    for i in range(3):
+        book = tmp_path / f"cycle{i}.xlsx"
+        run_cli(db, ["export", str(book)])
+        books.append(cells(book))
+        before = snapshot(db)
+        r = run_cli(db, ["import", str(book)])
+        assert r["review"] == []
+        assert r["today_added"] == []  # membership never duplicates
+        assert snapshot(db) == before  # the import changed nothing
+    assert books[0] == books[1] == books[2]  # byte-stable cell content
+    assert [t["name"] for t in run_cli(db, ["today"])["items"]] == [
+        "Wire thermocouples", "Mount load cell",
+    ]
 
 
 def test_delete_project_with_completed_work_requires_force(page, board):

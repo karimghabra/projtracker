@@ -682,6 +682,183 @@ def test_health_and_completion_survive_an_export_round_trip(c, tmp_path):
     assert after == before
 
 
+# --- planner fields & Today membership round trip --------------------------
+#
+# remind, priority, followup_days, earliest_start and Today-list membership
+# used to have no columns in the export, so export -> re-import silently
+# dropped them. These pin the lossless round trip and its edges: idempotent
+# re-import, tombstones outranking the file, and hand-authored values.
+
+
+def clocked(day="2026-07-28"):
+    """(commands, box): a Commands on an in-memory db with a settable clock."""
+    box = [f"{day}T09:00:00"]
+    return Commands(Repository(":memory:"), now=lambda: box[0]), box
+
+
+def rich_board(c):
+    """A board using every planner field: returns {name: id}."""
+    p = c.add_node(kind="project", name="P")["created"]["id"]
+    m = c.add_node(kind="milestone", name="M", parent_id=p)["created"]["id"]
+    g = c.add_node(kind="goal", name="G", parent_id=m)["created"]["id"]
+    a = c.add_node(kind="task", name="Calibrate rig", parent_id=g,
+                   priority="high", followup_days=3)["created"]["id"]
+    b = c.add_node(kind="task", name="Order stock", parent_id=g,
+                   priority="low", earliest_start="2026-08-01")["created"]["id"]
+    r = c.plan_followup(name="Renew cert", on_date="2026-08-04")
+    rem = r["planned"]["id"]
+    # Today: B first, then A — order must survive
+    c.today_add(b)
+    c.today_add(a)
+    return {"a": a, "b": b, "rem": rem}
+
+
+def test_planner_fields_survive_an_export_round_trip(tmp_path):
+    c, _ = clocked()
+    rich_board(c)
+    out = str(tmp_path / "board.xlsx")
+    c.export_excel(out)
+
+    c2, _ = clocked()
+    r = c2.import_excel(out)
+    assert r["review"] == []
+    by_name = {n["name"]: n for n in c2.list_nodes(kind="task")}
+    assert by_name["Calibrate rig"]["priority"] == "high"
+    assert by_name["Calibrate rig"]["followup_days"] == 3
+    assert by_name["Order stock"]["priority"] == "low"
+    assert by_name["Order stock"]["earliest_start"] == "2026-08-01"
+    rem = by_name["Renew cert"]
+    assert rem["remind"] == 1
+    assert rem["earliest_start"] == "2026-08-04"
+    # the reminder is waiting again, exactly as it was in the source db
+    assert any(u["name"] == "Renew cert" for u in c2.upcoming())
+
+
+def test_today_membership_and_order_survive_a_round_trip(tmp_path):
+    c, _ = clocked()
+    rich_board(c)
+    out = str(tmp_path / "board.xlsx")
+    c.export_excel(out)
+
+    c2, _ = clocked()
+    r = c2.import_excel(out)
+    names = lambda cc: [t["name"] for t in cc.today()["items"]]
+    assert names(c2) == names(c) == ["Order stock", "Calibrate rig"]
+    assert len(r["today_added"]) == 2
+
+    # same-file re-import adds nothing twice and changes nothing
+    r2 = c2.import_excel(out)
+    assert r2["today_added"] == []
+    assert names(c2) == ["Order stock", "Calibrate rig"]
+
+
+def test_today_tombstone_outranks_the_file(tmp_path):
+    c, _ = clocked()
+    ids = rich_board(c)
+    out = str(tmp_path / "board.xlsx")
+    c.export_excel(out)
+
+    c2, _ = clocked()
+    c2.import_excel(out)
+    listed = {t["name"]: t["id"] for t in c2.today()["items"]}
+    c2.today_remove(listed["Calibrate rig"])
+    r = c2.import_excel(out)  # the file still says Today
+    assert r["today_added"] == []
+    assert [t["name"] for t in c2.today()["items"]] == ["Order stock"]
+
+
+def test_done_tasks_never_land_on_today_from_a_file(tmp_path):
+    c, _ = clocked()
+    c.add_node(kind="project", name="P")
+    out = str(tmp_path / "done.xlsx")
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "S"
+    header = ("Project", "Milestone", "Goal", "Task", "Today")
+    for col, head in enumerate(header, start=1):
+        ws.cell(row=1, column=col, value=head)
+    ws["A2"] = "P2"
+    ws["B3"] = "M"
+    ws["C4"] = "G"
+    from openpyxl.styles import Font
+
+    done = ws.cell(row=5, column=4, value="finished long ago")
+    done.font = Font(strikethrough=True)
+    ws.cell(row=5, column=5, value=1)
+    wb.save(out)
+
+    r = c.import_excel(out)
+    assert r["today_added"] == []
+    assert c.today()["items"] == []
+
+
+def test_hand_authored_planner_columns(tmp_path):
+    """Case-insensitive priorities, 'yes'/'x' flags, and bad values kept as
+    extras and surfaced — never written into a typed field."""
+    import openpyxl
+
+    out = str(tmp_path / "hand.xlsx")
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "S"
+    header = ("Project", "Milestone", "Goal", "Task", "Priority",
+              "Follow-up (days)", "Remind", "Today")
+    for col, head in enumerate(header, start=1):
+        ws.cell(row=1, column=col, value=head)
+    ws["A2"] = "P"
+    ws["B3"] = "M"
+    ws["C4"] = "G"
+    ws.append((None, None, None, "loud", "HIGH", 2, "yes", "x"))
+    ws.append((None, None, None, "vague", "urgent", "soon", None, None))
+    wb.save(out)
+
+    c, _ = clocked()
+    r = c.import_excel(out)
+    by_name = {n["name"]: n for n in c.list_nodes(kind="task")}
+    assert by_name["loud"]["priority"] == "high"
+    assert by_name["loud"]["followup_days"] == 2
+    assert by_name["loud"]["remind"] == 1
+    assert [t["name"] for t in c.today()["items"]] == ["loud"]
+    # invalid values: surfaced in review, node still created cleanly
+    assert by_name["vague"]["priority"] is None
+    assert by_name["vague"]["followup_days"] is None
+    reasons = " | ".join(x["reason"] for x in r["review"])
+    assert "'urgent'" in reasons and "'soon'" in reasons
+
+
+def test_blank_planner_cells_never_clear_on_reimport(tmp_path):
+    """An older-format export (no planner columns) merged over a rich board
+    must not wipe the fields — absence is not an instruction."""
+    c, _ = clocked()
+    rich_board(c)
+    out = str(tmp_path / "board.xlsx")
+    c.export_excel(out)
+
+    # strip the planner columns, keeping Ref so everything merges by identity
+    import openpyxl
+
+    wb = openpyxl.load_workbook(out)
+    for ws in wb.worksheets:
+        headers = [cell.value for cell in ws[1]]
+        for name in ("Start", "Priority", "Follow-up (days)", "Remind", "Today"):
+            idx = headers.index(name) + 1
+            ws.delete_cols(idx)
+            headers.pop(idx - 1)
+    old = str(tmp_path / "old-format.xlsx")
+    wb.save(old)
+
+    c.import_excel(old, decisions={"P": "merge"})
+    by_name = {n["name"]: n for n in c.list_nodes(kind="task")}
+    assert by_name["Calibrate rig"]["priority"] == "high"
+    assert by_name["Calibrate rig"]["followup_days"] == 3
+    assert by_name["Renew cert"]["remind"] == 1
+    assert [t["name"] for t in c.today()["items"]] == [
+        "Order stock", "Calibrate rig",
+    ]
+
+
 # --- paths that arrive from a human ---------------------------------------
 #
 # The desktop app passes argv straight to the CLI so nothing typed into a

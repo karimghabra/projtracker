@@ -669,7 +669,12 @@ class Commands:
         unclassifiable rows go to review. Notes that smell like dependencies
         are returned in 'flagged' — surfaced, never applied. Imported row
         order is seq_source='assumed' and never overwrites a user-set order;
-        an explicit Seq column is user provenance."""
+        an explicit Seq column is user provenance.
+
+        Start/Priority/Follow-up (days)/Remind columns carry the planner
+        fields (tasks only; blank never clears). A non-empty Today cell puts
+        the task on today's list — idempotently, and never past a same-day
+        tombstone (see _apply_today_requests)."""
         import os
 
         from .importer import generate_ref
@@ -770,6 +775,7 @@ class Commands:
         created, updated = [], []
         unchanged = 0
         dep_requests = []  # (spec, target_node_id) resolved after all nodes exist
+        today_requests = []  # (spec, node_id): Today-column membership
         project_ids: dict[str, int] = {}  # file project name -> bound/created id
 
         for spec in plan.nodes:
@@ -820,6 +826,18 @@ class Commands:
                         fields["ref"] = spec.ref
                 if spec.health is not None and spec.health != match.health:
                     fields["health"] = spec.health
+                # planner fields (tasks only; the classifier never sets them
+                # on containers). Blank cells never clear, like every other
+                # column: absence is not an instruction.
+                if spec.priority is not None and spec.priority != match.priority:
+                    fields["priority"] = spec.priority
+                if (
+                    spec.followup_days is not None
+                    and spec.followup_days != match.followup_days
+                ):
+                    fields["followup_days"] = spec.followup_days
+                if spec.remind is not None and spec.remind != match.remind:
+                    fields["remind"] = spec.remind
                 if (
                     spec.kind == "task"
                     and spec.seq_index is not None
@@ -894,6 +912,9 @@ class Commands:
                         tags=list(spec.tags),
                         ref=ref,
                         health=spec.health,
+                        priority=spec.priority,
+                        followup_days=spec.followup_days,
+                        remind=spec.remind,
                     )
                 )
                 nodes_by_id[node.id] = node
@@ -908,12 +929,17 @@ class Commands:
                                  ("Proposed: Depends on", spec.proposed)):
                 for dep_kind, dep_name in deps:
                     dep_requests.append((spec, origin, dep_kind, dep_name, node.id))
+            if spec.today_listed:
+                today_requests.append((spec, node.id))
 
         # stamp deterministic refs on nodes that still lack one
         self._ensure_refs(generate_ref)
 
         # resolve and apply dependency edges
         deps_added = self._apply_dep_requests(dep_requests, plan.review)
+
+        # apply Today-column membership (idempotent; tombstones outrank the file)
+        today_added = self._apply_today_requests(today_requests)
 
         # remember which file project landed where, so the next import of
         # this same file suggests merging rather than duplicating
@@ -927,6 +953,7 @@ class Commands:
             "updated": updated,
             "unchanged": unchanged,
             "dependencies_added": deps_added,
+            "today_added": today_added,
             "bindings": {
                 name: {
                     "project_id": nid,
@@ -972,6 +999,39 @@ class Commands:
         for root in [n for n in g.nodes.values() if n.parent_id is None]:
             walk(root, None)
 
+    def _apply_today_requests(self, requests) -> list[int]:
+        """Materialize Today-column membership from an imported workbook.
+
+        Idempotent by construction: a task already on the list is left where
+        it is, and any row for today — including a 'deferred' tombstone from
+        an earlier removal — outranks the file, so re-importing an export
+        never resurrects a dismissed item. New members are appended in the
+        file's Today order (numeric cells first, then row order)."""
+        if not requests:
+            return []
+        today = self._now()[:10]
+        added: list[int] = []
+        ordered = sorted(
+            requests,
+            key=lambda t: (
+                t[0].today_pos is None, t[0].today_pos or 0, t[1]
+            ),
+        )
+        for spec, node_id in ordered:
+            n = self.repo.get_node(node_id)
+            if n is None or n.kind != "task" or n.status in ("done", "dropped"):
+                continue
+            rows = self.repo.today_rows_for_node(node_id)
+            if any(r["outcome"] is None for r in rows):
+                continue  # already listed (same-file re-import)
+            if any(r["date"] == today for r in rows):
+                continue  # resolved or dismissed today: the tombstone wins
+            self.repo.add_today_row(
+                today, node_id, self._next_today_pos(today), "manual"
+            )
+            added.append(node_id)
+        return added
+
     def _apply_dep_requests(self, dep_requests, review: list) -> list[dict]:
         deps_added = []
         for spec, origin, dep_kind, dep_name, target_id in dep_requests:
@@ -1010,13 +1070,33 @@ class Commands:
         """Write the full graph as a template-format workbook: one sheet per
         project plus Planner, refs stamped, explicit edges in 'Depends on',
         and dependency-smelling notes marked for investigation in
-        'Proposed: Depends on'. Deterministic: same graph, same bytes of
-        cell content."""
+        'Proposed: Depends on'. Start/Priority/Follow-up (days)/Remind carry
+        the planner fields; Today carries current list membership in order,
+        so export -> re-import is lossless. Deterministic given the graph,
+        the Today list, and the date.
+
+        Refs are stamped on the *database* first, not just the file: the
+        exported refs are only an identity if the nodes here carry the same
+        ones, otherwise re-importing our own export matches by name and
+        duplicates the tree. Stamping is idempotent (existing refs win)."""
         from .exporter import build_export, write_workbook
+        from .importer import generate_ref
 
         path = normalize_path(path)  # same quoted-path hazard as import
+        self._ensure_refs(generate_ref)
         g = self._graph()
-        sheets, node_count = build_export(g)
+        # current Today membership -> 1-based positions, in list order.
+        # Auto-landed reminders with no materialized row are deliberately
+        # absent: remind + Start round-trip on the task itself, so they
+        # re-land by themselves after an import — no row needs inventing.
+        today = self._now()[:10]
+        today_pos: dict[int, int] = {}
+        for row in self.repo.open_today_rows(today):
+            n = g.nodes.get(row["node_id"])
+            if n is None or n.kind != "task" or n.status in ("done", "dropped"):
+                continue
+            today_pos[n.id] = len(today_pos) + 1
+        sheets, node_count = build_export(g, today_pos)
         try:
             write_workbook(path, sheets)
         except OSError as exc:
