@@ -359,3 +359,136 @@ def test_remind_field_updatable_tasks_only():
         c.update_node(ids["g"], remind=1)
     with pytest.raises(CommandError):
         c.update_node(ids["t1"], remind=5)
+
+
+# --- external waits (spec 11.2) ---
+
+
+def test_wait_names_the_hold_and_gates_the_task():
+    c, _ = boxed()
+    ids = chain(c)
+    r = c.wait(ids["t1"], "2026-08-17", reason="pump lead time")
+    assert r["waiting"]["wait_reason"] == "pump lead time"
+    n = c.get_node(ids["t1"])
+    assert n["state"] == "waiting"
+    assert n["blockers"][0] == {
+        "type": "external", "until": "2026-08-17", "reason": "pump lead time",
+    }
+    # remind defaulted on: the task lands on Today when its day arrives
+    assert n["node"]["remind"] == 1
+    up = c.upcoming()
+    assert up[0]["wait_reason"] == "pump lead time"
+    assert up[0]["until"] == "2026-08-17"
+
+
+def test_wait_without_reason_stays_a_plain_date():
+    c, _ = boxed()
+    ids = chain(c)
+    c.wait(ids["t1"], "2026-08-17", remind=False)
+    n = c.get_node(ids["t1"])
+    assert n["blockers"][0]["type"] == "date"
+    assert n["node"]["remind"] is None
+
+
+def test_arrived_clears_gate_and_reason_and_frees_the_task():
+    c, _ = boxed()
+    ids = chain(c)
+    c.wait(ids["t1"], "2026-08-17", reason="vendor")
+    r = c.arrived(ids["t1"])
+    assert r["arrived"]["wait_reason"] is None
+    changes = {ch["id"]: ch["to"] for ch in r["status_changes"]}
+    assert changes[ids["t1"]] == "ready"
+    with pytest.raises(CommandError):
+        c.arrived(ids["t1"])  # not waiting on anything now
+
+
+def test_wait_rejects_finished_tasks_and_bad_dates():
+    c, _ = boxed()
+    ids = chain(c)
+    c.complete_task(ids["t1"])
+    with pytest.raises(CommandError):
+        c.wait(ids["t1"], "2026-08-17")
+    with pytest.raises(CommandError):
+        c.wait(ids["t2"], "soon")
+
+
+def test_done_then_wait_spawns_gating_successor():
+    """The submit/receive sugar: the successor sits at the completed task's
+    rank, inherits its outgoing edges, and waits with a reason."""
+    c, _ = boxed()
+    ids = chain(c)
+    other = c.add_node(kind="task", name="assemble")["created"]["id"]
+    c.add_dependency(ids["t1"], other)  # t1 gates assembly
+    r = c.complete_task(ids["t1"], then_wait={
+        "name": "Receive pump", "until": "2026-08-17",
+        "reason": "3-week lead time",
+    })
+    ws = r["waiting_successor"]
+    assert ws["wait_reason"] == "3-week lead time"
+    assert ws["inherited_dependents"] == [other]
+    # assembly is NOT newly ready: the successor now gates it
+    assert all(n["id"] != other for n in r["newly_ready"])
+    assert c.get_node(other)["state"] == "blocked"
+    # the day arrives; the delivery is checked off and assembly frees
+    _, box = c, None
+    c2 = c
+    c2.arrived(ws["id"])  # (cleared early: vendor delivered ahead of time)
+    c2.complete_task(ws["id"])
+    assert c2.get_node(other)["state"] == "ready"
+
+
+# --- recurrence (spec 11.3) ---
+
+
+def test_completing_a_recurring_reminder_respawns_the_next():
+    c, box = boxed("2026-08-10")  # a Monday
+    r = c.plan_followup(name="Log loop pressures", on_date="2026-08-10",
+                        repeat="weekly")
+    rid = r["planned"]["id"]
+    assert r["planned"]["repeat"] is not None
+    # it lands on Today (its day arrived) and gets completed
+    done = c.complete_task(rid)
+    nxt = done["respawned"]
+    assert nxt["name"] == "Log loop pressures"
+    assert nxt["earliest_start"] == "2026-08-17"
+    assert nxt["remind"] == 1
+    assert nxt["recur_key"] == f"n{rid}"
+    # completed late the following week: cadence re-anchors to reality
+    box[0] = "2026-08-20T09:00:00"
+    done2 = c.complete_task(nxt["id"])
+    assert done2["respawned"]["earliest_start"] == "2026-08-27"
+    assert done2["respawned"]["recur_key"] == f"n{rid}"
+
+
+def test_date_anchored_series_skips_missed_slots():
+    c, box = boxed("2026-08-01")
+    r = c.plan_followup(name="Pay rent", on_date="2026-08-01",
+                        repeat="monthly @date")
+    rid = r["planned"]["id"]
+    box[0] = "2026-10-20T09:00:00"  # two slots sailed past
+    done = c.complete_task(rid)
+    assert done["respawned"]["earliest_start"] == "2026-11-01"
+
+
+def test_dropping_a_recurring_instance_ends_the_series():
+    c, _ = boxed()
+    r = c.plan_followup(name="Water plants", on_date="2026-07-29",
+                        repeat="every 3d")
+    rid = r["planned"]["id"]
+    dropped = c.drop_task(rid)
+    assert dropped["series_ended"] == f"n{rid}"
+    assert "respawned" not in dropped
+    names = [n["name"] for n in c.list_nodes(kind="task")]
+    assert names.count("Water plants") == 1  # no next instance
+
+
+def test_set_repeat_normalizes_and_clears():
+    c, _ = boxed()
+    ids = chain(c)
+    c.update_node(ids["t1"], repeat="EVERY 2W")
+    stored = c.get_node(ids["t1"])["node"]["repeat"]
+    assert '"every":2' in stored and '"unit":"week"' in stored
+    c.update_node(ids["t1"], repeat="none")
+    assert c.get_node(ids["t1"])["node"]["repeat"] is None
+    with pytest.raises(CommandError):
+        c.update_node(ids["t1"], repeat="every other tuesday")

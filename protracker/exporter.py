@@ -16,18 +16,20 @@ from __future__ import annotations
 
 from collections import defaultdict
 
+from . import recurrence
 from .graph import Graph
 from .importer import generate_ref, note_dependency_terms
 from .model import Node
 
 PROJECT_HEADER = (
     "Project", "Milestone", "Goal", "Task", "Seq", "Depends on",
-    "Proposed: Depends on", "Start", "Deadline", "Est (min)", "Priority",
-    "Follow-up (days)", "Remind", "Today", "Tags", "Notes", "Ref",
+    "Proposed: Depends on", "Start", "Wait reason", "Deadline", "Est (min)",
+    "Priority", "Follow-up (days)", "Remind", "Repeat", "Today", "Tags",
+    "Notes", "Ref",
 )
 PLANNER_HEADER = (
-    "Task", "Start", "Deadline", "Est (min)", "Priority", "Follow-up (days)",
-    "Remind", "Today", "Tags", "Notes", "Ref",
+    "Task", "Start", "Wait reason", "Deadline", "Est (min)", "Priority",
+    "Follow-up (days)", "Remind", "Repeat", "Today", "Tags", "Notes", "Ref",
 )
 
 INVESTIGATE_PREFIX = "INVESTIGATE"
@@ -115,6 +117,10 @@ def build_export(
     def tags_cell(n: Node) -> str | None:
         return ";".join(n.tags) if n.tags else None
 
+    def repeat_cell(n: Node) -> str | None:
+        rule = recurrence.loads(n.repeat)
+        return recurrence.format_rule(rule) if rule else None
+
     node_count = 0
     sheets: list[tuple] = []
     projects = sorted(
@@ -133,16 +139,18 @@ def build_export(
             cells[5] = depends_cell(n)
             cells[6] = proposed_cell(n)
             cells[7] = n.earliest_start
-            cells[8] = n.deadline
-            cells[9] = n.est_minutes
             # tasks only, matching the model: containers never carry these
-            cells[10] = n.priority if is_task else None
-            cells[11] = n.followup_days if is_task else None
-            cells[12] = (1 if n.remind else None) if is_task else None
-            cells[13] = today_pos.get(n.id) if is_task else None
-            cells[14] = tags_cell(n)
-            cells[15] = n.description
-            cells[16] = ref_of(n, parent_ref)
+            cells[8] = n.wait_reason if is_task else None
+            cells[9] = n.deadline
+            cells[10] = n.est_minutes
+            cells[11] = n.priority if is_task else None
+            cells[12] = n.followup_days if is_task else None
+            cells[13] = (1 if n.remind else None) if is_task else None
+            cells[14] = repeat_cell(n) if is_task else None
+            cells[15] = today_pos.get(n.id) if is_task else None
+            cells[16] = tags_cell(n)
+            cells[17] = n.description
+            cells[18] = ref_of(n, parent_ref)
             rows.append(tuple(cells))
             styles.append(
                 {"col": col, "health": n.health, "done": n.status == "done"}
@@ -178,9 +186,10 @@ def build_export(
         for task in planner:
             node_count += 1
             rows.append((
-                task.name, task.earliest_start, task.deadline,
-                task.est_minutes, task.priority, task.followup_days,
-                1 if task.remind else None, today_pos.get(task.id),
+                task.name, task.earliest_start, task.wait_reason,
+                task.deadline, task.est_minutes, task.priority,
+                task.followup_days, 1 if task.remind else None,
+                repeat_cell(task), today_pos.get(task.id),
                 tags_cell(task), task.description, ref_of(task, None),
             ))
             styles.append({

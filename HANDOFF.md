@@ -128,10 +128,28 @@ Fixtures live in `tests/fixtures/` and are synthetic (a coffee shop).
 
 ## Pending / open
 
-0. **The forward plan is spec §11 (Planner v2); P1 landed 2026-07-29.**
-   Next: P2 (external waits §11.2 + recurrence §11.3), then P3 (To Do
-   parity §11.4), then P4 (graph editor §11.5). Deadlines are soft by
-   decision: no overdue alarms anywhere (spec §11 governing note).
+0. **The forward plan is spec §11 (Planner v2); P1 and P2 landed
+   2026-07-29.** Next: P3 (To Do parity §11.4), then P4 (graph editor
+   §11.5). Deadlines are soft by decision: no overdue alarms anywhere
+   (spec §11 governing note).
+
+   P2 as built: `wait <id> --until --reason` names an external hold
+   (blocker type 'external'; remind defaults ON so arrival day lands on
+   Today); `arrived` clears it; `done --then-wait NAME --until --reason`
+   spawns a successor at the completed task's rank that inherits its
+   outgoing edges — the submit/receive pattern in one verb, and the
+   completion delta is recomputed net of the successor. Recurrence:
+   `repeat` rule JSON on tasks (`recurrence.py` is the pure module —
+   compact text forms `daily|weekdays|weekly|monthly|yearly|every Nd/w/m/y
+   [@date]`), completing an instance respawns the next (`respawned` in the
+   delta; anchor 'done' = completion-relative, 'date' = calendar slots,
+   missed slots skipped, never stacked); dropping the open instance ends
+   the series (`series_ended`); `recur_key` groups a series (`n<founding
+   id>`). `remind --every`, `set --repeat` (none clears). Round trip:
+   `Wait reason` + `Repeat` columns, invalid Repeat kept as extra +
+   review. UI: Upcoming form has the repeat picker; rows show ↻ recurring
+   and "waiting on: <reason>" badges. Deferred: the complete-button
+   "waiting on something?" wizard in the UI (CLI covers the flow).
 
    P1 as built: auto-appended ranks are stamped `'assumed'` (they were
    wrongly `'user'`); explicit incoming edges suppress a task's assumed

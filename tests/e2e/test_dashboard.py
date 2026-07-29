@@ -681,6 +681,33 @@ def test_reminder_planned_for_tomorrow_shows_in_upcoming(page, board):
     expect(group.locator(".up-date")).to_contain_text(tomorrow)
 
 
+def test_recurring_reminder_and_wait_reason_render(page, board):
+    """P2 surfaces: a reminder planned with a repeat rule carries the
+    recurring badge, and a task parked with `wait --reason` shows what it
+    waits on (both straight from the command layer's data)."""
+    nav(page, "upcoming")
+    page.locator('[data-testid="remind-name"]').fill("Log loop pressures")
+    page.locator('[data-testid="remind-in-days"]').fill("2")
+    page.locator('[data-testid="remind-every"]').select_option("weekly")
+    page.locator('[data-testid="remind-ok"]').click()
+    expect(toast(page)).to_contain_text("repeating weekly")
+    row = page.locator('[data-testid="upcoming-row"]',
+                       has_text="Log loop pressures")
+    expect(row.locator('[data-testid="badge-recurring"]')).to_be_visible()
+
+    # the wait verb is CLI-first; the UI must render its reason wherever
+    # the task appears
+    tid = run_cli(board, ["add", "task", "Await pump delivery"])["created"]["id"]
+    run_cli(board, ["wait", str(tid), "--until", "2027-01-05",
+                    "--reason", "3-week vendor lead time"])
+    page.locator('[data-testid="refresh"]').click()
+    wrow = page.locator('[data-testid="upcoming-row"]',
+                        has_text="Await pump delivery")
+    expect(wrow.locator('[data-testid="badge-wait-reason"]')).to_contain_text(
+        "3-week vendor lead time"
+    )
+
+
 # --- import wizard: the name-collision choice -------------------------------
 
 

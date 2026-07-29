@@ -18,6 +18,7 @@ import colorsys
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
+from . import recurrence
 from .model import DEFAULT_HEALTH, PRIORITIES
 
 # header-name aliases -> canonical role
@@ -49,6 +50,8 @@ COLUMN_ROLES = {
     "follow-up": "followup",
     "followup": "followup",
     "remind": "remind",
+    "repeat": "repeat",
+    "wait reason": "wait_reason",
     "today": "today",
     "tags": "tags",
     "notes": "notes",
@@ -135,6 +138,8 @@ class NodeSpec:
     priority: str | None = None  # PRIORITIES; tasks only
     followup_days: int | None = None  # tasks only
     remind: int | None = None  # 1 = reminder; tasks only
+    wait_reason: str | None = None  # tasks only (spec 11.2)
+    repeat: str | None = None  # canonical rule JSON, ready to store (11.3)
     today_listed: bool = False  # non-empty Today cell; tasks only
     today_pos: int | None = None  # 1-based Today order when the cell is numeric
     extras: tuple = ()  # ((header, value), ...) from unrecognized columns
@@ -360,7 +365,7 @@ def _classify_sheet(
         )
         # planner fields: tasks only, like the model. A value the model would
         # reject is kept as an extra and surfaced, mirroring the date rule.
-        priority = followup = remind_flag = None
+        priority = followup = remind_flag = wait_reason = repeat = None
         today_listed, today_pos = False, None
         if kind == "task":
             raw_priority = _clean(cell(cells, "priority"))
@@ -393,6 +398,23 @@ def _classify_sheet(
                         ),
                     })
             remind_flag = 1 if _parse_flag(cell(cells, "remind")) else None
+            wait_reason = _clean(cell(cells, "wait_reason"))
+            raw_repeat = _clean(cell(cells, "repeat"))
+            if raw_repeat is not None:
+                try:
+                    repeat = recurrence.dumps(recurrence.parse_rule(raw_repeat))
+                except ValueError:
+                    hname = header_name("repeat")
+                    kept_extras.append((hname, raw_repeat))
+                    plan.review.append({
+                        "sheet": title, "row": rownum, "values": [name],
+                        "reason": (
+                            f"{hname!r} value {raw_repeat!r} is not a repeat "
+                            "rule (daily, weekdays, weekly, monthly, yearly, "
+                            "every Nd/w/m/y, optional '@date'); kept as an "
+                            "extra"
+                        ),
+                    })
             today_listed = _parse_flag(cell(cells, "today"))
             if today_listed:
                 today_pos = _parse_seq(cell(cells, "today"))
@@ -414,6 +436,8 @@ def _classify_sheet(
             priority=priority,
             followup_days=followup,
             remind=remind_flag,
+            wait_reason=wait_reason,
+            repeat=repeat,
             today_listed=today_listed,
             today_pos=today_pos,
             extras=tuple(

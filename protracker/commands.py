@@ -11,6 +11,7 @@ from collections import defaultdict
 from dataclasses import asdict
 from datetime import date, datetime
 
+from . import recurrence
 from .graph import CycleError, Graph
 from .model import (
     CONTAINER_STATES,
@@ -27,7 +28,7 @@ from .storage import UNSET, Repository
 UPDATABLE_FIELDS = {
     "name", "description", "deadline", "earliest_start", "weight",
     "est_minutes", "est_source", "tags", "seq_index", "status",
-    "priority", "followup_days", "remind",
+    "priority", "followup_days", "remind", "wait_reason", "repeat",
 }
 
 KIND_BY_DEPTH = ("project", "milestone", "goal", "task")
@@ -260,6 +261,30 @@ class Commands:
                 raise CommandError(
                     "invalid_field", "remind applies to tasks only"
                 )
+        if "wait_reason" in fields and fields["wait_reason"] is not None:
+            if n.kind != "task":
+                raise CommandError(
+                    "invalid_field", "wait_reason applies to tasks only"
+                )
+        if "repeat" in fields:
+            v = fields["repeat"]
+            if v is not None and n.kind != "task":
+                raise CommandError(
+                    "invalid_field", "repeat applies to tasks only"
+                )
+            if isinstance(v, str) and v.strip().lower() in ("", "none"):
+                v = None
+            if v is not None:
+                try:
+                    rule = (
+                        recurrence.parse_rule(v)
+                        if isinstance(v, str)
+                        else recurrence.validate_rule(v)
+                    )
+                except ValueError as exc:
+                    raise CommandError("invalid_field", str(exc)) from None
+                v = recurrence.dumps(rule)
+            fields["repeat"] = v
         self._validate_date(fields.get("deadline"), "deadline")
         self._validate_date(fields.get("earliest_start"), "earliest_start")
         if "seq_index" in fields:
@@ -585,6 +610,7 @@ class Commands:
         due: str,
         priority: str | None = None,
         description: str | None = None,
+        repeat_json: str | None = None,
     ) -> Node:
         """Create a reminder: a PLANNER task on purpose — under a goal it
         would join the sequence pipeline and sit blocked behind every
@@ -598,7 +624,7 @@ class Commands:
             project = g.project_of(origin.id) if origin.id in g.nodes else None
             if project:
                 tags = [project.name]
-        return self.repo.add_node(
+        node = self.repo.add_node(
             Node(
                 kind="task",
                 name=name,
@@ -607,13 +633,40 @@ class Commands:
                 priority=priority,
                 tags=tags,
                 remind=1,
+                repeat=repeat_json,
             )
         )
+        if repeat_json:
+            # the founding instance names the series
+            node = self.repo.update_node(node.id, recur_key=f"n{node.id}")
+        return node
 
-    def complete_task(self, node_id: int, actual_minutes: int | None = None) -> dict:
+    def complete_task(
+        self,
+        node_id: int,
+        actual_minutes: int | None = None,
+        then_wait: dict | None = None,
+    ) -> dict:
+        """Complete a task. Optional composers:
+
+        then_wait {name, until, reason?} — spec §11.2's submit/receive
+        sugar: spawn a successor at the completed task's rank that inherits
+        its outgoing dependency edges and waits (with a reason) until the
+        date. "Order placed" stops lying to the graph in one verb.
+
+        A task carrying a repeat rule (§11.3) respawns its next instance:
+        anchor 'done' counts from today, anchor 'date' walks the calendar
+        from this instance's scheduled day, skipping missed slots."""
+        if then_wait is not None:
+            if not (then_wait.get("name") or "").strip():
+                raise CommandError("invalid_field", "then_wait needs a name")
+            self._validate_date(then_wait.get("until"), "then_wait.until")
+            if not then_wait.get("until"):
+                raise CommandError("invalid_field", "then_wait needs a date")
         extra = {"completed_at": self._now()}
         if actual_minutes is not None:
             extra["actual_minutes"] = int(actual_minutes)
+        pre = self._graph() if then_wait is not None else None
         result = self._finish_task(node_id, "done", extra)
 
         # Follow-up timer: completing a task with followup_days set spawns a
@@ -630,10 +683,134 @@ class Commands:
                 n, f"Follow up: {n.name}", due, priority=n.priority
             )
             result["followup_created"] = self._node_dict(follow, self._graph())
+
+        rule = recurrence.loads(n.repeat)
+        if rule is not None:
+            due = recurrence.next_date(
+                rule, self._now()[:10], n.earliest_start
+            )
+            key = n.recur_key or f"n{n.id}"
+            if not n.recur_key:
+                self.repo.update_node(n.id, recur_key=key)
+            nxt = self.repo.add_node(
+                Node(
+                    kind="task",
+                    name=n.name,
+                    parent_id=n.parent_id,
+                    description=n.description,
+                    seq_index=n.seq_index,
+                    seq_source=n.seq_source,
+                    earliest_start=due,
+                    est_minutes=n.est_minutes,
+                    est_source=n.est_source,
+                    tags=list(n.tags),
+                    priority=n.priority,
+                    remind=1,
+                    repeat=n.repeat,
+                    recur_key=key,
+                )
+            )
+            result["respawned"] = self._node_dict(nxt, self._graph())
+
+        if then_wait is not None:
+            successor = self.repo.add_node(
+                Node(
+                    kind="task",
+                    name=then_wait["name"].strip(),
+                    parent_id=n.parent_id,
+                    # the completed task's rank, deliberately: lower ranks
+                    # are behind it and later ranks keep waiting through it
+                    seq_index=n.seq_index,
+                    seq_source="user" if n.seq_index is not None else None,
+                    earliest_start=then_wait["until"],
+                    wait_reason=(then_wait.get("reason") or None),
+                    remind=1,
+                    tags=list(n.tags),
+                )
+            )
+            inherited = []
+            for d in [d for d in self.repo.all_dependencies()
+                      if d.from_id == node_id]:
+                g = self._graph()
+                if g.would_create_cycle(successor.id, d.to_id) is None:
+                    self.repo.add_dependency(Dependency(
+                        from_id=successor.id, to_id=d.to_id,
+                        note="inherited by then-wait",
+                    ))
+                    inherited.append(d.to_id)
+            post = self._graph()
+            wd = self._node_dict(successor, post)
+            wd["inherited_dependents"] = inherited
+            result["waiting_successor"] = wd
+            # the successor gates what the completed task gated, so flips
+            # _finish_task saw may already be re-blocked: report the net
+            # delta across the whole verb instead
+            result["status_changes"] = self._diff(pre, post)
+            result["newly_ready"] = [
+                self._node_dict(post.nodes[ch["id"]], post)
+                for ch in result["status_changes"]
+                if ch["to"] == "ready"
+            ]
         return result
 
     def drop_task(self, node_id: int) -> dict:
-        return self._finish_task(node_id, "dropped", {})
+        n = self._require(node_id, kind="task")
+        result = self._finish_task(node_id, "dropped", {})
+        if recurrence.loads(n.repeat) is not None:
+            # dropping the open instance ends the series — no respawn, and
+            # the delta says so instead of the series just going quiet
+            result["series_ended"] = n.recur_key or f"n{n.id}"
+        return result
+
+    # --- external waits (spec 11.2) ---
+
+    def wait(
+        self,
+        node_id: int,
+        until: str,
+        reason: str | None = None,
+        remind: bool = True,
+    ) -> dict:
+        """Park a task on the outside world: a date gate with a name.
+        remind defaults on — the day the wait expires, "check whether it
+        actually arrived" lands on Today by itself."""
+        n = self._require(node_id, kind="task")
+        if n.status in ("done", "dropped"):
+            raise CommandError("invalid_state", f"task {node_id} is {n.status}")
+        self._validate_date(until, "until")
+        if not until:
+            raise CommandError("invalid_field", "wait needs a date")
+        pre = self._graph()
+        fields = {
+            "earliest_start": until,
+            "wait_reason": (reason or "").strip() or None,
+        }
+        if remind:
+            fields["remind"] = 1
+        updated = self.repo.update_node(node_id, **fields)
+        post = self._graph()
+        return {
+            "waiting": self._node_dict(updated, post),
+            "status_changes": self._diff(pre, post),
+        }
+
+    def arrived(self, node_id: int) -> dict:
+        """The world delivered: clear the gate and the reason, and report
+        what that frees."""
+        n = self._require(node_id, kind="task")
+        if not n.earliest_start and not n.wait_reason:
+            raise CommandError(
+                "invalid_state", f"task {node_id} is not waiting on anything"
+            )
+        pre = self._graph()
+        updated = self.repo.update_node(
+            node_id, earliest_start=None, wait_reason=None
+        )
+        post = self._graph()
+        return {
+            "arrived": self._node_dict(updated, post),
+            "status_changes": self._diff(pre, post),
+        }
 
     # --- import / export (spec 4.3) ---
 
@@ -922,6 +1099,13 @@ class Commands:
                 if spec.remind is not None and spec.remind != match.remind:
                     fields["remind"] = spec.remind
                 if (
+                    spec.wait_reason is not None
+                    and spec.wait_reason != match.wait_reason
+                ):
+                    fields["wait_reason"] = spec.wait_reason
+                if spec.repeat is not None and spec.repeat != match.repeat:
+                    fields["repeat"] = spec.repeat
+                if (
                     spec.kind == "task"
                     and spec.seq_index is not None
                     and not (match.seq_source == "user" and spec.seq_source == "assumed")
@@ -998,6 +1182,8 @@ class Commands:
                         priority=spec.priority,
                         followup_days=spec.followup_days,
                         remind=spec.remind,
+                        wait_reason=spec.wait_reason,
+                        repeat=spec.repeat,
                     )
                 )
                 nodes_by_id[node.id] = node
@@ -1478,11 +1664,24 @@ class Commands:
         on_date: str | None = None,
         description: str | None = None,
         priority: str | None = None,
+        repeat: str | dict | None = None,
     ) -> dict:
         """Plan a reminder now, for later: from an existing task ("I'm doing
         X today; surface its follow-up in three days") or standalone. The
         reminder is a planner task that stays waiting until its day, then
-        lands on the Today list."""
+        lands on the Today list. With `repeat` (compact text or rule dict,
+        spec §11.3) completing each instance spawns the next."""
+        repeat_json = None
+        if repeat is not None:
+            try:
+                rule = (
+                    recurrence.parse_rule(repeat)
+                    if isinstance(repeat, str)
+                    else recurrence.validate_rule(repeat)
+                )
+            except ValueError as exc:
+                raise CommandError("invalid_field", str(exc)) from None
+            repeat_json = recurrence.dumps(rule)
         if (days is None) == (on_date is None):
             raise CommandError(
                 "invalid_field", "give exactly one of days or on_date"
@@ -1515,6 +1714,7 @@ class Commands:
         follow = self._spawn_followup(
             origin, name.strip(), due,
             priority=priority, description=description,
+            repeat_json=repeat_json,
         )
         return {
             "planned": self._node_dict(follow, self._graph()),
@@ -1536,7 +1736,7 @@ class Commands:
                 (
                     b["until"]
                     for b in g.blockers(n.id)
-                    if b["type"] == "date"
+                    if b["type"] in ("date", "external")
                 ),
                 None,
             )

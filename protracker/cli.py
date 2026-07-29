@@ -64,6 +64,11 @@ def build_parser() -> argparse.ArgumentParser:
     st.add_argument("--status")
     st.add_argument("--priority", choices=["pinned", "high", "normal", "low", "none"])
     st.add_argument("--followup-days", dest="followup_days", type=int)
+    st.add_argument(
+        "--repeat",
+        help="recurrence rule: daily | weekdays | weekly | monthly | "
+             "yearly | every 2w [...@date] | none",
+    )
 
     mv = sub.add_parser("mv", help="re-parent a node")
     mv.add_argument("id", type=int)
@@ -201,16 +206,44 @@ def build_parser() -> argparse.ArgumentParser:
     rem.add_argument(
         "--priority", choices=["pinned", "high", "normal", "low"]
     )
+    rem.add_argument(
+        "--every", dest="every",
+        help="make it recurring: daily | weekdays | weekly | monthly | "
+             "yearly | every 2w [...@date]",
+    )
 
     sub.add_parser(
         "upcoming", help="what is waiting on a date, soonest first"
     )
+
+    wt = sub.add_parser(
+        "wait", help="park a task on the outside world until a date"
+    )
+    wt.add_argument("id", type=int)
+    wt.add_argument("--until", required=True, help="YYYY-MM-DD")
+    wt.add_argument("--reason", help="what it waits on (vendor, shop, ...)")
+    wt.add_argument(
+        "--no-remind", action="store_true",
+        help="don't land it on Today when the date arrives",
+    )
+
+    arr = sub.add_parser(
+        "arrived", help="the wait is over: clear the gate and the reason"
+    )
+    arr.add_argument("id", type=int)
 
     start = sub.add_parser("start", help="mark a task in progress")
     start.add_argument("id", type=int)
     done = sub.add_parser("done", help="complete a task")
     done.add_argument("id", type=int)
     done.add_argument("--minutes", type=int, help="actual minutes spent")
+    done.add_argument(
+        "--then-wait", dest="then_wait",
+        help="spawn a successor that inherits this task's dependents and "
+             "waits (e.g. the order is placed; now the delivery gates)",
+    )
+    done.add_argument("--until", help="the successor's wait date, YYYY-MM-DD")
+    done.add_argument("--reason", help="what the successor waits on")
     drop = sub.add_parser("drop", help="drop a task")
     drop.add_argument("id", type=int)
 
@@ -263,6 +296,7 @@ def dispatch(args: argparse.Namespace, c: Commands):
                 ("seq_index", args.seq),
                 ("tags", _split_tags(args.tags)),
                 ("status", args.status),
+                ("repeat", args.repeat),
             )
             if value is not None
         }
@@ -343,13 +377,34 @@ def dispatch(args: argparse.Namespace, c: Commands):
             on_date=args.on_date,
             description=args.desc,
             priority=args.priority,
+            repeat=args.every,
         )
     if cmd == "upcoming":
         return c.upcoming()
+    if cmd == "wait":
+        return c.wait(
+            args.id, args.until, reason=args.reason,
+            remind=not args.no_remind,
+        )
+    if cmd == "arrived":
+        return c.arrived(args.id)
     if cmd == "start":
         return c.start_task(args.id)
     if cmd == "done":
-        return c.complete_task(args.id, actual_minutes=args.minutes)
+        then_wait = None
+        if args.then_wait:
+            then_wait = {
+                "name": args.then_wait,
+                "until": args.until,
+                "reason": args.reason,
+            }
+        elif args.until or args.reason:
+            raise CommandError(
+                "invalid_field", "--until/--reason need --then-wait"
+            )
+        return c.complete_task(
+            args.id, actual_minutes=args.minutes, then_wait=then_wait
+        )
     if cmd == "drop":
         return c.drop_task(args.id)
     raise CommandError("unknown_command", f"unknown command {cmd!r}")
@@ -432,7 +487,10 @@ def print_human(result, cmd: str):
         for t in result:
             project = f"  [{t['project_name']}]" if t.get("project_name") else ""
             mark = "  (reminder)" if t.get("remind") else ""
-            print(f"#{t['id']:<4} {t['until']}  {t['name']}{mark}{project}")
+            if t.get("repeat"):
+                mark += "  (recurring)"
+            why = f"  waiting on: {t['wait_reason']}" if t.get("wait_reason") else ""
+            print(f"#{t['id']:<4} {t['until']}  {t['name']}{mark}{why}{project}")
     elif cmd == "journal":
         for day in result:
             print(f"{day['date']}: {len(day['completed'])} completed, "
@@ -470,6 +528,9 @@ def print_human(result, cmd: str):
             print(f"  effective_deadline: {result['effective_deadline']}")
         print(f"  complete: {result['complete']}")
         for b in result["blockers"]:
+            if b["type"] == "external":
+                print(f"  waiting on {b['reason']} until {b['until']}")
+                continue
             if b["type"] == "date":
                 print(f"  waiting until {b['until']}")
                 continue
@@ -593,6 +654,30 @@ def print_human(result, cmd: str):
             print(f"  milestone complete: #{m['id']} {m['name']}")
         for p in result.get("completed_projects", []):
             print(f"  project complete: #{p['id']} {p['name']}")
+        fu = result.get("followup_created")
+        if fu:
+            print(f"  follow-up planned: '{fu['name']}' on {fu['earliest_start']}")
+        rs = result.get("respawned")
+        if rs:
+            print(f"  next instance: #{rs['id']} on {rs['earliest_start']}")
+        ws = result.get("waiting_successor")
+        if ws:
+            why = f" ({ws['wait_reason']})" if ws.get("wait_reason") else ""
+            print(
+                f"  now waiting: #{ws['id']} '{ws['name']}' "
+                f"until {ws['earliest_start']}{why}"
+            )
+        if result.get("series_ended"):
+            print("  recurring series ended")
+    elif cmd == "wait":
+        n = result["waiting"]
+        why = f" on {n['wait_reason']}" if n.get("wait_reason") else ""
+        print(f"#{n['id']} '{n['name']}' waiting{why} until {n['earliest_start']}")
+        _print_changes(result)
+    elif cmd == "arrived":
+        n = result["arrived"]
+        print(f"#{n['id']} '{n['name']}' is no longer waiting")
+        _print_changes(result)
     else:
         print(json.dumps(result, indent=2, default=str))
 

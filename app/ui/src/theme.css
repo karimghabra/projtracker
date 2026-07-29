@@ -159,6 +159,7 @@ button.danger-link:hover { background: var(--wash); }
 }
 .chip.mini { font-size: 11px; padding: 1px 7px; }
 .badge-reminder { color: var(--warning); border-color: var(--warning); }
+.badge-wait { color: var(--accent); border-color: var(--accent); font-style: italic; }
 .badge-rolled { color: var(--accent); border-color: var(--accent); }
 .node-chip { margin-left: 6px; }
 

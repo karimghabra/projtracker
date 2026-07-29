@@ -82,7 +82,8 @@ NODE_COLUMNS = (
     "kind", "parent_id", "name", "description", "status", "seq_index",
     "seq_source", "deadline", "earliest_start", "weight", "est_minutes",
     "est_source", "actual_minutes", "tags", "ref", "health", "priority",
-    "followup_days", "remind", "completed_at",
+    "followup_days", "remind", "wait_reason", "repeat", "recur_key",
+    "completed_at",
 )
 
 
@@ -96,7 +97,8 @@ class Repository:
         self._ensure_columns("nodes", {
             "seq_source": "TEXT", "ref": "TEXT", "health": "TEXT",
             "priority": "TEXT", "followup_days": "INTEGER",
-            "remind": "INTEGER",
+            "remind": "INTEGER", "wait_reason": "TEXT", "repeat": "TEXT",
+            "recur_key": "TEXT",
         })
         self._ensure_columns("daily_notes", {
             "node_id": "INTEGER REFERENCES nodes(id)",
@@ -145,6 +147,9 @@ class Repository:
             priority=row["priority"],
             followup_days=row["followup_days"],
             remind=row["remind"],
+            wait_reason=row["wait_reason"],
+            repeat=row["repeat"],
+            recur_key=row["recur_key"],
             created_at=row["created_at"],
             completed_at=row["completed_at"],
         )

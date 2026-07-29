@@ -233,7 +233,15 @@ class Graph:
         out = []
         waiting = self._waiting_until(t)
         if waiting:
-            out.append({"type": "date", "until": waiting})
+            if t.wait_reason:
+                # an external hold is a date with a name: same gate, but
+                # every surface can say WHAT the task waits on (spec §11.2)
+                out.append({
+                    "type": "external", "until": waiting,
+                    "reason": t.wait_reason,
+                })
+            else:
+                out.append({"type": "date", "until": waiting})
         for pred in self._seq_blockers(t):
             # provenance travels with the blocker: an assumed edge is the
             # tool's guess from row/entry order and every surface must let
@@ -263,8 +271,8 @@ class Graph:
         blockers = self.blockers(tid)
         if not blockers:
             return "ready"
-        # gated only by the calendar reads as waiting, not blocked
-        if all(b["type"] == "date" for b in blockers):
+        # gated only by the calendar (named or not) reads as waiting
+        if all(b["type"] in ("date", "external") for b in blockers):
             return "waiting"
         return "blocked"
 

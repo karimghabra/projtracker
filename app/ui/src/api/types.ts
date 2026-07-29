@@ -27,6 +27,9 @@ export interface NodeRec {
   priority: string | null;
   followup_days: number | null;
   remind: number | null;
+  wait_reason: string | null;
+  repeat: string | null;
+  recur_key: string | null;
   created_at: string | null;
   completed_at: string | null;
   /** derived task state ('ready' | 'waiting' | 'blocked' | 'in_progress' |

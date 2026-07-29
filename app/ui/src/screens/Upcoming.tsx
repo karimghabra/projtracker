@@ -23,6 +23,7 @@ export function UpcomingScreen({ board }: { board: Board }) {
   const [dueMode, setDueMode] = useState<"in" | "on">("in");
   const [inDays, setInDays] = useState("3");
   const [onDate, setOnDate] = useState("");
+  const [every, setEvery] = useState("");
   const [busy, setBusy] = useState(false);
 
   const groups = useMemo(() => {
@@ -61,15 +62,18 @@ export function UpcomingScreen({ board }: { board: Board }) {
           toast("Pick a task to follow up on.", true);
           return;
         }
-        res = await verbs.remindForTask(Number(taskId), due);
+        res = await verbs.remindForTask(Number(taskId), due, every || undefined);
       } else {
         if (!name.trim()) {
           toast("Give the reminder a name.", true);
           return;
         }
-        res = await verbs.remindNew(name.trim(), due);
+        res = await verbs.remindNew(name.trim(), due, every || undefined);
       }
-      toast(`Planned “${res.planned.name}” for ${res.due}.`);
+      toast(
+        `Planned “${res.planned.name}” for ${res.due}` +
+          (every ? `, repeating ${every}.` : "."),
+      );
       setName("");
       setTaskId("");
       await board.refresh();
@@ -175,6 +179,20 @@ export function UpcomingScreen({ board }: { board: Board }) {
               disabled={dueMode !== "on"}
               onChange={(e) => setOnDate(e.target.value)}
             />
+            <select
+              data-testid="remind-every"
+              value={every}
+              onChange={(e) => setEvery(e.target.value)}
+              title="Repeat: completing each instance plans the next"
+            >
+              <option value="">one-off</option>
+              <option value="daily">daily</option>
+              <option value="weekdays">weekdays</option>
+              <option value="weekly">weekly</option>
+              <option value="monthly">monthly</option>
+              <option value="yearly">yearly</option>
+              <option value="monthly @date">monthly (calendar)</option>
+            </select>
             <span className="spacer" />
             <button
               type="submit"
@@ -238,6 +256,23 @@ export function UpcomingScreen({ board }: { board: Board }) {
                           {t.remind === 1 && (
                             <span className="chip mini badge-reminder">
                               <IconBell size={11} /> reminder
+                            </span>
+                          )}
+                          {t.repeat && (
+                            <span
+                              className="chip mini"
+                              data-testid="badge-recurring"
+                              title="Recurring: completing it plans the next instance"
+                            >
+                              ↻ recurring
+                            </span>
+                          )}
+                          {t.wait_reason && (
+                            <span
+                              className="chip mini badge-wait"
+                              data-testid="badge-wait-reason"
+                            >
+                              waiting on: {t.wait_reason}
                             </span>
                           )}
                         </div>

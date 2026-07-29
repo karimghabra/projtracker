@@ -905,3 +905,59 @@ def test_export_accepts_a_quoted_path(c, tmp_path):
     r = c.export_excel(f'"{out}"')
     assert r["exported"] == str(out)
     assert out.exists()
+
+
+def test_waits_and_repeats_survive_a_round_trip(tmp_path):
+    """Spec 11.6: Wait reason and Repeat columns round-trip losslessly,
+    and an unreadable Repeat value is kept as an extra, never coerced."""
+    c, _ = clocked()
+    ids = rich_board(c)
+    c.wait(ids["b"], "2026-08-17", reason="pump lead time")
+    c.plan_followup(name="Pay rent", on_date="2026-08-01",
+                    repeat="monthly @date")
+    out = str(tmp_path / "board.xlsx")
+    c.export_excel(out)
+
+    c2, _ = clocked()
+    r = c2.import_excel(out)
+    assert r["review"] == []
+    by_name = {n["name"]: n for n in c2.list_nodes(kind="task")}
+    assert by_name["Order stock"]["wait_reason"] == "pump lead time"
+    assert by_name["Order stock"]["earliest_start"] == "2026-08-17"
+    rent = by_name["Pay rent"]
+    assert rent["repeat"] is not None
+    from protracker import recurrence
+
+    assert recurrence.format_rule(recurrence.loads(rent["repeat"])) == \
+        "monthly @date"
+    # the wait renders as an external blocker on the fresh database too
+    b = c2.get_node(by_name["Order stock"]["id"])["blockers"][0]
+    assert b["type"] == "external" and b["reason"] == "pump lead time"
+
+
+def test_hand_authored_repeat_column(tmp_path):
+    import openpyxl
+
+    out = str(tmp_path / "rep.xlsx")
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "S"
+    header = ("Project", "Milestone", "Goal", "Task", "Repeat", "Wait reason")
+    for col, head in enumerate(header, start=1):
+        ws.cell(row=1, column=col, value=head)
+    ws["A2"] = "P"
+    ws["B3"] = "M"
+    ws["C4"] = "G"
+    ws.append((None, None, None, "water plants", "every 3d", None))
+    ws.append((None, None, None, "junk rule", "sometimes", None))
+    ws.append((None, None, None, "await pump", None, "vendor"))
+    wb.save(out)
+
+    c, _ = clocked()
+    r = c.import_excel(out)
+    by_name = {n["name"]: n for n in c.list_nodes(kind="task")}
+    assert by_name["water plants"]["repeat"] is not None
+    assert by_name["junk rule"]["repeat"] is None
+    assert by_name["await pump"]["wait_reason"] == "vendor"
+    reasons = " | ".join(x["reason"] for x in r["review"])
+    assert "'sometimes'" in reasons and "not a repeat rule" in reasons

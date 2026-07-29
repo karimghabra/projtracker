@@ -195,14 +195,30 @@ export const verbs = {
     pt<{ removed: number }>("today", "rm", String(id)),
   todayMove: (id: number, pos: number) =>
     pt<{ order: number[] }>("today", "move", String(id), String(pos)),
-  remindForTask: (id: number, due: { inDays?: number; onDate?: string }) =>
-    due.inDays != null
-      ? pt<RemindResult>("remind", String(id), "--in", String(due.inDays))
-      : pt<RemindResult>("remind", String(id), "--on", due.onDate ?? ""),
-  remindNew: (name: string, due: { inDays?: number; onDate?: string }) =>
-    due.inDays != null
-      ? pt<RemindResult>("remind", "--new", name, "--in", String(due.inDays))
-      : pt<RemindResult>("remind", "--new", name, "--on", due.onDate ?? ""),
+  remindForTask: (
+    id: number,
+    due: { inDays?: number; onDate?: string },
+    every?: string,
+  ) => {
+    const args =
+      due.inDays != null
+        ? ["remind", String(id), "--in", String(due.inDays)]
+        : ["remind", String(id), "--on", due.onDate ?? ""];
+    if (every) args.push("--every", every);
+    return pt<RemindResult>(...args);
+  },
+  remindNew: (
+    name: string,
+    due: { inDays?: number; onDate?: string },
+    every?: string,
+  ) => {
+    const args =
+      due.inDays != null
+        ? ["remind", "--new", name, "--in", String(due.inDays)]
+        : ["remind", "--new", name, "--on", due.onDate ?? ""];
+    if (every) args.push("--every", every);
+    return pt<RemindResult>(...args);
+  },
   importPreview: (path: string) =>
     ptRaw<ImportPreview>("import", path, "--preview"),
   importApply: (path: string, asNew: string[], into: [string, number][]) => {

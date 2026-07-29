@@ -61,6 +61,14 @@ class Node:
     # timers and `remind` verbs carry this; ordinary date-gated pipeline
     # tasks do not, so arriving dates never spam the curated list)
     remind: int | None = None
+    # tasks only: what an earliest_start gate is waiting ON (vendor lead
+    # time, shop queue). Presence turns the 'date' blocker into 'external'
+    # and every surface shows the reason (spec §11.2)
+    wait_reason: str | None = None
+    # tasks only: recurrence rule as canonical JSON (spec §11.3); completing
+    # an instance spawns the next. recur_key groups a series' instances.
+    repeat: str | None = None
+    recur_key: str | None = None
     created_at: str | None = None
     completed_at: str | None = None
 
