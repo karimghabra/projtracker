@@ -1,7 +1,7 @@
 # Personal project scheduler — software specification
 
-**Version:** 0.2
-**Last revised:** 2026-07-25
+**Version:** 0.3
+**Last revised:** 2026-07-29
 **Status:** Living document
 
 ---
@@ -61,6 +61,8 @@ The **hierarchy tree** expresses organization: project → milestone → goal �
 The **dependency DAG** expresses ordering. Its nodes are tasks and goals; its edges mean "the source must be complete before the target may start." Three kinds of edges exist:
 
 1. *Implicit sequence edges.* Within a goal, the sequence index orders tasks into *ranks*: tasks sharing an index form a parallel rank with no implied ordering between them, and a task depends on every non-dropped task in all lower ranks. With unique indexes this reduces to "task *n* depends on task *n−1*." These edges are never stored; they are computed from the sequence index at graph-build time.
+
+   Sequence ranks carry **provenance**: a rank the user chose (an explicit `Seq` cell, a deliberate reorder, a drag in the graph editor) is `'user'`; a rank the system guessed (import row order, *and* the auto-appended rank a task receives when added interactively without one) is `'assumed'`. An assumed rank is a guess about ordering, and a guess must lose to a statement: **a task with at least one explicit incoming task-level dependency edge contributes no assumed incoming sequence edges at graph-build time** (its user-set ranks still apply, and lower-ranked siblings still gate *later* ranks through it — suppression removes only the suppressed task's own guessed prerequisites, never its place in the ladder for successors). Every surface that reports a sequence blocker reports its provenance, so a guessed edge can never masquerade as something the user asserted. Rationale and consequences in §11.1.
 2. *Goal-to-goal edges.* "Goal B requires goal A," within or across projects. The steel-sourcing goal blocking both the bridge deck and the building frame is two such edges.
 3. *Task-level edges.* For finer control when only part of a goal is the true prerequisite (e.g., "the *first* task of goal B can start once task 3 of goal A is done, even if goal A isn't finished").
 
@@ -74,7 +76,7 @@ The dependency DAG must remain acyclic; the system rejects any edge that would c
 
 ### 3.4 Node states
 
-Tasks move through: `blocked → ready → in_progress → done`, with `dropped` reachable from any pre-done state. State is derived, not hand-set, for blocked/ready (the graph decides); the user only toggles in-progress, done, and dropped.
+Tasks move through: `blocked → ready → in_progress → done`, with `dropped` reachable from any pre-done state. A task gated by a future `earliest_start` is `waiting` — a distinct derived state, because "the world isn't ready" reads differently from "prerequisite work isn't done" and the two are surfaced on different screens (Upcoming vs. the board). State is derived, not hand-set, for blocked/ready/waiting (the graph decides); the user only toggles in-progress, done, and dropped. §11.2 extends `waiting` with a reason so external holds (vendor lead times, shop queues, borrowed instruments) are first-class rather than bare dates.
 
 ## 4. Data layer
 
@@ -108,8 +110,27 @@ CREATE TABLE nodes (
     actual_minutes INTEGER,                       -- filled on completion
     tags          TEXT,                           -- JSON array
     ref           TEXT,                           -- stable dotted id (import/export)
+    health        TEXT,                           -- quarter outlook (shipped; tasks only)
+    priority      TEXT,                           -- pinned/high/normal/low (shipped)
+    followup_days INTEGER,                        -- auto follow-up on completion (shipped)
+    remind        INTEGER,                        -- 1 = lands on Today at earliest_start (shipped)
+    wait_reason   TEXT,                           -- §11.2: what the wait is on (planned)
+    repeat        TEXT,                           -- §11.3: recurrence rule, JSON (planned)
+    recur_key     TEXT,                           -- §11.3: series id for instances (planned)
+    links         TEXT,                           -- §11.4: JSON [{label, href}] (planned)
     created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     completed_at  TIMESTAMP
+);
+
+-- §11.4 steps: sub-atomic checklist items inside one task (planned).
+-- Deliberately NOT child tasks: steps carry no estimate, no dependencies,
+-- no schedule presence — they are a checklist, not schedulable atoms.
+CREATE TABLE steps (
+    id        INTEGER PRIMARY KEY,
+    task_id   INTEGER NOT NULL REFERENCES nodes(id),
+    pos       INTEGER NOT NULL,
+    name      TEXT NOT NULL,
+    done      INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE dependencies (
@@ -351,17 +372,298 @@ Local-first. The scheduler runs in-process and synchronously — at this scale i
 2. Daily capacity: one number, or split into deep-work vs. admin budgets? (The scheduler supports either; the split is more accurate but adds friction.)
 3. Should goal deadlines propagate *down* to tasks as hard constraints or advisory ones when a user pins conflicting work?
 4. ~~Timer-based actuals vs. quick-pick on completion?~~ Resolved by §6.4: throughput calibration is the primary signal and needs neither; quick-pick is an optional accelerant.
-5. Recurring planner tasks (monthly invoicing, quarterly taxes): recurrence rules in MVP or M8?
+5. ~~Recurring planner tasks (monthly invoicing, quarterly taxes): recurrence rules in MVP or M8?~~ Resolved by §11.3: completion-anchored recurrence by default, date-anchored for calendar walls, both with no-backlog catch-up; lands in phase P2.
 6. LLM/embedding provider and privacy posture: cloud API acceptable, or local models preferred?
 7. Agent guardrails: which verbs may the agent execute unconfirmed (queries, capture) versus which require an explicit yes (deleting nodes, dropping tasks, moving deadlines)?
 8. Vault layout: fixed conventions (`journal/YYYY-MM-DD.md`, dotted system folder) versus user-configurable paths — and how to coexist politely with an existing vault's structure and plugins?
 9. Delivery form: standalone app that shares files with Obsidian, or an actual Obsidian plugin (or both, sharing the headless core)?
 10. Auto-apply boundary for parsed captures: is "new task in an existing goal" safe to auto-apply, or should week one route everything through the review queue until trust is earned?
 11. State serialization format inside the `.md` state files: the nested staircase notation (human-friendly, proven round-trippable), a line-per-fact record format (most merge-friendly), or per-project files in staircase form with logs as line-per-fact appenders (likely both, split by file role)?
+12. Hard-deadline exception: deadlines are soft everywhere (§11 governing note), but a grant submission or conference deadline is a wall. Is a rare, opt-in "hard date" flag (which may legitimately pin work to the top of the board) ever worth its complexity, or does `pinned` priority already cover the need in practice?
+13. Graph editor layout: keep the hand-rolled layout of the current template, or vendor a layout library into both surfaces? (CSP/self-contained constraint rules out any CDN either way.)
+14. Suggestion-pane signals (§11.4): are impact rank + rollover + landed reminders + one stale-project nudge the right four, and in what order do they earn a slot when the pane is capped?
 
 ---
 
+## 11. Planner v2 — field-tested revisions
+
+This section came out of a three-week simulated field test (a device build with
+vendor lead times, an experiment campaign with failures and retries, a report
+that went stale) plus a feature audit against Microsoft To Do, which the user
+runs today and which therefore sets the floor: nothing they use daily may be
+lost in migration. Each subsection states the problem observed, the mechanism,
+what it buys, and how it wires through the layers (§8.1: model → storage →
+core graph → command verbs with state deltas → CLI → UI; every user-authored
+field must also survive the workbook round trip, §11.6).
+
+A governing note on deadlines, recorded from the 2026-07-28 design
+conversation: **deadlines here are soft.** They are planning metadata, not
+commitments, and nothing in this section colors, ranks, or nags by date. The
+one instrument that judges is the neglect radar (`progress`), which asks "has
+this moved lately" — a question that stays fair when dates were guesses.
+
+### 11.1 Sequence provenance, and edges that outrank guesses
+
+**Problem (bit three times in one field-test week).** Assumed sequence chains
+apply *on top of* explicit dependency edges. Concretely: three purchase
+orders, all explicitly dependent on one design task, silently chained to each
+other because they were entered on consecutive rows; a recovery task appended
+to a goal made a legitimate new edge "a cycle" through implicit edges the
+user never drew; two characterisation tasks on different instruments blocked
+each other for no stated reason. In every case the graph asserted something
+nobody said, and asserted it invisibly.
+
+**Mechanism.** Three rules, one correction:
+
+1. *Provenance correction (a shipped-code bug):* `add_node` currently
+   auto-appends a rank and stamps it `'user'`. The auto-appended rank is a
+   guess from entry order — exactly what import row order is — and must be
+   stamped `'assumed'`. Only an explicitly passed `--seq`, an explicit `Seq`
+   cell, or a deliberate reorder (CLI `seq set`, graph-editor drag) earns
+   `'user'`. No retroactive migration: existing stamps are indistinguishable
+   from deliberate ones, so the rule applies going forward.
+2. *Suppression (the §3.2 amendment):* at graph build, a task with ≥1
+   explicit incoming task-level edge contributes no assumed incoming
+   sequence edges. User-set ranks always apply. The suppressed task keeps
+   its rank for *successors* — later ranks still wait for it — so one
+   explicit edge never dissolves the ladder for siblings.
+3. *Visibility:* `blockers` entries and graph output carry `seq_source` /
+   edge kind, and every client renders assumed distinctly from user
+   (dashed vs. solid in the graph; "(assumed order)" suffix in CLI tables).
+   A guess the user can *see* is an invitation to correct; a guess that
+   looks like their own decision is a trap.
+
+**New verbs.** `seq set <task…> --rank N` (bulk, stamps `'user'`) and the
+sugar `parallel <task…>` (assigns all named tasks the lowest rank among
+them). Both return state deltas listing edges created and dissolved, so the
+user sees exactly what the graph now believes.
+
+**What it gives us.** Explicit edges become authoritative statements rather
+than additions to a guess; phantom cycles disappear; the graph editor (§11.5)
+gains an honest substrate to draw — and the highest-value authoring gesture
+(marking parallel ranks, HANDOFF pending item 1) becomes a one-liner.
+
+**Wiring.** `graph.py` (edge synthesis + suppression, pure), `commands.py`
+(`seq_set`, `parallel`, blocker provenance in `_node_dict`/`blockers`),
+`cli.py` (two subcommands), UI (render provenance; no logic). Unit tests on
+suppression corner cases (suppressed task mid-ladder, all-assumed goal,
+user-rank + explicit edge together); e2e replay of the field-test scenario —
+its exit test is literally "the three bites don't bite."
+
+### 11.2 External waits: "the world isn't ready"
+
+**Problem.** The most common research blocker — vendor lead time, machine
+shop queue, a borrowed instrument, a collaborator's reply — has no
+representation. The field test needed three workarounds per wait (split
+submit/receive tasks, hand-set `earliest_start`, a disconnected reminder),
+and the graph lied in between ("assembly ready" while the bench was empty).
+
+**Mechanism.** `waiting` (§3.4) gains a reason. One column
+(`wait_reason TEXT`), two verbs:
+
+- `wait <id> --until DATE --reason "pump lead time"` — sets
+  `earliest_start` + `wait_reason`, and by default sets `remind = 1` so the
+  task lands on Today the day the wait expires ("check whether it actually
+  arrived" is precisely a reminder). `--no-remind` opts out. Rejected on
+  done/dropped tasks and non-tasks.
+- `arrived <id>` (alias `wait --clear`) — clears gate and reason, returns
+  the newly-ready delta. If the date passes without `arrived`, nothing
+  alarms (soft dates everywhere); the landed reminder *is* the nudge.
+
+One piece of sugar for the dominant pattern:
+`done <id> --then-wait "Receive pump" --until DATE --reason …` completes the
+order task and spawns the wait task in the same goal at the completed task's
+rank, **inheriting its outgoing dependency edges** (each `done → X` edge is
+copied to `wait_task → X`). That is the submit/receive split the field test
+performed by hand, as one verb.
+
+**What it gives us.** The board stops lying during procurement; Upcoming
+becomes a genuine "waiting on the world" register — grouped by date, each
+entry saying *what* it waits on; the graph editor badges waits with clock,
+date, and reason. Blockers gain a third type: `('external', reason, until)`
+instead of a bare `('date', until)` when a reason is present.
+
+**Wiring.** Storage: one ALTER-guarded column. Core: `blockers()` reports
+the reason. Commands: `wait` / `arrived` / `--then-wait` (all returning
+deltas). CLI: flags above. UI: Upcoming rows and board chips show reasons;
+wizard on the complete-button ("waiting on something? →"). Round trip:
+`Wait reason` column, blank-never-clears. Tests: unit (gate + reason + edge
+inheritance), e2e (procurement scenario end to end without workarounds).
+
+### 11.3 Recurrence (resolves open question 5)
+
+**Problem.** Weekly chores were hand-recreated every week in the field test,
+and one silently lingered a full week. Microsoft To Do's recurrence is a
+baseline feature the migration cannot drop.
+
+**Mechanism.** A `repeat` rule on a task, JSON:
+`{"every": N, "unit": "day"|"week"|"month"|"year", "anchor": "done"|"date",
+"weekdays": [0–6]?}` — which covers To Do's whole menu (daily, weekdays,
+weekly, monthly, yearly, custom every-N) plus one deliberate improvement:
+**anchor**.
+
+- `anchor: "done"` (default) — the next instance is due `every` after the
+  day you *actually completed* this one. Soft cadence for soft schedules:
+  "log pressures every ~7 days" re-anchors to reality, and a late completion
+  never stacks a backlog.
+- `anchor: "date"` — calendar walls (rent on the 1st, quarterly taxes): next
+  instance lands on the next rule date strictly after the previous *scheduled*
+  date, skipping any missed slots rather than piling them up (To Do's
+  catch-up behavior, kept deliberately).
+
+Completing an instance that carries `repeat` spawns the next: same name,
+description, priority, tags, estimate, `repeat`, and parent (goal task or
+planner); `earliest_start` = computed next date; `remind = 1`; `recur_key` =
+the series' founding ref, so instances group for history ("how often did the
+weekly log actually happen" is answerable later, from data that accrues for
+free). Dropping an open instance asks whether to end the series; `repeat
+clear <id>` ends it without drama. Editing the open instance's rule edits
+the series — there is no separate template object to manage.
+
+This is a small feature because it composes: reminders already auto-land,
+`_spawn_followup` already clones tasks onto future dates, and the Today
+list's tombstones already prevent re-landing. Recurrence is a rule parser
+plus one hook in `complete_task`.
+
+**Round trip.** A `Repeat` column in compact deterministic text
+(`every 7d`, `weekdays`, `monthly`, `every 2w@date`); unparsable values are
+kept as extras and surfaced for review, like every other typed column.
+Spawn-dedup on re-import falls out of `recur_key` + date identity.
+
+**Wiring.** Storage: `repeat`, `recur_key` columns. Commands: rule
+validation, the `complete_task` hook, `repeat clear`. CLI: `remind --every`,
+`set --repeat`. UI: repeat picker in the task drawer (To Do's exact menu:
+daily / weekdays / weekly / monthly / yearly / custom), a ↻ badge on
+recurring rows. Tests: unit for both anchors, late completion, series end,
+round trip; e2e for the picker and the respawn toast.
+
+### 11.4 Daily-list parity: the Microsoft To Do floor
+
+The user's current daily driver. Feature-by-feature disposition — parity
+achieved, parity planned, or explicit non-goal:
+
+| To Do feature | Status here | Disposition |
+|---|---|---|
+| My Day | **Better.** Curated Today list; explicit rollover with a "rolled over" flag instead of the nightly wipe | Keep ours |
+| Suggestions ("Add to My Day") | Missing | **P3.** `today_suggest` read verb: landed reminders, rolled-over items, top-impact ready tasks (`unlocks_now`/`gates_total`), one stale-project nudge from `progress`. Pure derivation, no LLM, one-tap add. Soft-deadline note: nearness to a date may *appear* in a suggestion's caption, never as an alarm |
+| Steps (checklist in a task) | Missing | **P3.** `steps` table (§4.2), verbs `step add/tick/rm/move`, "2/5" badge on rows, checklist in the task drawer. Deliberately not child tasks: steps carry no estimates, no edges, no board presence |
+| Important (star) | Covered | `priority high` = star; `pinned` outranks it. UI gets a star toggle as sugar |
+| Planned view | Covered | `upcoming`, which §11.2 upgrades with wait reasons |
+| Reminders | Covered (one-shot) | §11.3 closes the recurring gap |
+| Due dates | Covered, deliberately soft | No overdue alarms, per the governing note |
+| Recurring tasks | Missing | **§11.3** |
+| Notes on tasks | **Better** | Node-attached notes + daily journal + search |
+| File attachments | Missing | **P3, scoped down.** `links` on a task: `{label, href}` pairs (file paths, URLs); verbs `link add/rm`; UI renders them clickable and opens via the OS. The tool stores *pointers only* — files stay in the filesystem/vault, which owns bytes and sync |
+| #hashtags in quick-add | Missing | **P3.** The Today quick-add parses trailing `#tag` tokens into tags, deterministically; no other NL parsing (that is the capture pipeline's job, §7.2) |
+| Search | Partial (notes only) | **P3.** `find <query>` verb over names, descriptions, tags, and notes, returning typed matches; UI global search (Ctrl+K) rendering what the verb returns |
+| Lists / groups | **Better** | Projects → milestones → goals, plus the planner bucket |
+| Shared lists, assignment | Absent | Non-goal (§2.2, single-player) |
+| Flagged email | Absent | Non-goal |
+
+The exit test for this table: a Microsoft To Do user migrates and finds no
+daily habit they must give up — and three they gain (impact ranking, the
+neglect radar, honest rollover).
+
+### 11.5 The interactive graph editor, second act
+
+The graph view is already interactive (check-off, edit dialog, edge drawing
+shipped in 0.6.0) and already the best surface in the app for *seeing* a
+quarter. The second act makes it the best surface for *authoring* one — the
+place where §11.1's ranks and §11.2's waits are actually manipulated.
+
+**Capabilities, in priority order:**
+
+1. **Rank editing by drag.** Task cards drag between ranks inside a goal;
+   dropping two cards on one rank makes them parallel. Every drop issues
+   `seq set` (stamping `'user'`) and re-renders from the returned delta.
+   This is the missing authoring UX for parallel ranks — the single
+   highest-value user step after a fresh import (HANDOFF pending 1) — and
+   it must feel like moving sticky notes, not editing a form.
+2. **Edge provenance rendering.** Solid = user edge, dashed = assumed
+   sequence, ghosted = suppressed-by-§11.1; a legend and a "show assumed"
+   toggle. The graph is where a wrong guess becomes visible and fixable in
+   one gesture.
+3. **Edge editing with cycle preview.** Drawing shows the would-be cycle
+   path highlighted *before* rejection (the command layer already returns
+   the path; the editor renders it instead of toasting it). Selected edges
+   delete with `dep rm`.
+4. **Wait badges.** Waiting tasks show clock + date + reason; a wait whose
+   date has passed without `arrived` renders the badge filled — information,
+   not alarm.
+5. **Impact lens.** A toggle that tints ready tasks by
+   `unlocks_now`/`gates_total` (data already computed for `ready --impact`),
+   so "what is the limiting step" is answerable by looking.
+6. **Focus and scale.** Collapse/expand milestones and goals; filter by
+   project, tag, status; type-to-focus a node. Keyboard add into a rank.
+
+**Wiring.** A new read verb `graph_data` returns the full model — nodes,
+ranks, edges each tagged `user | assumed | suppressed`, waits with reasons,
+impact numbers — computed entirely in core. The React app renders it
+natively (the modal drops its HTML-in-iframe indirection); the standalone
+self-contained HTML export (`graph` verb, `graphview.py`) stays for offline
+sharing and embeds the same JSON, so the two surfaces cannot drift. Layout
+is presentation and may live in the UI; **every mutation** — drag, draw,
+delete, check-off — is a command verb call, and the editor re-renders from
+returned deltas rather than computing consequences itself. No external
+layout library unless vendored: both surfaces must work with no network.
+
+**Exit test.** A fresh workbook import (chain-only ranks, zero edges) can be
+fully rank-authored and cross-linked in the editor, mouse-only, in minutes —
+and the resulting workbook export shows `Seq` cells and `Depends on` entries
+matching every gesture.
+
+### 11.6 The round-trip invariant, generalized
+
+Shipped 2026-07-29: `Start`, `Priority`, `Follow-up (days)`, `Remind`, and
+`Today` columns round-trip losslessly; blank cells never clear; a same-day
+Today tombstone outranks the file; export stamps refs on the database so
+re-importing your own export can never duplicate the tree.
+
+The invariant this generalizes to, binding on every feature in this section:
+**any field a user can author must survive export → re-import unchanged, and
+absence in a file is never an instruction.** New columns as features land:
+`Wait reason` (§11.2), `Repeat` (§11.3), `Steps` and `Links` (§11.4) — each
+parsed with the established discipline (invalid values kept as extras and
+surfaced for review, never coerced into a typed field), each covered by the
+three-cycle fixed-point e2e test that already guards the format.
+
+### 11.7 Phasing
+
+- **P1 — Graph truth** (§11.1): provenance stamp fix, suppression rule,
+  `seq set` / `parallel`, provenance in blockers and both graph surfaces.
+  *Exit: the field-test scenario replays with zero phantom blockers.*
+- **P2 — The world and the calendar** (§11.2, §11.3): waits with reasons,
+  `--then-wait`, recurrence with both anchors. *Exit: the procurement and
+  weekly-chore scenarios need zero workarounds.*
+- **P3 — Daily-list parity** (§11.4): suggestions, steps, links, `find`,
+  hashtag quick-add. *Exit: the To Do migration table shows no "Missing".*
+- **P4 — Graph editor, second act** (§11.5): rank dragging, provenance
+  rendering, cycle preview, wait badges, impact lens. *Exit: §11.5's
+  fresh-import authoring test.*
+
+P1 is small and corrective — it should land before anything else builds on
+ranks. P2 and P3 are independent of each other; P4 consumes all three and
+should land last.
+
 ## Revision history
+
+**0.3 — 2026-07-29.** Planner v2 section (§11) added from a simulated
+three-week field test and a Microsoft To Do parity audit. Sequence-rank
+provenance corrected and generalized (§3.2, §11.1): auto-appended ranks are
+`'assumed'`, explicit task-level edges suppress a task's assumed incoming
+sequence edges, and provenance is visible everywhere. `waiting` promoted to a
+named derived state (§3.4) and extended with reasons for external holds
+(§11.2), including the `--then-wait` submit/receive sugar. Recurrence
+specified with completion/date anchors and no-backlog catch-up, resolving
+open question 5 (§11.3). To Do parity table with dispositions (§11.4): steps,
+links-not-attachments, `find`, hashtag quick-add, suggestion pane; sharing
+and flagged email confirmed as non-goals. Graph editor second act specified
+(§11.5): rank-drag authoring, edge-provenance rendering, cycle preview, wait
+badges, impact lens, `graph_data` verb. Round-trip invariant generalized and
+made binding on all new columns (§11.6). Phasing P1–P4 (§11.7). Soft-deadline
+stance recorded as a governing note; new open questions 12–14. Schema block
+updated to as-built (health/priority/followup/remind) plus planned columns
+and the `steps` table (§4.2).
 
 **0.2.2 — 2026-07-25.** Template contract documented in §4.3: header-name column matching (sparse files are valid subsets), explicit `Seq`/`Depends on` applied deterministically, `Proposed: Depends on` accept-on-keep loop, deterministic note-flagging heuristic (flags surfaced, never applied), stable `ref` ids (§4.2 column added) with rename-safe matching, and template-format export.
 

@@ -128,6 +128,13 @@ Fixtures live in `tests/fixtures/` and are synthetic (a coffee shop).
 
 ## Pending / open
 
+0. **The forward plan is spec §11 (Planner v2), phases P1–P4.** Written
+   2026-07-29 from a simulated field test and a Microsoft To Do parity
+   audit. P1 (sequence provenance + suppression) is corrective and comes
+   first; note it fixes a live bug — `add_node` stamps auto-appended ranks
+   `'user'` when they are guesses. Deadlines are soft by decision: no
+   overdue alarms anywhere (spec §11 governing note).
+
 1. **Dependencies are empty in a fresh import.** With no explicit edges and
    every task on its own assumed rank, each goal is a straight chain, so
    `unlocks_now` is 1 almost everywhere and `gates_total` carries the signal.
