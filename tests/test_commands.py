@@ -52,9 +52,15 @@ def test_add_node_auto_assigns_seq_index(c):
     assert c.get_node(ids["t2"])["node"]["seq_index"] == 2
 
 
-def test_manual_task_order_is_user_provenance(c):
+def test_auto_appended_rank_is_assumed_provenance(c):
+    """Spec 11.1: the auto-appended rank is a guess from entry order —
+    exactly what import row order is — and must say so. Only a rank the
+    caller actually passed earns 'user'."""
     ids = chain(c)
-    assert c.get_node(ids["t1"])["node"]["seq_source"] == "user"
+    assert c.get_node(ids["t1"])["node"]["seq_source"] == "assumed"
+    g = ids["g"]
+    t3 = c.add_node(kind="task", name="t3", parent_id=g, seq_index=7)
+    assert t3["created"]["seq_source"] == "user"
 
 
 def test_add_node_hierarchy_validation(c):
@@ -350,7 +356,9 @@ def test_ready_impact_is_ranked_by_payoff(c):
     assert (b1["unlocks_now"], b1["gates_total"]) == (0, 0)
 
 
-def test_a_sequential_rank_unlocks_only_the_next_task(c):
+def test_explicitly_gated_tasks_unlock_together(c):
+    """Both c1 and c2 carry explicit edges from a1, so their assumed
+    entry-order chain is suppressed (spec 11.1): completing a1 frees both."""
     ids = two_goals(c)
     g2 = c.add_node(kind="goal", name="GC", parent_id=ids["m"])["created"]["id"]
     c1 = c.add_node(kind="task", name="c1", parent_id=g2)["created"]["id"]
@@ -358,7 +366,20 @@ def test_a_sequential_rank_unlocks_only_the_next_task(c):
     c.add_dependency(ids["a1"], c1)
     c.add_dependency(ids["a1"], c2)
     a1 = next(r for r in c.ready(impact=True) if r["id"] == ids["a1"])
-    # c2 sits a rank behind c1, so it is gated but not unlocked
+    assert (a1["unlocks_now"], a1["gates_total"]) == (2, 2)
+
+
+def test_a_user_rank_still_gates_behind_an_explicit_edge(c):
+    """A rank the user chose is a statement, not a guess: c2 at user rank 2
+    stays behind c1 even though it also has an explicit edge."""
+    ids = two_goals(c)
+    g2 = c.add_node(kind="goal", name="GC", parent_id=ids["m"])["created"]["id"]
+    c1 = c.add_node(kind="task", name="c1", parent_id=g2)["created"]["id"]
+    c2 = c.add_node(kind="task", name="c2", parent_id=g2,
+                    seq_index=2)["created"]["id"]
+    c.add_dependency(ids["a1"], c1)
+    c.add_dependency(ids["a1"], c2)
+    a1 = next(r for r in c.ready(impact=True) if r["id"] == ids["a1"])
     assert (a1["unlocks_now"], a1["gates_total"]) == (1, 2)
 
 
@@ -615,3 +636,91 @@ def test_journal_ignores_untimestamped_imports(c):
     ids = chain(c)
     c.repo.update_node(ids["t1"], status="done")  # importer write-through
     assert c.journal()[0]["completed"] == []
+
+
+# --- seq set / parallel (spec 11.1) ---
+
+
+def three_orders(c):
+    """The field-test shape: a design task, then three orders entered on
+    consecutive rows (assumed chain), each explicitly dependent on design."""
+    ids = chain(c)
+    g = ids["g"]
+    orders = [
+        c.add_node(kind="task", name=n, parent_id=g)["created"]["id"]
+        for n in ("pump", "sensors", "fittings")
+    ]
+    for o in orders:
+        c.add_dependency(ids["t1"], o)
+    return ids, orders
+
+
+def test_explicit_edges_replay_without_phantom_blockers(c):
+    """The P1 exit test: completing the design task readies all three
+    orders at once — the assumed chain between them never applies."""
+    ids, orders = three_orders(c)
+    c.start_task(ids["t1"])
+    # t2 (assumed rank 2, no explicit edges) is still chained behind t1;
+    # the orders are not, because their edges say what they wait for
+    r = c.complete_task(ids["t1"])
+    newly = {n["name"] for n in r["newly_ready"]}
+    assert {"pump", "sensors", "fittings"} <= newly
+
+
+def test_appended_task_edge_is_not_a_cycle(c):
+    """Second bite: a recovery task appended to the goal accepts an edge
+    to an earlier sibling instead of reporting a phantom cycle."""
+    ids = chain(c)
+    fix = c.add_node(kind="task", name="fix", parent_id=ids["g"])["created"]["id"]
+    r = c.add_dependency(fix, ids["t2"])  # would have cycled before
+    assert r["added"]["from_id"] == fix
+
+
+def test_seq_set_stamps_user_and_reports_edge_delta(c):
+    ids = chain(c)
+    g = ids["g"]
+    t3 = c.add_node(kind="task", name="t3", parent_id=g)["created"]["id"]
+    r = c.seq_set([ids["t2"], t3], rank=2)
+    assert all(u["seq_source"] == "user" for u in r["updated"])
+    # t2 -> t3 dissolved (now one rank); nothing new appears
+    removed = {(e["from_id"], e["to_id"]) for e in r["sequence_edges_removed"]}
+    assert (ids["t2"], t3) in removed
+    added = {(e["from_id"], e["to_id"]) for e in r["sequence_edges_added"]}
+    assert added == set()
+    # and the graph agrees: completing t1 readies both
+    c.start_task(ids["t1"])
+    newly = {n["name"] for n in c.complete_task(ids["t1"])["newly_ready"]}
+    assert {"t2", "t3"} <= newly
+
+
+def test_parallel_uses_the_lowest_rank(c):
+    ids = chain(c)
+    r = c.parallel([ids["t1"], ids["t2"]])
+    assert {u["seq_index"] for u in r["updated"]} == {1}
+    assert c.get_node(ids["t2"])["state"] == "ready"
+
+
+def test_parallel_validates_shape(c):
+    ids = chain(c)
+    lone = c.add_node(kind="task", name="planner")["created"]["id"]
+    with pytest.raises(CommandError):
+        c.parallel([ids["t1"]])  # needs two
+    with pytest.raises(CommandError):
+        c.parallel([ids["t1"], lone])  # not the same goal
+    with pytest.raises(CommandError):
+        c.seq_set([lone], rank=1)  # planner tasks have no sequence
+
+
+def test_seq_set_rejects_rank_change_that_closes_a_loop(c):
+    """Statements can genuinely contradict: an explicit edge t1 -> t3 plus
+    a USER rank putting t1 after t3 is a real cycle — rejected whole, with
+    a rollback (a guess would simply have been voided, spec 11.1)."""
+    ids = chain(c)
+    g = ids["g"]
+    t3 = c.add_node(kind="task", name="t3", parent_id=g)["created"]["id"]
+    c.add_dependency(ids["t1"], t3)
+    with pytest.raises(CommandError) as ei:
+        c.seq_set([ids["t1"]], rank=9)
+    assert ei.value.code == "cycle"
+    n = c.get_node(ids["t1"])["node"]
+    assert n["seq_index"] == 1 and n["seq_source"] == "assumed"

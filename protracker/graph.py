@@ -63,6 +63,7 @@ class Graph:
                     )
             self._deps_to[d.to_id].append(d)
 
+        self._seq_in_force = self._resolve_sequence_pairs()
         self._complete: dict[int, bool] = {}
         cycle = self._find_cycle()
         if cycle:
@@ -107,20 +108,111 @@ class Graph:
 
     # --- readiness (spec 3.2, 3.4) ---
 
+    def seq_suppressed(self, t: Node) -> bool:
+        """Spec §11.1: an assumed rank is a guess, and a guess loses to a
+        statement. A task whose rank is 'assumed' and which carries at least
+        one explicit incoming dependency edge contributes no assumed incoming
+        sequence edges — the user has said what its prerequisites are. Its
+        own rank still gates *later* ranks (suppression never dissolves the
+        ladder for successors), and a 'user' rank always applies."""
+        return (
+            t.kind == "task"
+            and t.seq_source == "assumed"
+            and bool(self._deps_to.get(t.id))
+        )
+
+    @staticmethod
+    def _reaches(adj: dict, src, dst) -> bool:
+        seen = {src}
+        queue = [src]
+        while queue:
+            v = queue.pop()
+            if v == dst:
+                return True
+            for w in adj.get(v, []):
+                if w not in seen:
+                    seen.add(w)
+                    queue.append(w)
+        return False
+
+    def _resolve_sequence_pairs(self) -> dict[int, set[tuple[int, int]]]:
+        """Which implicit sequence edges are actually in force, per goal.
+
+        Statements first: explicit dependency edges and pairs whose target
+        rank the user set (or a legacy rank with no provenance) go straight
+        into the working DAG — contradictions among *statements* are real
+        cycles and surface as CycleError from construction.
+
+        Guesses second, and **a guess never creates a cycle** (spec §11.1):
+        pairs whose target rank is 'assumed' are dropped outright when the
+        target carries an explicit incoming edge (the user has said what it
+        waits for), and the rest are admitted one at a time in deterministic
+        order (goal id, then target rank/id, then source rank/id), each
+        skipped if it would close a loop against everything admitted so far.
+        Entry order is the tool's own inference; it must never be the thing
+        that makes a user's explicit edge look illegal."""
+        adj: dict = defaultdict(list)
+        goals = sorted(
+            (n for n in self.nodes.values() if n.kind == "goal"),
+            key=lambda n: n.id,
+        )
+        for n in goals:
+            s, e = ("S", n.id), ("E", n.id)
+            adj[s].append(e)
+            for t in self.tasks_under(n.id):
+                adj[s].append(t.id)
+                adj[t.id].append(e)
+        for d in self.deps:
+            adj[self._end(d.from_id)].append(self._start(d.to_id))
+
+        in_force: dict[int, set[tuple[int, int]]] = {}
+        guesses: list[tuple[int, int, int]] = []
+        for n in goals:
+            pairs: set[tuple[int, int]] = set()
+            tasks = self.tasks_under(n.id)
+            for b in tasks:
+                rb = b.seq_index if b.seq_index is not None else 0
+                sources = [
+                    a for a in tasks
+                    if a.id != b.id
+                    and (a.seq_index if a.seq_index is not None else 0) < rb
+                ]
+                if not sources:
+                    continue
+                if b.seq_source == "assumed":
+                    if self._deps_to.get(b.id):
+                        continue  # statement outranks the guess entirely
+                    for a in sorted(sources, key=_seq_key):
+                        guesses.append((n.id, a.id, b.id))
+                else:  # 'user', or a legacy rank with no provenance
+                    for a in sources:
+                        pairs.add((a.id, b.id))
+                        adj[a.id].append(b.id)
+            in_force[n.id] = pairs
+        for gid, a, b in guesses:
+            if not self._reaches(adj, b, a):
+                in_force[gid].add((a, b))
+                adj[a].append(b)
+        return in_force
+
     def _seq_blockers(self, t: Node) -> list[Node]:
-        """Tasks in strictly lower sequence ranks that are not yet done.
-        Tasks sharing a seq_index form a parallel rank and never gate each
-        other; dropped tasks gate nothing."""
+        """Sequence predecessors currently in force that are not yet done.
+        Dropped tasks gate nothing; suppressed and voided guessed edges
+        (see _resolve_sequence_pairs) gate nothing."""
         if t.parent_id is None:
             return []
-        my_rank = t.seq_index if t.seq_index is not None else 0
+        pairs = self._seq_in_force.get(t.parent_id, set())
         return [
             s
             for s in self.tasks_under(t.parent_id)
-            if s.id != t.id
-            and s.status not in ("done", "dropped")
-            and (s.seq_index if s.seq_index is not None else 0) < my_rank
+            if (s.id, t.id) in pairs and s.status not in ("done", "dropped")
         ]
+
+    def sequence_pairs(self, goal_id: int) -> set[tuple[int, int]]:
+        """The implicit (from_id, to_id) sequence edges in force under a
+        goal — structural, ignoring status. This is what `seq set` diffs to
+        report which edges a rank change created and dissolved."""
+        return set(self._seq_in_force.get(goal_id, set()))
 
     def _waiting_until(self, t: Node) -> str | None:
         """The future earliest_start gating this task, if any. Non-ISO text
@@ -143,7 +235,13 @@ class Graph:
         if waiting:
             out.append({"type": "date", "until": waiting})
         for pred in self._seq_blockers(t):
-            out.append({"type": "sequence", "node_id": pred.id, "name": pred.name})
+            # provenance travels with the blocker: an assumed edge is the
+            # tool's guess from row/entry order and every surface must let
+            # the user tell it apart from an order they chose (spec §11.1)
+            out.append({
+                "type": "sequence", "node_id": pred.id, "name": pred.name,
+                "seq_source": t.seq_source or "user",
+            })
         gate_targets = [tid]
         if t.parent_id is not None and self.nodes[t.parent_id].kind == "goal":
             gate_targets.append(t.parent_id)
@@ -251,19 +349,15 @@ class Graph:
                 for t in tasks:
                     adj[s].append(t.id)
                     adj[t.id].append(e)
-                # implicit sequence edges between adjacent ranks; tasks with
-                # equal seq_index are a parallel rank with no edge between them
-                ranks: list[tuple[int, list[Node]]] = []
-                for t in tasks:
-                    r = t.seq_index if t.seq_index is not None else 0
-                    if ranks and ranks[-1][0] == r:
-                        ranks[-1][1].append(t)
-                    else:
-                        ranks.append((r, [t]))
-                for (_, ra), (_, rb) in zip(ranks, ranks[1:]):
-                    for a in ra:
-                        for b in rb:
-                            adj[a.id].append(b.id)
+                # implicit sequence edges in force (suppression and
+                # guess-voiding already resolved). All lower ranks link
+                # directly, not just the adjacent one: with an edge missing
+                # mid-ladder, adjacent-rank chaining would lose transitivity
+                # — rank 1 must still gate rank 3 when rank 2's task keeps
+                # only its explicit edges. Goals are small; the quadratic
+                # form costs nothing.
+                for a, b in self._seq_in_force.get(n.id, ()):
+                    adj[a].append(b)
         for d in self.deps:
             adj[self._end(d.from_id)].append(self._start(d.to_id))
         return adj
@@ -312,25 +406,20 @@ class Graph:
         return None
 
     def would_create_cycle(self, from_id: int, to_id: int) -> list[int] | None:
-        """If adding from_id -> to_id would create a cycle, return the existing
-        path to_id ~> from_id (real node ids); otherwise None."""
+        """If adding from_id -> to_id would create a cycle, return the
+        offending path (real node ids); otherwise None.
+
+        Evaluated by trial construction, not by searching the current DAG:
+        the new explicit edge changes which guessed sequence edges are in
+        force (it may suppress the target's assumed prerequisites, and
+        guesses re-void against it), so the honest question is whether the
+        graph *with the edge* builds — a cycle that only a guess could close
+        is not a cycle, per §11.1."""
         if from_id == to_id:
             return [from_id]
-        adj = self._dag_adjacency()
-        src, dst = self._end(from_id), self._start(to_id)
-        # BFS from dst looking for src
-        parent = {dst: None}
-        queue = [dst]
-        while queue:
-            v = queue.pop(0)
-            if v == src:
-                path = []
-                while v is not None:
-                    path.append(v)
-                    v = parent[v]
-                return self._real_path(list(reversed(path)))
-            for w in adj.get(v, []):
-                if w not in parent:
-                    parent[w] = v
-                    queue.append(w)
+        trial = self.deps + [Dependency(from_id=from_id, to_id=to_id)]
+        try:
+            Graph(list(self.nodes.values()), trial, self.today)
+        except CycleError as exc:
+            return exc.path
         return None

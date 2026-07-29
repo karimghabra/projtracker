@@ -11,7 +11,7 @@ from collections import defaultdict
 from dataclasses import asdict
 from datetime import date, datetime
 
-from .graph import Graph
+from .graph import CycleError, Graph
 from .model import (
     CONTAINER_STATES,
     DEFAULT_HEALTH,
@@ -190,6 +190,10 @@ class Commands:
         self._check_parent(kind, parent_id)
         if kind != "task" and seq_index is not None:
             raise CommandError("invalid_field", "seq_index applies to tasks only")
+        # An auto-appended rank is a guess from entry order — exactly what
+        # import row order is — and must say so (spec §11.1). Only a rank
+        # the caller actually passed is user provenance.
+        seq_provenance = "user" if seq_index is not None else "assumed"
         if kind == "task" and parent_id is not None and seq_index is None:
             seq_index = self._next_seq(parent_id)
         self._validate_date(deadline, "deadline")
@@ -205,7 +209,7 @@ class Commands:
                 parent_id=parent_id,
                 description=description,
                 seq_index=seq_index,
-                seq_source="user" if seq_index is not None else None,
+                seq_source=seq_provenance if seq_index is not None else None,
                 deadline=deadline,
                 earliest_start=earliest_start,
                 weight=weight,
@@ -274,6 +278,85 @@ class Commands:
             "changed": changed,
             "status_changes": self._diff(pre, post),
         }
+
+    def seq_set(self, task_ids: list[int], rank: int) -> dict:
+        """Give tasks an explicit sequence rank (spec §11.1). Stamps 'user'
+        provenance — this is the deliberate-order gesture that assumed row
+        order must never overwrite. Returns, beside the usual status delta,
+        exactly which implicit sequence edges the change created and
+        dissolved, so the caller sees what the graph now believes."""
+        if not task_ids:
+            raise CommandError("invalid_field", "no tasks given")
+        if not isinstance(rank, int) or rank < 1:
+            raise CommandError("invalid_field", "rank is a 1-based integer")
+        tasks = [self._require(tid, kind="task") for tid in task_ids]
+        for t in tasks:
+            if t.parent_id is None:
+                raise CommandError(
+                    "invalid_field",
+                    f"task {t.id} is a planner task; planner tasks have no "
+                    "sequence",
+                )
+        pre = self._graph()
+        goals = sorted({t.parent_id for t in tasks})
+        pre_pairs = {g: pre.sequence_pairs(g) for g in goals}
+        prior = {t.id: (t.seq_index, t.seq_source) for t in tasks}
+        for t in tasks:
+            self.repo.update_node(t.id, seq_index=rank, seq_source="user")
+        try:
+            post = self._graph()
+        except CycleError as exc:
+            # ranks interact with explicit edges; a rank change that closes
+            # a loop is rejected whole, with the path, like any dep add
+            for tid, (idx, src) in prior.items():
+                self.repo.update_node(tid, seq_index=idx, seq_source=src)
+            names = [self.repo.get_node(i).name for i in exc.path
+                     if self.repo.get_node(i)]
+            raise CommandError(
+                "cycle",
+                "rank change rejected: " + " -> ".join(names),
+                {"path": exc.path},
+            ) from None
+        added, removed = [], []
+        for g in goals:
+            post_pairs = post.sequence_pairs(g)
+            for a, b in sorted(post_pairs - pre_pairs[g]):
+                added.append({
+                    "from_id": a, "from_name": post.nodes[a].name,
+                    "to_id": b, "to_name": post.nodes[b].name,
+                })
+            for a, b in sorted(pre_pairs[g] - post_pairs):
+                removed.append({
+                    "from_id": a, "from_name": post.nodes[a].name,
+                    "to_id": b, "to_name": post.nodes[b].name,
+                })
+        return {
+            "updated": [self._node_dict(post.nodes[t.id], post) for t in tasks],
+            "sequence_edges_added": added,
+            "sequence_edges_removed": removed,
+            "status_changes": self._diff(pre, post),
+        }
+
+    def parallel(self, task_ids: list[int]) -> dict:
+        """Make tasks a parallel rank: all get the lowest rank among them
+        (spec §11.1). Sugar over seq_set for the single highest-value
+        authoring gesture after a fresh import."""
+        if len(task_ids) < 2:
+            raise CommandError(
+                "invalid_field", "parallel needs at least two tasks"
+            )
+        tasks = [self._require(tid, kind="task") for tid in task_ids]
+        parents = {t.parent_id for t in tasks}
+        if None in parents or len(parents) != 1:
+            raise CommandError(
+                "invalid_field",
+                "parallel tasks must share one parent goal",
+            )
+        rank = min(
+            (t.seq_index for t in tasks if t.seq_index is not None),
+            default=1,
+        )
+        return self.seq_set(task_ids, max(rank, 1))
 
     def move_node(
         self, node_id: int, parent_id: int | None, seq_index: int | None = None

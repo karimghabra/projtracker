@@ -245,3 +245,98 @@ def test_would_create_cycle_via_goal_expansion():
     assert 20 in path and 12 in path
     # the same direction as the existing goal edge is fine
     assert g.would_create_cycle(12, 20) is None
+
+
+# --- suppression: explicit edges outrank assumed ranks (spec 11.1) ---
+#
+# An assumed rank is a guess from row/entry order. A task that carries at
+# least one explicit incoming dependency edge keeps only its explicit
+# prerequisites; a 'user' rank always applies; and a suppressed task still
+# gates later ranks (suppression never dissolves the ladder for successors).
+
+
+def A(id, parent, seq):
+    """A task whose rank is an entry-order guess."""
+    n = N(id, "task", parent, seq=seq)
+    return dataclasses.replace(n, seq_source="assumed")
+
+
+def U(id, parent, seq):
+    """A task whose rank the user chose."""
+    n = N(id, "task", parent, seq=seq)
+    return dataclasses.replace(n, seq_source="user")
+
+
+def sup_base():
+    """goal 3 holds assumed-chain tasks 10, 11, 12; task 30 is a planner
+    task used as an external prerequisite."""
+    return [
+        N(1, "project"),
+        N(2, "milestone", 1),
+        N(3, "goal", 2),
+        A(10, 3, 1),
+        A(11, 3, 2),
+        A(12, 3, 3),
+        N(30, "task"),
+    ]
+
+
+def test_explicit_edge_suppresses_assumed_chain():
+    # 11 explicitly depends on 30 only; its assumed edge from 10 must vanish
+    g = Graph(sup_base(), [D(30, 11)])
+    types = [(b["type"]) for b in g.blockers(11)]
+    assert types == ["dependency"]  # 30 gates it; 10 no longer does
+    g2 = Graph(done(sup_base(), 30), [D(30, 11)])
+    assert g2.computed_status(11) == "ready"  # even though 10 is open
+
+
+def test_user_rank_is_never_suppressed():
+    nodes = [U(11, 3, 2) if n.id == 11 else n for n in sup_base()]
+    g = Graph(done(nodes, 30), [D(30, 11)])
+    # the user placed 11 at rank 2, so 10 still gates it alongside the edge
+    kinds = {(b["type"], b.get("node_id")) for b in g.blockers(11)}
+    assert ("sequence", 10) in kinds
+
+
+def test_suppressed_task_still_gates_successors():
+    g = Graph(done(sup_base(), 30), [D(30, 11)])
+    # 12 (rank 3) still waits for both 10 and 11
+    seq_blockers = {b["node_id"] for b in g.blockers(12) if b["type"] == "sequence"}
+    assert seq_blockers == {10, 11}
+
+
+def test_lower_ranks_gate_through_a_suppressed_middle():
+    # with the whole of rank 2 suppressed, rank 1 must still gate rank 3,
+    # and downstream reachability must agree with readiness
+    g = Graph(sup_base(), [D(30, 11)])
+    assert 12 in g.downstream_incomplete(10)
+    seq_blockers = {b["node_id"] for b in g.blockers(12) if b["type"] == "sequence"}
+    assert 10 in seq_blockers
+
+
+def test_sequence_blockers_carry_provenance():
+    g = Graph(sup_base(), [])
+    b = g.blockers(11)[0]
+    assert b["type"] == "sequence" and b["seq_source"] == "assumed"
+    nodes = [U(11, 3, 2) if n.id == 11 else n for n in sup_base()]
+    b2 = Graph(nodes, []).blockers(11)[0]
+    assert b2["seq_source"] == "user"
+
+
+def test_phantom_cycle_gone_for_appended_task():
+    # The field-test bite: a recovery task appended to the goal (highest
+    # assumed rank) used to make 'appended -> earlier sibling' a cycle
+    # through edges nobody drew. With an explicit edge into the appended
+    # task, its assumed prerequisites vanish and the edge is legal.
+    nodes = sup_base() + [A(13, 3, 4)]
+    g = Graph(nodes, [D(30, 13)])
+    assert g.would_create_cycle(13, 11) is None
+    g2 = Graph(nodes, [D(30, 13), D(13, 11)])  # builds without CycleError
+    # and drawing that edge makes 11 itself explicit -> its own assumed
+    # prerequisite (10) vanishes too; the rule is self-consistent
+    assert {b["node_id"] for b in g2.blockers(11) if b["type"] != "date"} == {13}
+
+
+def test_sequence_pairs_reports_the_ladder():
+    g = Graph(sup_base(), [D(30, 11)])
+    assert g.sequence_pairs(3) == {(10, 12), (11, 12)}  # 11's incoming gone

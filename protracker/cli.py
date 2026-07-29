@@ -80,6 +80,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="allow deleting a subtree that contains completed work",
     )
 
+    sq = sub.add_parser(
+        "seq", help="set sequence ranks (equal rank = parallel, no gating)"
+    )
+    sqsub = sq.add_subparsers(dest="seq_cmd", required=True)
+    ss = sqsub.add_parser("set", help="give tasks an explicit rank")
+    ss.add_argument("ids", type=int, nargs="+")
+    ss.add_argument("--rank", type=int, required=True)
+
+    par = sub.add_parser(
+        "parallel",
+        help="make tasks one rank so they stop gating each other",
+    )
+    par.add_argument("ids", type=int, nargs="+")
+
     dep = sub.add_parser("dep", help="manage dependencies")
     dsub = dep.add_subparsers(dest="dep_cmd", required=True)
     da = dsub.add_parser("add")
@@ -265,6 +279,10 @@ def dispatch(args: argparse.Namespace, c: Commands):
         )
     if cmd == "rm":
         return c.delete_node(args.id, confirm=args.yes, force=args.force)
+    if cmd == "seq":
+        return c.seq_set(args.ids, args.rank)
+    if cmd == "parallel":
+        return c.parallel(args.ids)
     if cmd == "dep":
         if args.dep_cmd == "add":
             return c.add_dependency(args.from_id, args.to_id, note=args.note)
@@ -452,7 +470,13 @@ def print_human(result, cmd: str):
             print(f"  effective_deadline: {result['effective_deadline']}")
         print(f"  complete: {result['complete']}")
         for b in result["blockers"]:
-            print(f"  blocked by {b['type']}: #{b['node_id']} {b['name']}")
+            if b["type"] == "date":
+                print(f"  waiting until {b['until']}")
+                continue
+            origin = ""
+            if b["type"] == "sequence" and b.get("seq_source") == "assumed":
+                origin = "  (assumed order — not something you set)"
+            print(f"  blocked by {b['type']}: #{b['node_id']} {b['name']}{origin}")
     elif cmd == "tree":
         def walk(entry, depth):
             n = entry["node"]
@@ -488,6 +512,22 @@ def print_human(result, cmd: str):
         else:
             print(f"deleted: {', '.join(str(i) for i in result['deleted'])}")
             _print_changes(result)
+    elif cmd in ("seq", "parallel"):
+        ranks = {u["id"]: u["seq_index"] for u in result["updated"]}
+        names = {u["id"]: u["name"] for u in result["updated"]}
+        for tid in sorted(ranks):
+            print(f"#{tid} '{names[tid]}' -> rank {ranks[tid]} (user)")
+        for e in result["sequence_edges_removed"]:
+            print(
+                f"  no longer gates: #{e['from_id']} '{e['from_name']}' -> "
+                f"#{e['to_id']} '{e['to_name']}'"
+            )
+        for e in result["sequence_edges_added"]:
+            print(
+                f"  now gates: #{e['from_id']} '{e['from_name']}' -> "
+                f"#{e['to_id']} '{e['to_name']}'"
+            )
+        _print_changes(result)
     elif cmd == "dep":
         if "added" in result:
             d = result["added"]

@@ -62,7 +62,12 @@ The **dependency DAG** expresses ordering. Its nodes are tasks and goals; its ed
 
 1. *Implicit sequence edges.* Within a goal, the sequence index orders tasks into *ranks*: tasks sharing an index form a parallel rank with no implied ordering between them, and a task depends on every non-dropped task in all lower ranks. With unique indexes this reduces to "task *n* depends on task *n−1*." These edges are never stored; they are computed from the sequence index at graph-build time.
 
-   Sequence ranks carry **provenance**: a rank the user chose (an explicit `Seq` cell, a deliberate reorder, a drag in the graph editor) is `'user'`; a rank the system guessed (import row order, *and* the auto-appended rank a task receives when added interactively without one) is `'assumed'`. An assumed rank is a guess about ordering, and a guess must lose to a statement: **a task with at least one explicit incoming task-level dependency edge contributes no assumed incoming sequence edges at graph-build time** (its user-set ranks still apply, and lower-ranked siblings still gate *later* ranks through it — suppression removes only the suppressed task's own guessed prerequisites, never its place in the ladder for successors). Every surface that reports a sequence blocker reports its provenance, so a guessed edge can never masquerade as something the user asserted. Rationale and consequences in §11.1.
+   Sequence ranks carry **provenance**: a rank the user chose (an explicit `Seq` cell, a deliberate reorder, a drag in the graph editor) is `'user'`; a rank the system guessed (import row order, *and* the auto-appended rank a task receives when added interactively without one) is `'assumed'`. An assumed rank is a guess about ordering, and a guess must lose to a statement — two rules, applied at graph-build time:
+
+   - *Suppression:* a task with at least one explicit incoming task-level dependency edge contributes no assumed incoming sequence edges (its user-set ranks still apply, and lower-ranked siblings still gate *later* ranks through it — suppression removes only the suppressed task's own guessed prerequisites, never its place in the ladder for successors).
+   - *A guess never creates a cycle:* the DAG is built statements-first — explicit edges and user-provenance rank edges, whose contradictions are genuine cycles and are rejected with the path — and assumed rank edges are then admitted one at a time in deterministic order (goal, then target rank, then source rank), each voided rather than admitted if it would close a loop against what stands. Entry order is the tool's own inference; it must never be the thing that makes a user's explicit edge look illegal. Cycle *checks* for a prospective edge evaluate by trial construction, so the answer accounts for the suppression and re-voiding the new edge itself would cause.
+
+   Every surface that reports a sequence blocker reports its provenance, so a guessed edge can never masquerade as something the user asserted. Rationale and consequences in §11.1.
 2. *Goal-to-goal edges.* "Goal B requires goal A," within or across projects. The steel-sourcing goal blocking both the bridge deck and the building frame is two such edges.
 3. *Task-level edges.* For finer control when only part of a goal is the true prerequisite (e.g., "the *first* task of goal B can start once task 3 of goal A is done, even if goal A isn't finished").
 
@@ -422,11 +427,17 @@ nobody said, and asserted it invisibly.
    cell, or a deliberate reorder (CLI `seq set`, graph-editor drag) earns
    `'user'`. No retroactive migration: existing stamps are indistinguishable
    from deliberate ones, so the rule applies going forward.
-2. *Suppression (the §3.2 amendment):* at graph build, a task with ≥1
-   explicit incoming task-level edge contributes no assumed incoming
-   sequence edges. User-set ranks always apply. The suppressed task keeps
-   its rank for *successors* — later ranks still wait for it — so one
-   explicit edge never dissolves the ladder for siblings.
+2. *Suppression, and guesses never cycling (the §3.2 amendment):* at graph
+   build, a task with ≥1 explicit incoming task-level edge contributes no
+   assumed incoming sequence edges; user-set ranks always apply; and the
+   remaining assumed edges are admitted statements-first, each voided if
+   it would close a loop against explicit edges or user ranks. The second
+   rule exists because suppression alone leaves a chicken-and-egg: the
+   *first* explicit edge drawn from an appended task ("this fix precedes
+   the task it repairs") would be rejected as a cycle through guessed
+   edges before it ever got the chance to suppress them. A suppressed
+   task keeps its rank for *successors* — later ranks still wait for it —
+   so one explicit edge never dissolves the ladder for siblings.
 3. *Visibility:* `blockers` entries and graph output carry `seq_source` /
    edge kind, and every client renders assumed distinctly from user
    (dashed vs. solid in the graph; "(assumed order)" suffix in CLI tables).

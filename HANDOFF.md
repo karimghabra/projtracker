@@ -128,12 +128,23 @@ Fixtures live in `tests/fixtures/` and are synthetic (a coffee shop).
 
 ## Pending / open
 
-0. **The forward plan is spec §11 (Planner v2), phases P1–P4.** Written
-   2026-07-29 from a simulated field test and a Microsoft To Do parity
-   audit. P1 (sequence provenance + suppression) is corrective and comes
-   first; note it fixes a live bug — `add_node` stamps auto-appended ranks
-   `'user'` when they are guesses. Deadlines are soft by decision: no
-   overdue alarms anywhere (spec §11 governing note).
+0. **The forward plan is spec §11 (Planner v2); P1 landed 2026-07-29.**
+   Next: P2 (external waits §11.2 + recurrence §11.3), then P3 (To Do
+   parity §11.4), then P4 (graph editor §11.5). Deadlines are soft by
+   decision: no overdue alarms anywhere (spec §11 governing note).
+
+   P1 as built: auto-appended ranks are stamped `'assumed'` (they were
+   wrongly `'user'`); explicit incoming edges suppress a task's assumed
+   sequence prerequisites; assumed edges are admitted statements-first and
+   **a guess never creates a cycle** (voided deterministically instead —
+   this second rule is load-bearing: without it, the first explicit edge
+   drawn *from* an appended task is rejected as a phantom cycle before it
+   can suppress anything). `would_create_cycle` evaluates by trial
+   construction. New verbs `seq set --rank` / `parallel` return the
+   sequence edges each change created and dissolved. Blockers carry
+   `seq_source`; the CLI prints "(assumed order — not something you set)"
+   and the graph payload includes `seq_source` (rendering it is P4).
+   Legacy ranks with NULL provenance are treated as statements.
 
 1. **Dependencies are empty in a fresh import.** With no explicit edges and
    every task on its own assumed rank, each goal is a straight chain, so

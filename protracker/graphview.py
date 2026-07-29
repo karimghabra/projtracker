@@ -15,7 +15,7 @@ TEMPLATE_PATH = Path(__file__).parent / "graph_template.html"
 
 _KEEP = (
     "id", "kind", "parent_id", "name", "state", "status", "seq_index",
-    "deadline", "est_minutes", "tags", "ref", "description",
+    "seq_source", "deadline", "est_minutes", "tags", "ref", "description",
 )
 
 
