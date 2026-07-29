@@ -85,6 +85,41 @@ def build_parser() -> argparse.ArgumentParser:
         help="allow deleting a subtree that contains completed work",
     )
 
+    stp = sub.add_parser("step", help="the checklist inside a task")
+    ssub = stp.add_subparsers(dest="step_cmd", required=True)
+    sa = ssub.add_parser("add", help="append a step to a task")
+    sa.add_argument("task", type=int)
+    sa.add_argument("name")
+    stk = ssub.add_parser("tick", help="check a step off (or --undo)")
+    stk.add_argument("id", type=int)
+    stk.add_argument("--undo", action="store_true")
+    srm = ssub.add_parser("rm")
+    srm.add_argument("id", type=int)
+    smv = ssub.add_parser("move")
+    smv.add_argument("id", type=int)
+    smv.add_argument("pos", type=int)
+    sls = ssub.add_parser("ls", help="a task's steps")
+    sls.add_argument("task", type=int)
+
+    lnk = sub.add_parser("link", help="attach a file path or URL to a task")
+    lsub = lnk.add_subparsers(dest="link_cmd", required=True)
+    la = lsub.add_parser("add")
+    la.add_argument("task", type=int)
+    la.add_argument("href")
+    la.add_argument("--label")
+    lr = lsub.add_parser("rm")
+    lr.add_argument("task", type=int)
+    lr.add_argument("href")
+
+    fnd = sub.add_parser(
+        "find", help="search node names, descriptions, tags, and notes"
+    )
+    fnd.add_argument("query")
+
+    sub.add_parser(
+        "suggest", help="candidates for today's list, each with a reason"
+    )
+
     sq = sub.add_parser(
         "seq", help="set sequence ranks (equal rank = parallel, no gating)"
     )
@@ -313,6 +348,24 @@ def dispatch(args: argparse.Namespace, c: Commands):
         )
     if cmd == "rm":
         return c.delete_node(args.id, confirm=args.yes, force=args.force)
+    if cmd == "step":
+        if args.step_cmd == "add":
+            return c.step_add(args.task, args.name)
+        if args.step_cmd == "tick":
+            return c.step_tick(args.id, done=not args.undo)
+        if args.step_cmd == "rm":
+            return c.step_rm(args.id)
+        if args.step_cmd == "move":
+            return c.step_move(args.id, args.pos)
+        return c.steps_ls(args.task)
+    if cmd == "link":
+        if args.link_cmd == "add":
+            return c.link_add(args.task, args.href, label=args.label)
+        return c.link_rm(args.task, args.href)
+    if cmd == "find":
+        return c.find(args.query)
+    if cmd == "suggest":
+        return c.today_suggest()
     if cmd == "seq":
         return c.seq_set(args.ids, args.rank)
     if cmd == "parallel":
@@ -573,6 +626,32 @@ def print_human(result, cmd: str):
         else:
             print(f"deleted: {', '.join(str(i) for i in result['deleted'])}")
             _print_changes(result)
+    elif cmd == "step":
+        print(f"task #{result['task_id']}: {result['done']}/{result['total']} steps")
+        for s in result["steps"]:
+            box = "[x]" if s["done"] else "[ ]"
+            print(f"  {box} #{s['id']} {s['name']}")
+    elif cmd == "link":
+        print(f"task #{result['node_id']} links:")
+        for l in result["links"] or []:
+            tail = f" -> {l['href']}" if l["label"] != l["href"] else ""
+            print(f"  {l['label']}{tail}")
+    elif cmd == "find":
+        for n in result["nodes"]:
+            proj = f"  [{n['project_name']}]" if n.get("project_name") else ""
+            print(f"#{n['id']:<4} {n['kind']:<9} {n['name']}"
+                  f"  ({n['matched']}){proj}")
+        for note in result["notes"]:
+            where = f" on '{note['node_name']}'" if note.get("node_name") else ""
+            print(f"note {note['date']}{where}: {note['text']}")
+        if not result["nodes"] and not result["notes"]:
+            print("(no matches)")
+    elif cmd == "suggest":
+        if not result:
+            print("(nothing to suggest)")
+        for r in result:
+            proj = f"  [{r['project_name']}]" if r.get("project_name") else ""
+            print(f"#{r['id']:<4} {r['name']}{proj}\n       {r['why']}")
     elif cmd in ("seq", "parallel"):
         ranks = {u["id"]: u["seq_index"] for u in result["updated"]}
         names = {u["id"]: u["name"] for u in result["updated"]}

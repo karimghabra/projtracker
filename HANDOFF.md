@@ -128,10 +128,28 @@ Fixtures live in `tests/fixtures/` and are synthetic (a coffee shop).
 
 ## Pending / open
 
-0. **The forward plan is spec §11 (Planner v2); P1 and P2 landed
-   2026-07-29.** Next: P3 (To Do parity §11.4), then P4 (graph editor
-   §11.5). Deadlines are soft by decision: no overdue alarms anywhere
-   (spec §11 governing note).
+0. **The forward plan is spec §11 (Planner v2); P1–P3 landed 2026-07-29.**
+   Next: P4 (graph editor §11.5). Deadlines are soft by decision: no
+   overdue alarms anywhere (spec §11 governing note).
+
+   P3 as built (§11.4 table has no "Missing" left): **steps** — a `steps`
+   table (not child tasks: no estimate, no edges, no board presence),
+   verbs `step add/tick/rm/move/ls`, counts ride on ready/today rows as
+   `steps_done`/`steps_total`, checklist lives in the edit dialog's Steps
+   tab; round trip via a `Steps` column (`[x] a; [ ] b`, split on the
+   checkbox markers so names may contain semicolons; merge by name, a
+   file's tick is a statement, unticks never propagate). **Links** —
+   `links` JSON on tasks ({label, href}), verbs `link add/rm`; pointers
+   only, never bytes; UI copies to clipboard (native open needs
+   tauri-plugin-opener — deferred to P4 polish). `Links` column
+   round-trips (`label|href; …`). **find** — one substring search over
+   names/descriptions/tags + notes, Ctrl+K modal opens the editor on a
+   hit. **Hashtags** — `today new "x #lab"` strips trailing #tags into
+   tags, parsed in the command layer (clients own no logic). **suggest**
+   — top-impact ready + one stale-project nudge, each with `why`;
+   excludes listed and same-day-dismissed tasks; rendered above the
+   Today pool. `_node_dict` now ships `repeat_text` so no client formats
+   rules.
 
    P2 as built: `wait <id> --until --reason` names an external hold
    (blocker type 'external'; remind defaults ON so arrival day lands on

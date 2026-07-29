@@ -24,12 +24,13 @@ from .model import Node
 PROJECT_HEADER = (
     "Project", "Milestone", "Goal", "Task", "Seq", "Depends on",
     "Proposed: Depends on", "Start", "Wait reason", "Deadline", "Est (min)",
-    "Priority", "Follow-up (days)", "Remind", "Repeat", "Today", "Tags",
-    "Notes", "Ref",
+    "Priority", "Follow-up (days)", "Remind", "Repeat", "Today", "Steps",
+    "Links", "Tags", "Notes", "Ref",
 )
 PLANNER_HEADER = (
     "Task", "Start", "Wait reason", "Deadline", "Est (min)", "Priority",
-    "Follow-up (days)", "Remind", "Repeat", "Today", "Tags", "Notes", "Ref",
+    "Follow-up (days)", "Remind", "Repeat", "Today", "Steps", "Links",
+    "Tags", "Notes", "Ref",
 )
 
 INVESTIGATE_PREFIX = "INVESTIGATE"
@@ -50,8 +51,31 @@ def _sheet_title(name: str) -> str:
     return cleaned[:31] or "Sheet"
 
 
+def steps_cell_text(steps: list[dict]) -> str | None:
+    """Steps -> '[x] cut; [ ] deburr'. The importer splits on the checkbox
+    markers themselves, so step names may contain semicolons safely."""
+    if not steps:
+        return None
+    return "; ".join(
+        f"[{'x' if s['done'] else ' '}] {s['name']}" for s in steps
+    )
+
+
+def links_cell_text(links: list) -> str | None:
+    """Links -> 'label|href; href2' (label omitted when it IS the href)."""
+    if not links:
+        return None
+    return "; ".join(
+        l["href"] if l.get("label") in (None, l["href"])
+        else f"{l['label']}|{l['href']}"
+        for l in links
+    )
+
+
 def build_export(
-    g: Graph, today_pos: dict[int, int] | None = None
+    g: Graph,
+    today_pos: dict[int, int] | None = None,
+    steps: dict[int, list[dict]] | None = None,
 ) -> tuple[list[tuple], int]:
     """Returns ([(sheet_title, header, rows, styles), ...], node_count).
 
@@ -61,9 +85,11 @@ def build_export(
 
     `today_pos` maps task id -> 1-based position on the Today list; those
     positions are written to the Today column so list membership and order
-    survive a round trip. Membership lives in schedule_log, not the graph,
-    so the caller resolves it and this function stays pure."""
+    survive a round trip. `steps` maps task id -> checklist rows. Both live
+    outside the graph, so the caller resolves them and this function stays
+    pure."""
     today_pos = today_pos or {}
+    steps = steps or {}
     incoming = defaultdict(list)  # to_id -> [Dependency]
     for d in g.deps:
         incoming[d.to_id].append(d)
@@ -148,9 +174,11 @@ def build_export(
             cells[13] = (1 if n.remind else None) if is_task else None
             cells[14] = repeat_cell(n) if is_task else None
             cells[15] = today_pos.get(n.id) if is_task else None
-            cells[16] = tags_cell(n)
-            cells[17] = n.description
-            cells[18] = ref_of(n, parent_ref)
+            cells[16] = steps_cell_text(steps.get(n.id, [])) if is_task else None
+            cells[17] = links_cell_text(n.links) if is_task else None
+            cells[18] = tags_cell(n)
+            cells[19] = n.description
+            cells[20] = ref_of(n, parent_ref)
             rows.append(tuple(cells))
             styles.append(
                 {"col": col, "health": n.health, "done": n.status == "done"}
@@ -190,6 +218,8 @@ def build_export(
                 task.deadline, task.est_minutes, task.priority,
                 task.followup_days, 1 if task.remind else None,
                 repeat_cell(task), today_pos.get(task.id),
+                steps_cell_text(steps.get(task.id, [])),
+                links_cell_text(task.links),
                 tags_cell(task), task.description, ref_of(task, None),
             ))
             styles.append({

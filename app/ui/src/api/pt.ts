@@ -17,11 +17,15 @@ import type {
   JournalDay,
   NodeRec,
   NoteRec,
+  FindResult,
+  LinkRec,
   ProgressRow,
   ReadyTask,
   RemindResult,
   RmResult,
   ShowResult,
+  StepsDelta,
+  Suggestion,
   TodayAddResult,
   TodayQuickAddResult,
   TodayResult,
@@ -219,6 +223,22 @@ export const verbs = {
     if (every) args.push("--every", every);
     return pt<RemindResult>(...args);
   },
+  stepAdd: (taskId: number, name: string) =>
+    pt<StepsDelta>("step", "add", String(taskId), name),
+  stepTick: (stepId: number, done: boolean) =>
+    done
+      ? pt<StepsDelta>("step", "tick", String(stepId))
+      : pt<StepsDelta>("step", "tick", String(stepId), "--undo"),
+  stepRm: (stepId: number) => pt<StepsDelta>("step", "rm", String(stepId)),
+  linkAdd: (taskId: number, href: string, label?: string) =>
+    label
+      ? pt<{ links: LinkRec[] }>("link", "add", String(taskId), href,
+          "--label", label)
+      : pt<{ links: LinkRec[] }>("link", "add", String(taskId), href),
+  linkRm: (taskId: number, href: string) =>
+    pt<{ links: LinkRec[] }>("link", "rm", String(taskId), href),
+  find: (query: string) => pt<FindResult>("find", query),
+  suggest: () => pt<Suggestion[]>("suggest"),
   importPreview: (path: string) =>
     ptRaw<ImportPreview>("import", path, "--preview"),
   importApply: (path: string, asNew: string[], into: [string, number][]) => {

@@ -961,3 +961,41 @@ def test_hand_authored_repeat_column(tmp_path):
     assert by_name["await pump"]["wait_reason"] == "vendor"
     reasons = " | ".join(x["reason"] for x in r["review"])
     assert "'sometimes'" in reasons and "not a repeat rule" in reasons
+
+
+def test_steps_and_links_survive_a_round_trip(tmp_path):
+    c, _ = clocked()
+    ids = rich_board(c)
+    c.step_add(ids["a"], "cut; then measure")  # semicolon in a step name
+    s2 = c.step_add(ids["a"], "deburr")["steps"][1]
+    c.step_tick(s2["id"])
+    c.link_add(ids["a"], "C:/data/run7.csv", label="run 7 data")
+    c.link_add(ids["a"], "https://vendor.example/quote")
+    out = str(tmp_path / "board.xlsx")
+    c.export_excel(out)
+
+    c2, _ = clocked()
+    r = c2.import_excel(out)
+    assert r["steps_added"] == 2 and r["links_added"] == 2
+    by_name = {n["name"]: n for n in c2.list_nodes(kind="task")}
+    a2 = by_name["Calibrate rig"]["id"]
+    steps = c2.get_node(a2)["steps"]
+    assert [(s["name"], s["done"]) for s in steps] == [
+        ("cut; then measure", 0), ("deburr", 1),
+    ]
+    node = c2.get_node(a2)["node"]
+    assert node["links"] == [
+        {"label": "run 7 data", "href": "C:/data/run7.csv"},
+        {"label": "https://vendor.example/quote",
+         "href": "https://vendor.example/quote"},
+    ]
+    # idempotent: a second import adds nothing
+    r2 = c2.import_excel(out)
+    assert r2["steps_added"] == 0 and r2["links_added"] == 0
+    # a tick in the file is a statement: tick locally, re-import never
+    # unticks (the export says [x] now anyway); untick locally, the file's
+    # [x] re-asserts it
+    first = c2.get_node(a2)["steps"][1]
+    c2.step_tick(first["id"], done=False)
+    c2.import_excel(out)
+    assert c2.get_node(a2)["steps"][1]["done"] == 1

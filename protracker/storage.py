@@ -68,6 +68,16 @@ CREATE TABLE IF NOT EXISTS schedule_log (
     source      TEXT   -- 'manual' | 'quick' | 'reminder'; NULL rows are inert
 );
 
+-- §11.4 steps: sub-atomic checklist items inside one task. Deliberately NOT
+-- child tasks: no estimate, no dependencies, no schedule presence.
+CREATE TABLE IF NOT EXISTS steps (
+    id       INTEGER PRIMARY KEY,
+    task_id  INTEGER NOT NULL REFERENCES nodes(id),
+    pos      INTEGER NOT NULL,
+    name     TEXT NOT NULL,
+    done     INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS import_sources (
     id               INTEGER PRIMARY KEY,
     filename         TEXT NOT NULL,               -- workbook basename, lowercased
@@ -83,7 +93,7 @@ NODE_COLUMNS = (
     "seq_source", "deadline", "earliest_start", "weight", "est_minutes",
     "est_source", "actual_minutes", "tags", "ref", "health", "priority",
     "followup_days", "remind", "wait_reason", "repeat", "recur_key",
-    "completed_at",
+    "links", "completed_at",
 )
 
 
@@ -98,7 +108,7 @@ class Repository:
             "seq_source": "TEXT", "ref": "TEXT", "health": "TEXT",
             "priority": "TEXT", "followup_days": "INTEGER",
             "remind": "INTEGER", "wait_reason": "TEXT", "repeat": "TEXT",
-            "recur_key": "TEXT",
+            "recur_key": "TEXT", "links": "TEXT",
         })
         self._ensure_columns("daily_notes", {
             "node_id": "INTEGER REFERENCES nodes(id)",
@@ -150,13 +160,14 @@ class Repository:
             wait_reason=row["wait_reason"],
             repeat=row["repeat"],
             recur_key=row["recur_key"],
+            links=json.loads(row["links"]) if row["links"] else [],
             created_at=row["created_at"],
             completed_at=row["completed_at"],
         )
 
     @staticmethod
     def _to_column(field: str, value):
-        if field == "tags":
+        if field in ("tags", "links"):
             return json.dumps(value) if value else None
         return value
 
@@ -343,6 +354,68 @@ class Repository:
             f"DELETE FROM schedule_log WHERE node_id IN ({qs})", node_ids
         )
         self.conn.commit()
+
+    # --- steps (checklist inside a task, spec 11.4) ---
+
+    def steps_for(self, task_id: int) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT * FROM steps WHERE task_id = ? ORDER BY pos, id",
+            (task_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def add_step(self, task_id: int, name: str, pos: int) -> dict:
+        cur = self.conn.execute(
+            "INSERT INTO steps (task_id, pos, name) VALUES (?, ?, ?)",
+            (task_id, pos, name),
+        )
+        self.conn.commit()
+        row = self.conn.execute(
+            "SELECT * FROM steps WHERE id = ?", (cur.lastrowid,)
+        ).fetchone()
+        return dict(row)
+
+    def get_step(self, step_id: int) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM steps WHERE id = ?", (step_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def update_step(self, step_id: int, **fields):
+        assert fields
+        sets = ", ".join(f"{c} = ?" for c in fields)
+        self.conn.execute(
+            f"UPDATE steps SET {sets} WHERE id = ?",
+            (*fields.values(), step_id),
+        )
+        self.conn.commit()
+
+    def delete_step(self, step_id: int):
+        self.conn.execute("DELETE FROM steps WHERE id = ?", (step_id,))
+        self.conn.commit()
+
+    def delete_steps_for_nodes(self, node_ids: list[int]):
+        qs = ", ".join("?" for _ in node_ids)
+        self.conn.execute(
+            f"DELETE FROM steps WHERE task_id IN ({qs})", node_ids
+        )
+        self.conn.commit()
+
+    def all_steps(self) -> dict[int, list[dict]]:
+        """{task_id: [step rows in order]} for every task that has steps."""
+        out: dict[int, list[dict]] = {}
+        for r in self.conn.execute(
+            "SELECT * FROM steps ORDER BY task_id, pos, id"
+        ):
+            out.setdefault(r["task_id"], []).append(dict(r))
+        return out
+
+    def step_counts(self) -> dict[int, tuple[int, int]]:
+        """{task_id: (done, total)} for every task that has steps."""
+        rows = self.conn.execute(
+            "SELECT task_id, SUM(done), COUNT(*) FROM steps GROUP BY task_id"
+        ).fetchall()
+        return {r[0]: (r[1] or 0, r[2]) for r in rows}
 
     # --- import provenance ---
 

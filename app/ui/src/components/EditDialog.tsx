@@ -1,10 +1,21 @@
 import { useEffect, useState } from "react";
 
 import { verbs } from "../api/pt";
-import type { Kind, NodeRec, NoteRec, ShowResult } from "../api/types";
+import type {
+  Kind,
+  LinkRec,
+  NodeRec,
+  NoteRec,
+  ShowResult,
+  StepRec,
+} from "../api/types";
 import { toast } from "../state/toasts";
 import { IconX } from "./icons";
 import { Modal } from "./Modal";
+
+const REPEAT_CHOICES = [
+  "daily", "weekdays", "weekly", "monthly", "yearly", "monthly @date",
+];
 
 const PARENT_OF: Partial<Record<Kind, Kind>> = {
   milestone: "project",
@@ -12,7 +23,7 @@ const PARENT_OF: Partial<Record<Kind, Kind>> = {
   task: "goal",
 };
 
-type Tab = "details" | "notes";
+type Tab = "details" | "steps" | "notes";
 
 export function EditDialog({
   id,
@@ -39,7 +50,15 @@ export function EditDialog({
   const [priority, setPriority] = useState("");
   const [followup, setFollowup] = useState("");
   const [seq, setSeq] = useState("");
+  const [repeat, setRepeat] = useState("");
   const [parent, setParent] = useState("");
+
+  // steps & links tab
+  const [steps, setSteps] = useState<StepRec[]>([]);
+  const [stepText, setStepText] = useState("");
+  const [links, setLinks] = useState<LinkRec[]>([]);
+  const [linkHref, setLinkHref] = useState("");
+  const [linkLabel, setLinkLabel] = useState("");
   const [deps, setDeps] = useState<{ from_id: number; from_name: string }[]>([]);
   const [depPick, setDepPick] = useState("");
 
@@ -67,7 +86,13 @@ export function EditDialog({
         setPriority(n.priority || "");
         setFollowup(n.followup_days != null ? String(n.followup_days) : "");
         setSeq(n.seq_index != null ? String(n.seq_index) : "");
+        setRepeat(n.repeat_text || "");
         setParent(n.parent_id != null ? String(n.parent_id) : "");
+        setSteps(d.steps || []);
+        setLinks(n.links || []);
+        setStepText("");
+        setLinkHref("");
+        setLinkLabel("");
         setDeps(
           (d.dependencies_in || []).map((x) => ({
             from_id: x.from_id,
@@ -124,6 +149,9 @@ export function EditDialog({
         }
         const sq = seq.trim();
         if (sq && Number(sq) !== n.seq_index) flags.push("--seq", sq);
+        if (repeat !== (n.repeat_text || "")) {
+          flags.push("--repeat", repeat || "none");
+        }
       }
       if (flags.length) {
         await verbs.set(n.id, ...flags);
@@ -173,6 +201,70 @@ export function EditDialog({
     }
   };
 
+  const addStep = async () => {
+    const text = stepText.trim();
+    if (!n || !text) return;
+    try {
+      const d = await verbs.stepAdd(n.id, text);
+      setSteps(d.steps);
+      setStepText("");
+    } catch {
+      /* toasted */
+    }
+  };
+
+  const tickStep = async (s: StepRec) => {
+    if (!n) return;
+    try {
+      const d = await verbs.stepTick(s.id, !s.done);
+      setSteps(d.steps);
+    } catch {
+      /* toasted */
+    }
+  };
+
+  const rmStep = async (stepId: number) => {
+    if (!n) return;
+    try {
+      const d = await verbs.stepRm(stepId);
+      setSteps(d.steps);
+    } catch {
+      /* toasted */
+    }
+  };
+
+  const addLink = async () => {
+    const href = linkHref.trim();
+    if (!n || !href) return;
+    try {
+      const d = await verbs.linkAdd(n.id, href, linkLabel.trim() || undefined);
+      setLinks(d.links);
+      setLinkHref("");
+      setLinkLabel("");
+    } catch {
+      /* toasted */
+    }
+  };
+
+  const rmLink = async (href: string) => {
+    if (!n) return;
+    try {
+      const d = await verbs.linkRm(n.id, href);
+      setLinks(d.links || []);
+    } catch {
+      /* toasted */
+    }
+  };
+
+  const copyLink = async (href: string) => {
+    try {
+      await navigator.clipboard.writeText(href);
+      toast("Link copied — paste it in a browser or Explorer.");
+    } catch {
+      toast("Could not reach the clipboard.", true);
+    }
+  };
+
   const addNote = async () => {
     const text = noteText.trim();
     if (!n || !text) return;
@@ -212,6 +304,18 @@ export function EditDialog({
             >
               Details
             </button>
+            {isTask && (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab === "steps"}
+                className={"tab" + (tab === "steps" ? " active" : "")}
+                data-testid="steps-tab"
+                onClick={() => setTab("steps")}
+              >
+                Steps{steps.length ? ` ${steps.filter((s) => s.done).length}/${steps.length}` : ""}
+              </button>
+            )}
             <button
               type="button"
               role="tab"
@@ -333,6 +437,25 @@ export function EditDialog({
                   onChange={(e) => setSeq(e.target.value)}
                 />
               </label>
+              <label>
+                Repeat
+                <select
+                  data-testid="edit-repeat"
+                  value={repeat}
+                  onChange={(e) => setRepeat(e.target.value)}
+                  title="Completing each instance plans the next"
+                >
+                  <option value="">never</option>
+                  {REPEAT_CHOICES.map((r) => (
+                    <option key={r} value={r}>
+                      {r === "monthly @date" ? "monthly (calendar)" : r}
+                    </option>
+                  ))}
+                  {repeat && !REPEAT_CHOICES.includes(repeat) && (
+                    <option value={repeat}>{repeat}</option>
+                  )}
+                </select>
+              </label>
             </div>
           )}
           {depOk && (
@@ -408,6 +531,124 @@ export function EditDialog({
               </select>
             </label>
           )}
+        </>
+      )}
+      {n && tab === "steps" && (
+        <>
+          <div className="dep-add">
+            <input
+              data-testid="step-input"
+              placeholder="Add a step…"
+              value={stepText}
+              onChange={(e) => setStepText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void addStep();
+              }}
+            />
+            <button
+              type="button"
+              className="tiny"
+              data-testid="step-add"
+              onClick={() => void addStep()}
+            >
+              Add
+            </button>
+          </div>
+          <div className="notes-list">
+            {steps.length ? (
+              steps.map((s) => (
+                <div className="note-row" data-testid="step-row" key={s.id}>
+                  <input
+                    type="checkbox"
+                    data-testid="step-check"
+                    checked={!!s.done}
+                    onChange={() => void tickStep(s)}
+                    aria-label={`Mark step “${s.name}”`}
+                  />
+                  <span
+                    className="note-text"
+                    style={s.done ? { textDecoration: "line-through", opacity: 0.6 } : undefined}
+                  >
+                    {s.name}
+                  </span>
+                  <button
+                    type="button"
+                    className="rowbtn danger note-rm"
+                    title="Delete step"
+                    aria-label={`Delete step “${s.name}”`}
+                    onClick={() => void rmStep(s.id)}
+                  >
+                    <IconX size={12} />
+                  </button>
+                </div>
+              ))
+            ) : (
+              <div className="dim">
+                No steps. A step is a checkbox inside this task — no
+                estimate, no dependencies, no board presence.
+              </div>
+            )}
+          </div>
+          <label style={{ marginTop: 12 }}>
+            Links
+            <div className="notes-list">
+              {links.length ? (
+                links.map((l) => (
+                  <div className="note-row" data-testid="link-row" key={l.href}>
+                    <button
+                      type="button"
+                      className="tiny"
+                      title={`Copy ${l.href}`}
+                      data-testid="link-copy"
+                      onClick={() => void copyLink(l.href)}
+                    >
+                      copy
+                    </button>
+                    <span className="note-text" title={l.href}>
+                      {l.label}
+                    </span>
+                    <button
+                      type="button"
+                      className="rowbtn danger note-rm"
+                      title="Remove link"
+                      aria-label={`Remove link ${l.label}`}
+                      onClick={() => void rmLink(l.href)}
+                    >
+                      <IconX size={12} />
+                    </button>
+                  </div>
+                ))
+              ) : (
+                <div className="dim">
+                  No links. Attach a file path or URL — the tracker stores
+                  pointers, your filesystem keeps the files.
+                </div>
+              )}
+            </div>
+            <div className="dep-add">
+              <input
+                data-testid="link-href"
+                placeholder="C:\data\run7.csv or https://…"
+                value={linkHref}
+                onChange={(e) => setLinkHref(e.target.value)}
+              />
+              <input
+                data-testid="link-label"
+                placeholder="label (optional)"
+                style={{ maxWidth: 140 }}
+                value={linkLabel}
+                onChange={(e) => setLinkLabel(e.target.value)}
+              />
+              <button
+                type="button"
+                className="tiny"
+                data-testid="link-add"
+                onClick={() => void addLink()}
+              >
+                Add
+              </button>
+            </div>
+          </label>
         </>
       )}
       {n && tab === "notes" && (

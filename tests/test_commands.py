@@ -724,3 +724,102 @@ def test_seq_set_rejects_rank_change_that_closes_a_loop(c):
     assert ei.value.code == "cycle"
     n = c.get_node(ids["t1"])["node"]
     assert n["seq_index"] == 1 and n["seq_source"] == "assumed"
+
+
+# --- steps, links, find, suggestions, hashtags (spec 11.4) ---
+
+
+def test_steps_lifecycle(c):
+    ids = chain(c)
+    t = ids["t1"]
+    r = c.step_add(t, "cut stock")
+    r = c.step_add(t, "deburr")
+    r = c.step_add(t, "anodize")
+    assert (r["done"], r["total"]) == (0, 3)
+    first = r["steps"][0]
+    r = c.step_tick(first["id"])
+    assert (r["done"], r["total"]) == (1, 3)
+    r = c.step_tick(first["id"], done=False)
+    assert r["done"] == 0
+    r = c.step_move(r["steps"][2]["id"], 1)
+    assert [s["name"] for s in r["steps"]] == ["anodize", "cut stock", "deburr"]
+    r = c.step_rm(r["steps"][0]["id"])
+    assert r["total"] == 2
+    with pytest.raises(CommandError):
+        c.step_add(ids["g"], "not a task")
+    with pytest.raises(CommandError):
+        c.step_tick(9999)
+
+
+def test_step_counts_ride_on_ready_and_get_node(c):
+    ids = chain(c)
+    c.step_add(ids["t1"], "a")
+    s = c.step_add(ids["t1"], "b")["steps"][0]
+    c.step_tick(s["id"])
+    row = next(r for r in c.ready() if r["id"] == ids["t1"])
+    assert (row["steps_done"], row["steps_total"]) == (1, 2)
+    assert len(c.get_node(ids["t1"])["steps"]) == 2
+    # tasks without steps carry no noise keys
+    row2 = next((r for r in c.ready() if r["id"] == ids["t2"]), None)
+    assert row2 is None or "steps_total" not in row2
+
+
+def test_deleting_a_task_removes_its_steps(c):
+    ids = chain(c)
+    c.step_add(ids["t1"], "orphan-to-be")
+    c.delete_node(ids["t1"], confirm=True)
+    assert c.repo.conn.execute("SELECT COUNT(*) FROM steps").fetchone()[0] == 0
+
+
+def test_links_add_and_remove(c):
+    ids = chain(c)
+    r = c.link_add(ids["t1"], "C:/data/run7.csv", label="run 7 data")
+    r = c.link_add(ids["t1"], "https://vendor.example/quote")
+    assert [l["label"] for l in r["links"]] == [
+        "run 7 data", "https://vendor.example/quote",
+    ]
+    with pytest.raises(CommandError):
+        c.link_add(ids["t1"], "https://vendor.example/quote")  # duplicate
+    r = c.link_rm(ids["t1"], "C:/data/run7.csv")
+    assert len(r["links"]) == 1
+    with pytest.raises(CommandError):
+        c.link_rm(ids["t1"], "gone")
+
+
+def test_find_searches_names_descriptions_tags_and_notes(c):
+    ids = chain(c)
+    c.update_node(ids["t1"], description="calibrate the strain rig",
+                  tags=["rig"])
+    c.capture("rig looked misaligned today", node_id=ids["t2"])
+    r = c.find("rig")
+    matched = {(n["name"], n["matched"]) for n in r["nodes"]}
+    assert ("t1", "description") in matched or ("t1", "tag") in matched
+    assert any("misaligned" in note["text"] for note in r["notes"])
+    r2 = c.find("t2")
+    assert r2["nodes"][0]["matched"] == "name"
+    with pytest.raises(CommandError):
+        c.find("   ")
+
+
+def test_quick_add_parses_trailing_hashtags(c):
+    r = c.today_quick_add("order ferrules #lab #procurement")
+    assert r["created"]["name"] == "order ferrules"
+    assert r["created"]["tags"] == ["lab", "procurement"]
+    # a name that is ONLY hashtags stays a name — never an empty task
+    r2 = c.today_quick_add("#justatag")
+    assert r2["created"]["name"] == "#justatag"
+
+
+def test_today_suggest_reasons_and_exclusions(c):
+    ids = chain(c)
+    lone = c.add_node(kind="task", name="lone chore")["created"]["id"]
+    sug = c.today_suggest()
+    assert all("why" in s for s in sug)
+    ids_out = {s["id"] for s in sug}
+    assert ids["t1"] in ids_out  # ready, unlocks t2
+    # listing a task removes it from suggestions; a same-day dismissal too
+    c.today_add(ids["t1"])
+    assert ids["t1"] not in {s["id"] for s in c.today_suggest()}
+    c.today_add(lone)
+    c.today_remove(lone)  # tombstone
+    assert lone not in {s["id"] for s in c.today_suggest()}

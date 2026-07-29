@@ -94,6 +94,12 @@ class Commands:
         d = asdict(n)
         if n.kind == "task" and g is not None and n.id in g.nodes:
             d["state"] = g.computed_status(n.id)
+        if n.repeat:
+            # the compact human form rides along so no client re-implements
+            # rule formatting (clients own no logic)
+            rule = recurrence.loads(n.repeat)
+            if rule is not None:
+                d["repeat_text"] = recurrence.format_rule(rule)
         return d
 
     @staticmethod
@@ -464,6 +470,7 @@ class Commands:
         # referencing rows must go first: FKs are ON without ON DELETE CASCADE
         self.repo.delete_today_rows_for_nodes(subtree)
         self.repo.delete_notes_for_nodes(subtree)
+        self.repo.delete_steps_for_nodes(subtree)
         self.repo.delete_import_sources_for_nodes(subtree)
         for nid in subtree:  # postorder: children first
             self.repo.delete_node(nid)
@@ -1036,6 +1043,7 @@ class Commands:
         unchanged = 0
         dep_requests = []  # (spec, target_node_id) resolved after all nodes exist
         today_requests = []  # (spec, node_id): Today-column membership
+        step_link_requests = []  # (spec, node_id): Steps/Links columns
         project_ids: dict[str, int] = {}  # file project name -> bound/created id
 
         for spec in plan.nodes:
@@ -1200,6 +1208,8 @@ class Commands:
                     dep_requests.append((spec, origin, dep_kind, dep_name, node.id))
             if spec.today_listed:
                 today_requests.append((spec, node.id))
+            if spec.kind == "task" and (spec.steps or spec.links):
+                step_link_requests.append((spec, node.id))
 
         # stamp deterministic refs on nodes that still lack one
         self._ensure_refs(generate_ref)
@@ -1209,6 +1219,9 @@ class Commands:
 
         # apply Today-column membership (idempotent; tombstones outrank the file)
         today_added = self._apply_today_requests(today_requests)
+
+        # apply Steps/Links columns (merge by name/href; never delete)
+        steps_links = self._apply_step_link_requests(step_link_requests)
 
         # remember which file project landed where, so the next import of
         # this same file suggests merging rather than duplicating
@@ -1223,6 +1236,8 @@ class Commands:
             "unchanged": unchanged,
             "dependencies_added": deps_added,
             "today_added": today_added,
+            "steps_added": steps_links["steps_added"],
+            "links_added": steps_links["links_added"],
             "bindings": {
                 name: {
                     "project_id": nid,
@@ -1301,6 +1316,41 @@ class Commands:
             added.append(node_id)
         return added
 
+    def _apply_step_link_requests(self, requests) -> dict:
+        """Merge imported Steps/Links into their tasks: add what is missing
+        (steps by name, links by href), tick a step the file says is done —
+        a tick is a statement — and never delete anything. Absence is not an
+        instruction, exactly like every other column."""
+        steps_added = links_added = 0
+        for spec, node_id in requests:
+            if spec.steps:
+                existing = self.repo.steps_for(node_id)
+                by_name = {s["name"]: s for s in existing}
+                pos = max((s["pos"] for s in existing), default=0)
+                for name, done in spec.steps:
+                    cur = by_name.get(name)
+                    if cur is None:
+                        pos += 1
+                        row = self.repo.add_step(node_id, name, pos)
+                        if done:
+                            self.repo.update_step(row["id"], done=1)
+                        by_name[name] = {**row, "done": 1 if done else 0}
+                        steps_added += 1
+                    elif done and not cur["done"]:
+                        self.repo.update_step(cur["id"], done=1)
+            if spec.links:
+                n = self.repo.get_node(node_id)
+                links = list(n.links or [])
+                hrefs = {l.get("href") for l in links}
+                for label, href in spec.links:
+                    if href not in hrefs:
+                        links.append({"label": label, "href": href})
+                        hrefs.add(href)
+                        links_added += 1
+                if links_added and links != (n.links or []):
+                    self.repo.update_node(node_id, links=links)
+        return {"steps_added": steps_added, "links_added": links_added}
+
     def _apply_dep_requests(self, dep_requests, review: list) -> list[dict]:
         deps_added = []
         for spec, origin, dep_kind, dep_name, target_id in dep_requests:
@@ -1365,7 +1415,7 @@ class Commands:
             if n is None or n.kind != "task" or n.status in ("done", "dropped"):
                 continue
             today_pos[n.id] = len(today_pos) + 1
-        sheets, node_count = build_export(g, today_pos)
+        sheets, node_count = build_export(g, today_pos, self.repo.all_steps())
         try:
             write_workbook(path, sheets)
         except OSError as exc:
@@ -1530,7 +1580,7 @@ class Commands:
         )
         return {
             "date": today,
-            "items": items,
+            "items": self._with_step_counts(items),
             "completed_today": [self._node_dict(n, g) for n in completed],
         }
 
@@ -1585,9 +1635,23 @@ class Commands:
         priority: str | None = None,
     ) -> dict:
         """Create a planner task (no project) and put it straight on today's
-        list — the one-shot verb behind the UI's quick-add box."""
+        list — the one-shot verb behind the UI's quick-add box.
+
+        Trailing #hashtags become tags (spec 11.4): "order ferrules #lab
+        #procurement" is a task named "order ferrules" tagged lab and
+        procurement. Deterministic: only trailing tokens, only #-prefixed —
+        anything else is the name, verbatim. The parsing lives here, not in
+        a client, because clients own no logic."""
+        words = (name or "").split()
+        tags = []
+        while words and words[-1].startswith("#") and len(words[-1]) > 1:
+            tags.insert(0, words.pop()[1:])
+        stripped = " ".join(words)
+        if tags and stripped:
+            name = stripped
         result = self.add_node(
-            "task", name, description=description, priority=priority
+            "task", name, description=description, priority=priority,
+            tags=tags or None,
         )
         node_id = result["created"]["id"]
         today = self._now()[:10]
@@ -1653,6 +1717,181 @@ class Commands:
             if r["planned_pos"] != pos:
                 self.repo.update_today_row(r["id"], planned_pos=pos)
         return {"order": [r["node_id"] for r in ordered]}
+
+    # --- steps: the checklist inside a task (spec 11.4) ---
+    # Deliberately not child tasks: a step has no estimate, no edges, and no
+    # board presence — it is how "Calibrate rig" remembers its five moves
+    # without inventing five schedulable atoms.
+
+    def _steps_delta(self, task_id: int) -> dict:
+        steps = self.repo.steps_for(task_id)
+        return {
+            "task_id": task_id,
+            "steps": steps,
+            "done": sum(1 for s in steps if s["done"]),
+            "total": len(steps),
+        }
+
+    def steps_ls(self, task_id: int) -> dict:
+        self._require(task_id, kind="task")
+        return self._steps_delta(task_id)
+
+    def step_add(self, task_id: int, name: str) -> dict:
+        self._require(task_id, kind="task")
+        if not name or not name.strip():
+            raise CommandError("invalid_name", "a step needs a name")
+        existing = self.repo.steps_for(task_id)
+        pos = max((s["pos"] for s in existing), default=0) + 1
+        self.repo.add_step(task_id, name.strip(), pos)
+        return self._steps_delta(task_id)
+
+    def _require_step(self, step_id: int) -> dict:
+        step = self.repo.get_step(step_id)
+        if step is None:
+            raise CommandError("not_found", f"no step {step_id}")
+        return step
+
+    def step_tick(self, step_id: int, done: bool = True) -> dict:
+        step = self._require_step(step_id)
+        self.repo.update_step(step_id, done=1 if done else 0)
+        return self._steps_delta(step["task_id"])
+
+    def step_rm(self, step_id: int) -> dict:
+        step = self._require_step(step_id)
+        self.repo.delete_step(step_id)
+        return self._steps_delta(step["task_id"])
+
+    def step_move(self, step_id: int, position: int) -> dict:
+        if position < 1:
+            raise CommandError("invalid_field", "position is 1-based")
+        step = self._require_step(step_id)
+        rest = [
+            s for s in self.repo.steps_for(step["task_id"])
+            if s["id"] != step_id
+        ]
+        idx = min(position - 1, len(rest))
+        ordered = rest[:idx] + [step] + rest[idx:]
+        for pos, s in enumerate(ordered, start=1):
+            if s["pos"] != pos:
+                self.repo.update_step(s["id"], pos=pos)
+        return self._steps_delta(step["task_id"])
+
+    def _with_step_counts(self, dicts: list[dict]) -> list[dict]:
+        """Stamp steps_done/steps_total onto task dicts that have steps."""
+        counts = self.repo.step_counts()
+        for d in dicts:
+            c = counts.get(d.get("id"))
+            if c:
+                d["steps_done"], d["steps_total"] = c
+        return dicts
+
+    # --- links: pointers to files and URLs (spec 11.4) ---
+
+    def link_add(self, node_id: int, href: str, label: str | None = None) -> dict:
+        n = self._require(node_id, kind="task")
+        href = (href or "").strip()
+        if not href:
+            raise CommandError("invalid_field", "a link needs an href")
+        links = list(n.links or [])
+        if any(l.get("href") == href for l in links):
+            raise CommandError("duplicate_link", f"link already there: {href}")
+        links.append({"label": (label or "").strip() or href, "href": href})
+        updated = self.repo.update_node(node_id, links=links)
+        return {"node_id": node_id, "links": updated.links}
+
+    def link_rm(self, node_id: int, href: str) -> dict:
+        n = self._require(node_id, kind="task")
+        links = [l for l in (n.links or []) if l.get("href") != href]
+        if len(links) == len(n.links or []):
+            raise CommandError("not_found", f"no such link: {href}")
+        updated = self.repo.update_node(node_id, links=links or None)
+        return {"node_id": node_id, "links": updated.links}
+
+    # --- find: one search over the whole system (spec 11.4) ---
+
+    def find(self, query: str) -> dict:
+        """Substring search across node names, descriptions, and tags, plus
+        the existing note search — one query, typed results. Deterministic
+        and dumb on purpose; ranking is: name hits, then description/tag
+        hits, then notes, each in id order."""
+        q = (query or "").strip().lower()
+        if not q:
+            raise CommandError("invalid_field", "find needs a query")
+        g = self._graph()
+        name_hits, other_hits = [], []
+        for n in sorted(g.nodes.values(), key=lambda n: n.id):
+            d = None
+            if q in n.name.lower():
+                d = self._node_dict(n, g)
+                d["matched"] = "name"
+                name_hits.append(d)
+                continue
+            if q in (n.description or "").lower():
+                d = self._node_dict(n, g)
+                d["matched"] = "description"
+            elif any(q in t.lower() for t in n.tags):
+                d = self._node_dict(n, g)
+                d["matched"] = "tag"
+            if d is not None:
+                project = g.project_of(n.id)
+                d["project_name"] = project.name if project else None
+                other_hits.append(d)
+        for d in name_hits:
+            project = g.project_of(d["id"])
+            d["project_name"] = project.name if project else None
+        return {
+            "query": query,
+            "nodes": self._with_step_counts(name_hits + other_hits),
+            "notes": self.search_notes(query),
+        }
+
+    # --- suggestions: what deserves a Today slot (spec 11.4) ---
+
+    def today_suggest(self, limit: int = 5) -> list[dict]:
+        """Candidates for the Today list, each with a reason — the To Do
+        suggestions pane, derived and deterministic. Signals: top-impact
+        ready tasks, then one nudge from the most neglected project. Tasks
+        already listed (or tombstoned today) are never suggested. Soft
+        deadlines stay soft: nearness may appear in a caption, never as an
+        alarm."""
+        today = self._now()[:10]
+        listed = {r["node_id"] for r in self.repo.open_today_rows(today)}
+        tombstoned = set()
+        for r in self.repo.conn.execute(
+            "SELECT node_id FROM schedule_log WHERE date = ? AND source IS "
+            "NOT NULL AND outcome IS NOT NULL", (today,)
+        ):
+            tombstoned.add(r[0])
+        g = self._graph()
+        blocked_out = listed | tombstoned
+        ready = [r for r in self.ready(impact=True)
+                 if r["id"] not in blocked_out]
+        out = []
+        for r in ready:
+            if len(out) >= max(limit - 1, 1):
+                break
+            why = f"unlocks {r['unlocks_now']}, gates {r['gates_total']}"
+            if r.get("effective_deadline"):
+                why += f" · target {r['effective_deadline']}"
+            r["why"] = why
+            out.append(r)
+        # one nudge from the most neglected project, if it isn't there yet
+        for p in self.progress():
+            if p["state"] not in ("stale", "empty") or not p["project_id"]:
+                continue
+            nudge = next(
+                (r for r in ready
+                 if r.get("project_id") == p["project_id"]
+                 and all(o["id"] != r["id"] for o in out)),
+                None,
+            )
+            if nudge is not None:
+                nudge["why"] = (
+                    f"{p['project_name']} has not moved in a while"
+                )
+                out.append(nudge)
+            break
+        return self._with_step_counts(out[:limit])
 
     # --- reminders ---
 
@@ -1759,6 +1998,9 @@ class Commands:
             "node": self._node_dict(n, g),
             "state": state,
             "complete": g.is_complete(node_id),
+            "steps": (
+                self.repo.steps_for(node_id) if n.kind == "task" else []
+            ),
             "effective_deadline": g.effective_deadline(node_id),
             "blockers": (
                 g.blockers(node_id)
@@ -1815,7 +2057,7 @@ class Commands:
                 d["effective_deadline"] or "9999-12-31",
                 d["id"],
             ))
-        return out
+        return self._with_step_counts(out)
 
     def progress(self, days: int = 30) -> list[dict]:
         """Per-project activity rollup: what has been neglected.

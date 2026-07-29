@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { announceDone, verbs } from "../api/pt";
-import type { TodayItem } from "../api/types";
+import type { Suggestion, TodayItem } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
 import {
   IconArrowDown,
@@ -20,10 +20,26 @@ export function TodayScreen({ board }: { board: Board }) {
   const [quick, setQuick] = useState("");
   const [busy, setBusy] = useState(false);
   const [showPool, setShowPool] = useState(false);
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const today = board.today;
   const items = today?.items ?? [];
   const listedIds = new Set(items.map((t) => t.id));
   const pool = board.ready.filter((t) => !listedIds.has(t.id));
+
+  // the suggest verb already excludes listed and dismissed tasks; refetch
+  // whenever the board data moved
+  useEffect(() => {
+    let cancelled = false;
+    void verbs
+      .suggest()
+      .then((s) => {
+        if (!cancelled) setSuggestions(s);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [board.today, board.ready]);
 
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -134,6 +150,12 @@ export function TodayScreen({ board }: { board: Board }) {
                     {t.rolled_over && (
                       <span className="chip mini badge-rolled">rolled over</span>
                     )}
+                    {t.steps_total != null && (
+                      <span className="chip mini" data-testid="badge-steps">
+                        ☑ {t.steps_done}/{t.steps_total}
+                      </span>
+                    )}
+                    {t.repeat && <span className="chip mini">↻</span>}
                   </div>
                 </div>
                 <span className="row-actions">
@@ -180,6 +202,48 @@ export function TodayScreen({ board }: { board: Board }) {
           />
         )}
       </section>
+
+      {suggestions.length > 0 && (
+        <section>
+          <h2>Suggested</h2>
+          <div className="rows" data-testid="today-suggestions">
+            {suggestions.map((s) => (
+              <div
+                className="row today-row"
+                data-testid="today-suggestion"
+                data-nid={s.id}
+                key={s.id}
+              >
+                <div className="today-main">
+                  <div className="title">
+                    <span className="name">{s.name}</span>
+                    {s.priority && (
+                      <span className={`prio ${s.priority}`}>{s.priority}</span>
+                    )}
+                  </div>
+                  <div className="meta">
+                    <span className="chip mini">
+                      {s.project_name || "planner"}
+                    </span>
+                    <span className="dim">{s.why}</span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="icon"
+                  data-testid="today-suggestion-add"
+                  title="Add to today"
+                  aria-label={`Add “${s.name}” to today`}
+                  disabled={busy}
+                  onClick={() => void run(() => verbs.todayAdd(s.id))}
+                >
+                  <IconPlus size={14} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       <section>
         <h2>

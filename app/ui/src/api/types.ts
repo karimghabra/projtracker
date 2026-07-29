@@ -30,11 +30,51 @@ export interface NodeRec {
   wait_reason: string | null;
   repeat: string | null;
   recur_key: string | null;
+  links: LinkRec[];
   created_at: string | null;
   completed_at: string | null;
   /** derived task state ('ready' | 'waiting' | 'blocked' | 'in_progress' |
    * 'done' | 'dropped'); present on tasks only */
   state?: string;
+  /** compact repeat rule ("weekly", "every 2w @date"); rides along whenever
+   * repeat is set so the UI never re-implements rule formatting */
+  repeat_text?: string;
+  /** checklist rollup; present only when the task has steps */
+  steps_done?: number;
+  steps_total?: number;
+}
+
+export interface LinkRec {
+  label: string;
+  href: string;
+}
+
+export interface StepRec {
+  id: number;
+  task_id: number;
+  pos: number;
+  name: string;
+  done: number;
+}
+
+export interface StepsDelta {
+  task_id: number;
+  steps: StepRec[];
+  done: number;
+  total: number;
+}
+
+export interface FindResult {
+  query: string;
+  nodes: (NodeRec & { matched: string; project_name: string | null })[];
+  notes: NoteRec[];
+}
+
+export interface Suggestion extends NodeRec {
+  project_name: string | null;
+  unlocks_now: number;
+  gates_total: number;
+  why: string;
 }
 
 export interface TreeEntry {
@@ -129,6 +169,7 @@ export interface ShowResult {
   node: NodeRec;
   state: string;
   complete: boolean;
+  steps: StepRec[];
   effective_deadline: string | null;
   blockers: Blocker[];
   dependencies_in: { from_id: number; from_name: string; note: string | null }[];

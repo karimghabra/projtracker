@@ -69,6 +69,9 @@ class Node:
     # an instance spawns the next. recur_key groups a series' instances.
     repeat: str | None = None
     recur_key: str | None = None
+    # tasks only: pointers to files/URLs ([{label, href}, ...]); the tool
+    # stores pointers, never bytes — the filesystem/vault owns files (§11.4)
+    links: list = field(default_factory=list)
     created_at: str | None = None
     completed_at: str | None = None
 

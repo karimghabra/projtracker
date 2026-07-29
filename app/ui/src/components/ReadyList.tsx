@@ -84,6 +84,9 @@ export function ReadyList({
                   </span>
                   {" · "}#{t.id} · {t.project_name || "planner"}
                   {t.deadline ? ` · due ${t.deadline}` : ""}
+                  {t.steps_total != null
+                    ? ` · ☑ ${t.steps_done}/${t.steps_total}`
+                    : ""}
                 </div>
               </div>
             </div>

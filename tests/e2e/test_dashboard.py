@@ -864,6 +864,76 @@ def test_graph_dag_shows_a_dashed_planner_card(page):
     close_graph(page)
 
 
+# --- P3: steps, find, suggestions, hashtag quick-add ------------------------
+
+
+def test_steps_checklist_in_the_edit_dialog(page, board):
+    """Steps live in the task drawer: add two, tick one, and the checklist
+    state is the command layer's — visible again on the Today badge."""
+    row = tree_nodes(page, "task").filter(has_text="Survey the span").first
+    row.hover()
+    row.locator('[data-testid="tree-edit"]').click()
+    expect(page.locator('[data-testid="edit-dialog"]')).to_be_visible()
+    page.locator('[data-testid="steps-tab"]').click()
+    for name in ("stake the corners", "shoot elevations"):
+        page.locator('[data-testid="step-input"]').fill(name)
+        page.locator('[data-testid="step-add"]').click()
+    rows = page.locator('[data-testid="step-row"]')
+    expect(rows).to_have_count(2)
+    rows.first.locator('[data-testid="step-check"]').click()
+    expect(page.locator('[data-testid="steps-tab"]')).to_contain_text("1/2")
+    expect(rows.first.locator('[data-testid="step-check"]')).to_be_checked()
+    # the database agrees
+    survey = next(n for n in run_cli(board, ["ls"])
+                  if n["name"] == "Survey the span")
+    r = run_cli(board, ["step", "ls", str(survey["id"])])
+    assert (r["done"], r["total"]) == (1, 2)
+    page.keyboard.press("Escape")
+
+
+def test_find_modal_searches_and_opens_the_editor(page, board):
+    page.keyboard.press("Control+k")
+    expect(page.locator('[data-testid="find-modal"]')).to_be_visible()
+    page.locator('[data-testid="find-input"]').fill("falsework")
+    hit = page.locator('[data-testid="find-node"]', has_text="Erect falsework")
+    expect(hit).to_be_visible()
+    hit.click()
+    dlg = page.locator('[data-testid="edit-dialog"]')
+    expect(dlg).to_be_visible()
+    expect(dlg).to_contain_text("Edit task")
+    expect(page.locator('[data-testid="edit-name"]')).to_have_value(
+        "Erect falsework"
+    )
+    page.keyboard.press("Escape")
+
+
+def test_quick_add_hashtags_become_tags(page, board):
+    nav(page, "today")
+    # not the quick_add helper: the hashtags are deliberately NOT part of
+    # the created name, so the list shows the stripped form
+    page.locator('[data-testid="today-quick-add"]').fill(
+        "swap quench bath fluid #lab #maintenance"
+    )
+    page.locator('[data-testid="today-quick-add-ok"]').click()
+    expect(toast(page)).to_contain_text("Added “swap quench bath fluid”")
+    expect(
+        today_rows(page).filter(has_text="swap quench bath fluid").first
+    ).to_be_visible()
+    made = next(n for n in run_cli(board, ["ls"])
+                if n["name"] == "swap quench bath fluid")
+    assert made["tags"] == ["lab", "maintenance"]
+
+
+def test_suggestions_offer_ready_work_with_reasons(page):
+    nav(page, "today")
+    sug = page.locator('[data-testid="today-suggestion"]')
+    expect(sug.first).to_be_visible()
+    name = sug.first.locator(".name").first.inner_text()
+    sug.first.locator('[data-testid="today-suggestion-add"]').click()
+    listed = today_rows(page).filter(has_text=name)
+    expect(listed.first).to_be_visible()
+
+
 # --- export / re-import round trip ------------------------------------------
 #
 # remind, priority, followup_days, earliest_start and Today membership now

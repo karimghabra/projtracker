@@ -160,6 +160,16 @@ button.danger-link:hover { background: var(--wash); }
 .chip.mini { font-size: 11px; padding: 1px 7px; }
 .badge-reminder { color: var(--warning); border-color: var(--warning); }
 .badge-wait { color: var(--accent); border-color: var(--accent); font-style: italic; }
+
+/* find modal hits are whole-row buttons */
+.find-hit {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  background: none; border: none; text-align: left; cursor: pointer;
+  font: inherit; color: inherit; padding: 6px 8px; border-radius: 6px;
+}
+.find-hit:hover:not(:disabled) { background: var(--row-hover, rgba(128,128,128,.12)); }
+.find-hit:disabled { cursor: default; opacity: .7; }
+.find-hit .note-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .badge-rolled { color: var(--accent); border-color: var(--accent); }
 .node-chip { margin-left: 6px; }
 

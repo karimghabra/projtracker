@@ -53,6 +53,8 @@ COLUMN_ROLES = {
     "repeat": "repeat",
     "wait reason": "wait_reason",
     "today": "today",
+    "steps": "steps",
+    "links": "links",
     "tags": "tags",
     "notes": "notes",
     "ref": "ref",
@@ -140,6 +142,8 @@ class NodeSpec:
     remind: int | None = None  # 1 = reminder; tasks only
     wait_reason: str | None = None  # tasks only (spec 11.2)
     repeat: str | None = None  # canonical rule JSON, ready to store (11.3)
+    steps: tuple = ()  # ((name, done), ...) from the Steps column (11.4)
+    links: tuple = ()  # ((label, href), ...) from the Links column (11.4)
     today_listed: bool = False  # non-empty Today cell; tasks only
     today_pos: int | None = None  # 1-based Today order when the cell is numeric
     extras: tuple = ()  # ((header, value), ...) from unrecognized columns
@@ -207,6 +211,47 @@ def _parse_flag(value) -> bool:
     """Flag-style cell (Remind, Today): set unless empty or an explicit no."""
     text = _clean(value)
     return text is not None and text.lower() not in FLAG_FALSE
+
+
+def _parse_steps(raw: str | None) -> tuple:
+    """'[x] cut; [ ] deburr' -> (('cut', True), ('deburr', False)).
+    Split on the checkbox markers, not the semicolons, so names may contain
+    semicolons. Text before the first marker (a hand-typed plain cell) is a
+    single unticked step."""
+    import re
+
+    if not raw:
+        return ()
+    parts = re.split(r"(\[[ xX]\])", str(raw))
+    out = []
+    pending_done = None
+    for part in parts:
+        if re.fullmatch(r"\[[ xX]\]", part):
+            pending_done = part[1].lower() == "x"
+            continue
+        name = part.strip().strip(";").strip()
+        if not name:
+            continue
+        out.append((name, bool(pending_done)))
+        pending_done = None
+    return tuple(out)
+
+
+def _parse_links(raw: str | None) -> tuple:
+    """'label|href; href2' -> (('label', 'href'), ('href2', 'href2'))."""
+    if not raw:
+        return ()
+    out = []
+    for part in str(raw).split("; "):
+        part = part.strip().rstrip(";")
+        if not part:
+            continue
+        if "|" in part:
+            label, _, href = part.partition("|")
+            out.append((label.strip() or href.strip(), href.strip()))
+        else:
+            out.append((part, part))
+    return tuple(t for t in out if t[1])
 
 
 def _parse_dep_names(raw: str | None) -> tuple:
@@ -366,6 +411,7 @@ def _classify_sheet(
         # planner fields: tasks only, like the model. A value the model would
         # reject is kept as an extra and surfaced, mirroring the date rule.
         priority = followup = remind_flag = wait_reason = repeat = None
+        steps, links = (), ()
         today_listed, today_pos = False, None
         if kind == "task":
             raw_priority = _clean(cell(cells, "priority"))
@@ -415,6 +461,8 @@ def _classify_sheet(
                             "extra"
                         ),
                     })
+            steps = _parse_steps(_clean(cell(cells, "steps")))
+            links = _parse_links(_clean(cell(cells, "links")))
             today_listed = _parse_flag(cell(cells, "today"))
             if today_listed:
                 today_pos = _parse_seq(cell(cells, "today"))
@@ -438,6 +486,8 @@ def _classify_sheet(
             remind=remind_flag,
             wait_reason=wait_reason,
             repeat=repeat,
+            steps=steps,
+            links=links,
             today_listed=today_listed,
             today_pos=today_pos,
             extras=tuple(

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { AddDialog } from "./components/AddDialog";
 import { ConfirmDelete } from "./components/ConfirmDialog";
 import { EditDialog } from "./components/EditDialog";
+import { FindModal } from "./components/FindModal";
 import {
   IconGraph,
   IconImport,
@@ -52,10 +53,22 @@ export default function App() {
   const [graphOpen, setGraphOpen] = useState(false);
   const [graphKey, setGraphKey] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [findOpen, setFindOpen] = useState(false);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setFindOpen((f) => !f);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const toggleTheme = () => {
     const next = currentTheme() === "dark" ? "light" : "dark";
@@ -109,6 +122,14 @@ export default function App() {
             onClick={toggleTheme}
           >
             {theme === "dark" ? <IconSun /> : <IconMoon />}
+          </button>
+          <button
+            type="button"
+            data-testid="find-open"
+            title="Search everything (Ctrl+K)"
+            onClick={() => setFindOpen(true)}
+          >
+            Find
           </button>
           <button
             type="button"
@@ -195,6 +216,11 @@ export default function App() {
         onClose={() => setGraphOpen(false)}
         onEditReq={setEditId}
         onMutated={onMutated}
+      />
+      <FindModal
+        open={findOpen}
+        onClose={() => setFindOpen(false)}
+        onPick={setEditId}
       />
       <SettingsDialog
         open={settingsOpen}
