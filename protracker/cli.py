@@ -169,6 +169,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     exp.add_argument("path")
 
+    sub.add_parser(
+        "graph-data",
+        help="the typed graph model (nodes, edges with provenance, waits, "
+             "impact) as JSON",
+    )
+
     gr = sub.add_parser(
         "graph", help="write the interactive graph inspector as a local HTML file"
     )
@@ -392,6 +398,8 @@ def dispatch(args: argparse.Namespace, c: Commands):
         return c.import_excel(args.path, decisions=decisions or None)
     if cmd == "export":
         return c.export_excel(args.path)
+    if cmd == "graph-data":
+        return c.graph_data()
     if cmd == "graph":
         from .graphview import build_html
         label = args.label or f"source {args.db}"

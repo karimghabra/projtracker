@@ -2019,6 +2019,70 @@ class Commands:
             ],
         }
 
+    def graph_data(self) -> dict:
+        """The full model for the graph editor (spec §11.5), computed here
+        so the renderer draws and mutates but never reasons.
+
+        Edges are typed: 'dep' (explicit, with note), 'seq-user' (a rank
+        the user chose), 'seq-assumed' (an entry-order guess in force), and
+        'seq-suppressed' (a guess NOT in force — present so the editor can
+        ghost what the graph is deliberately ignoring). Waits carry their
+        reasons; ready tasks carry impact numbers."""
+        g = self._graph()
+        nodes = []
+        for n in sorted(g.nodes.values(), key=lambda x: x.id):
+            d = self._node_dict(n, g)
+            project = g.project_of(n.id)
+            d["project_id"] = project.id if project else None
+            if n.kind == "task" and d.get("state") not in ("done", "dropped"):
+                blockers = g.blockers(n.id)
+                d["blockers"] = blockers
+                wait = next(
+                    (b for b in blockers if b["type"] in ("date", "external")),
+                    None,
+                )
+                if wait:
+                    d["wait"] = {
+                        "until": wait["until"],
+                        "reason": wait.get("reason"),
+                    }
+                if d.get("state") == "ready":
+                    d["unlocks_now"] = len(g.unlocks_if_completed(n.id))
+                    d["gates_total"] = len(g.downstream_incomplete(n.id))
+            nodes.append(d)
+        edges = [
+            {
+                "from_id": dep.from_id, "to_id": dep.to_id,
+                "kind": "dep", "note": dep.note,
+            }
+            for dep in g.deps
+        ]
+        for goal in (n for n in g.nodes.values() if n.kind == "goal"):
+            in_force = g.sequence_pairs(goal.id)
+            tasks = g.tasks_under(goal.id)
+            for b in tasks:
+                rb = b.seq_index if b.seq_index is not None else 0
+                for a in tasks:
+                    ra = a.seq_index if a.seq_index is not None else 0
+                    if a.id == b.id or ra >= rb:
+                        continue
+                    if (a.id, b.id) in in_force:
+                        kind = (
+                            "seq-user"
+                            if (b.seq_source or "user") == "user"
+                            else "seq-assumed"
+                        )
+                    else:
+                        kind = "seq-suppressed"
+                    edges.append({
+                        "from_id": a.id, "to_id": b.id,
+                        "kind": kind, "note": None,
+                    })
+        return {
+            "nodes": self._with_step_counts(nodes),
+            "edges": edges,
+        }
+
     def list_nodes(self, kind: str | None = None, parent_id=UNSET) -> list[dict]:
         g = self._graph()
         return [

@@ -823,3 +823,39 @@ def test_today_suggest_reasons_and_exclusions(c):
     c.today_add(lone)
     c.today_remove(lone)  # tombstone
     assert lone not in {s["id"] for s in c.today_suggest()}
+
+
+# --- graph_data: the editor's contract (spec 11.5) ---
+
+
+def test_graph_data_types_every_edge(c):
+    ids = chain(c)
+    fix = c.add_node(kind="task", name="fix", parent_id=ids["g"])["created"]["id"]
+    lone = c.add_node(kind="task", name="lone")["created"]["id"]
+    c.add_dependency(lone, fix)  # suppresses fix's assumed chain
+    c.seq_set([ids["t2"]], rank=2)  # t2's rank becomes a statement
+    d = c.graph_data()
+    kinds = {
+        (e["from_id"], e["to_id"]): e["kind"] for e in d["edges"]
+    }
+    assert kinds[(lone, fix)] == "dep"
+    assert kinds[(ids["t1"], ids["t2"])] == "seq-user"
+    # fix's guessed prerequisites are present but ghosted
+    assert kinds[(ids["t1"], fix)] == "seq-suppressed"
+    assert kinds[(ids["t2"], fix)] == "seq-suppressed"
+
+
+def test_graph_data_carries_waits_and_impact(c):
+    ids = chain(c)
+    c.wait(ids["t1"], "2099-01-01", reason="vendor")
+    d = c.graph_data()
+    by_id = {n["id"]: n for n in d["nodes"]}
+    assert by_id[ids["t1"]]["wait"] == {
+        "until": "2099-01-01", "reason": "vendor",
+    }
+    # t2 is blocked (not ready): no impact numbers; a ready task has them
+    lone = c.add_node(kind="task", name="lone")["created"]["id"]
+    d = c.graph_data()
+    by_id = {n["id"]: n for n in d["nodes"]}
+    assert "unlocks_now" in by_id[lone]
+    assert "unlocks_now" not in by_id[ids["t2"]]
