@@ -126,8 +126,13 @@ function childrenSorted(state: State, parent: string | null): Node[] {
     .sort((a, b) => (a.seq !== b.seq ? a.seq - b.seq : a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0));
 }
 
+/**
+ * The spec block is called `culture`, not `experiment`: `experiment` is already
+ * a node kind, and reusing it would make the parser descend into a node's own
+ * definition as though it were a child node.
+ */
 function experimentToBlock(def: ExperimentDef): Block {
-  const b = block('experiment', 'spec');
+  const b = block('culture', 'spec');
   const f = b.fields;
   f.set('sampleCount', String(def.sampleCount));
   if (def.scaffoldTypeId) f.set('scaffoldTypeId', def.scaffoldTypeId);
@@ -207,7 +212,7 @@ function blockToNode(b: Block, parent: string | null, into: State): void {
     extra: extraFields(b, NODE_KNOWN),
   };
 
-  const spec = childrenOfKind(b, 'experiment')[0];
+  const spec = childrenOfKind(b, 'culture')[0];
   if (spec) node.experiment = blockToExperiment(spec);
   // A node stored as an experiment without a spec still needs one to be valid.
   if (kind === 'experiment' && !node.experiment) {

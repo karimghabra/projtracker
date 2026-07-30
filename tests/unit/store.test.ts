@@ -1,0 +1,213 @@
+import { describe, expect, it } from 'vitest';
+import { Store, loadState, saveState } from '@store/store.ts';
+import { MemoryVault } from '@store/vault.ts';
+import { serializeAll } from '@store/serialize.ts';
+import { harness, sampleBoard } from './helpers.ts';
+
+/**
+ * The round trip is the load-bearing property of the whole storage design: if
+ * text is the truth, then parsing and serializing must be exact, and must stay
+ * exact for states that are awkward rather than tidy.
+ */
+describe('vault round trip', () => {
+  it('reloads an identical state', () => {
+    const h = harness();
+    const b = sampleBoard(h);
+    h.app.complete(b.draft);
+    h.app.addDep(h.app.state.nodes[b.cad]!.id, b.tensile);
+    h.app.capture('tried the new crosslinking protocol', b.draft);
+    h.app.addReminder('Order collagen', '2026-08-04', { spanDays: 3 });
+    h.app.todayQuickAdd('Chase the invoice #admin');
+
+    const before = h.app.state;
+    const after = loadState(h.vault);
+
+    expect(after.nodes).toEqual(before.nodes);
+    expect(after.deps).toEqual(before.deps);
+    expect(after.notes).toEqual(before.notes);
+    expect(after.planner).toEqual(before.planner);
+    expect(after.reminders).toEqual(before.reminders);
+    expect(after.nextId).toBe(before.nextId);
+  });
+
+  it('is byte-stable: saving the same state twice writes nothing the second time', () => {
+    const h = harness();
+    sampleBoard(h);
+
+    const fresh = new MemoryVault();
+    const first = saveState(fresh, h.app.state);
+    expect(first.written.length).toBeGreaterThan(0);
+
+    const second = saveState(fresh, h.app.state);
+    expect(second.written).toEqual([]);
+    expect(second.removed).toEqual([]);
+
+    // The live vault was already current, so a save there is a no-op too —
+    // every mutation persists as it goes.
+    expect(saveState(h.vault, h.app.state).written).toEqual([]);
+  });
+
+  it('produces identical bytes for identical state reached two ways', () => {
+    const a = harness();
+    const b = harness();
+    for (const h of [a, b]) {
+      const project = h.app.addProject('P').id;
+      const m = h.app.addNode(project, 'M', { seq: 1 }).id;
+      const g = h.app.addNode(m, 'G', { seq: 1 }).id;
+      h.app.addNode(g, 'One', { seq: 1 });
+      h.app.addNode(g, 'Two', { seq: 2 });
+    }
+    expect([...serializeAll(a.app.state)]).toEqual([...serializeAll(b.app.state)]);
+  });
+
+  it('survives values that would break a naive format', () => {
+    const h = harness();
+    const project = h.app.addProject('Multi\nline: project "quoted"').id;
+    const m = h.app.addNode(project, 'M', { seq: 1 }).id;
+    const g = h.app.addNode(m, 'G', { seq: 1 }).id;
+    h.app.addNode(g, 'Task with trailing space ', {
+      notes: 'line one\nline two\n  indented\n\ttabbed',
+      tags: ['α', 'with-dash'],
+    });
+
+    const reloaded = loadState(h.vault);
+    expect(reloaded.nodes).toEqual(h.app.state.nodes);
+  });
+
+  it('keeps sibling names distinct even when identical', () => {
+    const h = harness();
+    const project = h.app.addProject('P').id;
+    const m = h.app.addNode(project, 'M', { seq: 1 }).id;
+    const g = h.app.addNode(m, 'G', { seq: 1 }).id;
+    const a = h.app.addNode(g, 'Repeat', { seq: 1 }).id;
+    const bId = h.app.addNode(g, 'Repeat', { seq: 2 }).id;
+
+    expect(h.app.state.nodes[a]!.slug).not.toBe(h.app.state.nodes[bId]!.slug);
+    expect(loadState(h.vault).nodes).toEqual(h.app.state.nodes);
+  });
+
+  it('preserves fields written by a newer build', () => {
+    const vault = new MemoryVault();
+    vault.write(
+      'projects/p.pt',
+      [
+        'project p',
+        '  id: n1',
+        '  name: P',
+        '  seq: 1',
+        '  createdAt: 2026-07-30T09:00',
+        '  futureField: something a later version wrote',
+        '',
+      ].join('\n'),
+    );
+
+    const state = loadState(vault);
+    expect(state.nodes['n1']!.extra).toEqual({ futureField: 'something a later version wrote' });
+
+    saveState(vault, state);
+    expect(vault.read('projects/p.pt')).toContain('futureField: something a later version wrote');
+  });
+
+  it('deletes files whose project is gone', () => {
+    const h = harness();
+    const id = h.app.addProject('Temporary').id;
+    expect(h.vault.list('projects/')).toHaveLength(1);
+    h.app.deleteNode(id);
+    expect(h.vault.list('projects/')).toHaveLength(0);
+  });
+
+  it('splits the journal by month', () => {
+    const h = harness('2026-07-30T09:00');
+    h.app.capture('July thought');
+    h.clock.set('2026-08-02T09:00');
+    h.app.capture('August thought');
+
+    expect(h.vault.list('journal/')).toEqual(['journal/2026-07.pt', 'journal/2026-08.pt']);
+    expect(loadState(h.vault).notes).toHaveLength(2);
+  });
+});
+
+describe('undo reverts the whole image', () => {
+  it('walks back and forward through a history', () => {
+    const h = harness();
+    const project = h.app.addProject('P').id;
+    const m = h.app.addNode(project, 'M', { seq: 1 }).id;
+    const g = h.app.addNode(m, 'G', { seq: 1 }).id;
+    const t = h.app.addNode(g, 'T', { seq: 1 }).id;
+
+    h.app.complete(t);
+    expect(h.app.node(t).status).toBe('done');
+
+    h.app.undo();
+    expect(h.app.node(t).status).toBe('active');
+
+    h.app.redo();
+    expect(h.app.node(t).status).toBe('done');
+  });
+
+  it('undoes a delete completely, children and edges included', () => {
+    const h = harness();
+    const b = sampleBoard(h);
+    const before = structuredClone(h.app.state);
+
+    h.app.deleteNode(b.fabrication);
+    expect(h.app.state.nodes[b.draft]).toBeUndefined();
+
+    h.app.undo();
+    expect(h.app.state).toEqual(before);
+  });
+
+  it('persists the reverted image to the vault, not just to memory', () => {
+    const h = harness();
+    const project = h.app.addProject('P').id;
+    h.app.updateNode(project, { name: 'Renamed' });
+    expect(h.vault.read('projects/renamed.pt')).toContain('name: Renamed');
+
+    h.app.undo();
+    expect(h.vault.read('projects/renamed.pt')).toBeNull();
+    expect(h.vault.read('projects/p.pt')).toContain('name: P');
+  });
+
+  it('a failed verb records no history and changes nothing', () => {
+    const h = harness();
+    const b = sampleBoard(h);
+    const before = structuredClone(h.app.state);
+    const depth = h.app.history().past.length;
+
+    expect(() => h.app.addDep(b.cad, b.cad)).toThrow();
+    expect(h.app.state).toEqual(before);
+    expect(h.app.history().past).toHaveLength(depth);
+  });
+
+  it('a new change clears the redo stack', () => {
+    const h = harness();
+    const project = h.app.addProject('P').id;
+    h.app.updateNode(project, { name: 'A' });
+    h.app.undo();
+    expect(h.app.history().canRedo).toBe(true);
+
+    h.app.updateNode(project, { name: 'B' });
+    expect(h.app.history().canRedo).toBe(false);
+  });
+
+  it('labels each step so a menu can say what it would revert', () => {
+    const h = harness();
+    h.app.addProject('Tendon Study');
+    expect(h.app.history().past[0]).toBe('Add project "Tendon Study"');
+  });
+
+  it('refuses to undo past the beginning', () => {
+    const h = harness();
+    expect(() => h.app.undo()).toThrow(/Nothing to undo/);
+  });
+
+  it('caps history without corrupting the newest entries', () => {
+    const vault = new MemoryVault();
+    const store = new Store(vault);
+    for (let i = 0; i < 260; i++) store.mutate(`change ${i}`, (draft) => { draft.settings['n'] = String(i); });
+    expect(store.state.settings['n']).toBe('259');
+    expect(store.history().past.length).toBeLessThanOrEqual(200);
+    store.undo();
+    expect(store.state.settings['n']).toBe('258');
+  });
+});

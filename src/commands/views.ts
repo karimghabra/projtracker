@@ -204,7 +204,9 @@ export function todayView(index: GraphIndex, date: DateOnly): TodayView {
   const items = todayItems(index.state, index, date).map<TodayItemView>((item) => ({
     key: item.key,
     kind: item.kind,
-    id: item.node?.id ?? item.reminder?.id ?? '',
+    // The id of the thing this row *is*. A reminder that concerns a node still
+    // acts on the reminder when ticked, so it must not report the node's id.
+    id: item.kind === 'reminder' ? (item.reminder?.id ?? '') : (item.node?.id ?? ''),
     title: item.title,
     source: item.source,
     done: item.done,
@@ -595,7 +597,17 @@ export function inventoryView(state: State, today: DateOnly, now: string): Inven
 
   return {
     types,
-    batches: batches.sort((a, b) => (a.fabricatedOn < b.fabricatedOn ? 1 : -1)),
+    // Newest first, tie-broken by id so a list of same-day batches keeps a
+    // stable order instead of jittering between renders.
+    batches: batches.sort((a, b) =>
+      a.fabricatedOn !== b.fabricatedOn
+        ? a.fabricatedOn < b.fabricatedOn
+          ? 1
+          : -1
+        : a.id < b.id
+          ? 1
+          : -1,
+    ),
     protocols: state.protocols.map((p) => ({
       id: p.id,
       name: p.name,
@@ -605,7 +617,9 @@ export function inventoryView(state: State, today: DateOnly, now: string): Inven
       builtin: !!p.builtin,
       notes: p.notes,
     })),
-    runs: runs.sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1)),
+    runs: runs.sort((a, b) =>
+      a.startedAt !== b.startedAt ? (a.startedAt < b.startedAt ? 1 : -1) : a.id < b.id ? 1 : -1,
+    ),
   };
 }
 

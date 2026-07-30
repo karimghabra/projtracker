@@ -46,8 +46,8 @@ export interface TodayItem {
 const ROLLOVER_LIMIT_DAYS = 120;
 
 /**
- * Entries the user acted on today, so we do not re-offer them. An outcome of
- * any kind — done, dropped, or explicitly removed — settles the matter.
+ * Entries the user acted on today, so no other source re-offers them. An
+ * outcome of any kind — done, dropped, or explicitly removed — settles it.
  */
 function resolvedToday(state: State, date: DateOnly): Set<string> {
   const out = new Set<string>();
@@ -62,8 +62,10 @@ export function todayItems(state: State, index: GraphIndex, date: DateOnly): Tod
   const seen = new Set<string>();
   const settled = resolvedToday(state, date);
 
+  // Completed entries stay visible for the rest of the day. Ticking something
+  // off should look like progress, not like the row was never there.
   const listed = state.planner
-    .filter((e) => e.date === date && !e.outcome)
+    .filter((e) => e.date === date && (!e.outcome || e.outcome === 'completed'))
     .sort((a, b) => a.order - b.order);
 
   for (const entry of listed) {

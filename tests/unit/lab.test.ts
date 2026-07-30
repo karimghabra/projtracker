@@ -1,0 +1,315 @@
+import { describe, expect, it } from 'vitest';
+import { describeExperiment, endDateOf, experimentStatus, stagesOf, validateExperiment } from '@core/experiments.ts';
+import { formatOffset, scheduleRun, totalHours } from '@core/protocols.ts';
+import { harness, sampleBoard } from './helpers.ts';
+
+describe('experiment timelines', () => {
+  const def = {
+    sampleCount: 24,
+    cellsPerScaffold: 50_000,
+    cellLine: 'hMSC',
+    scaffoldsExpected: '2026-08-01',
+    seedingDate: '2026-08-03',
+    durationDays: 21,
+    mediaPhases: [
+      { name: 'Proliferation', startDay: 0 },
+      { name: 'Differentiation', startDay: 7 },
+    ],
+    mediaChangeEveryDays: 2,
+    endpoint: 'Fix and stain',
+    stagesDone: [],
+  };
+
+  it('derives the whole timeline from the definition', () => {
+    const stages = stagesOf(def);
+    expect(stages[0]).toMatchObject({ kind: 'scaffolds-expected', date: '2026-08-01' });
+    expect(stages.find((s) => s.kind === 'seeding')!.date).toBe('2026-08-03');
+    expect(stages.find((s) => s.kind === 'media-switch')!.date).toBe('2026-08-10');
+    expect(stages.at(-1)).toMatchObject({ kind: 'endpoint', date: '2026-08-24', day: 21 });
+  });
+
+  it('never asks for a media change and a media switch on the same morning', () => {
+    const switchDay = stagesOf(def).find((s) => s.kind === 'media-switch')!.date;
+    const onThatDay = stagesOf(def).filter((s) => s.date === switchDay);
+    expect(onThatDay).toHaveLength(1);
+    expect(onThatDay[0]!.kind).toBe('media-switch');
+  });
+
+  it('spaces routine media changes correctly', () => {
+    const changes = stagesOf(def).filter((s) => s.kind === 'media-change').map((s) => s.day);
+    // Every two days, skipping day 7 (a switch) and never past the endpoint.
+    expect(changes).toEqual([2, 4, 6, 8, 10, 12, 14, 16, 18, 20]);
+  });
+
+  it('reports the day and phase of a running culture', () => {
+    expect(experimentStatus(def, '2026-08-12')).toMatchObject({
+      day: 9,
+      phase: 'Differentiation',
+      state: 'running',
+      daysRemaining: 12,
+    });
+    expect(describeExperiment(def, '2026-08-12')).toBe('Day 9 of 21 · differentiation');
+    expect(describeExperiment(def, '2026-08-01')).toBe('Seeds 3 Aug');
+    expect(describeExperiment(def, '2026-09-01')).toBe('Finished 24 Aug');
+  });
+
+  it('is a valid plan before it has a date', () => {
+    const unplanned = { ...def, seedingDate: undefined, scaffoldsExpected: undefined };
+    expect(stagesOf(unplanned)).toEqual([]);
+    expect(endDateOf(unplanned)).toBeUndefined();
+    expect(describeExperiment(unplanned, '2026-08-01')).toBe('Not scheduled');
+  });
+
+  it('catches definitions that cannot be right', () => {
+    expect(validateExperiment({ ...def, durationDays: 0 })).toContain('Culture duration must be at least one day.');
+    expect(validateExperiment({ ...def, sampleCount: -1 })).toContain('Sample count cannot be negative.');
+    expect(
+      validateExperiment({ ...def, mediaPhases: [{ name: 'Late', startDay: 40 }] }),
+    ).toContain('Media phase "Late" starts after the culture ends.');
+    expect(
+      validateExperiment({ ...def, scaffoldsExpected: '2026-08-10' }),
+    ).toContain('Scaffolds are expected after the seeding date.');
+    expect(validateExperiment(def)).toEqual([]);
+  });
+});
+
+describe('experiments in the app', () => {
+  it('puts every stage into the calendar and the to-do list', () => {
+    const h = harness('2026-08-03T08:00');
+    const b = sampleBoard(h);
+    h.app.setExperiment(b.experiment, {
+      sampleCount: 12,
+      seedingDate: '2026-08-03',
+      durationDays: 14,
+      mediaChangeEveryDays: 2,
+      mediaPhases: [{ name: 'Proliferation', startDay: 0 }, { name: 'Differentiation', startDay: 7 }],
+      endpoint: 'Harvest for qPCR',
+    });
+
+    // Seeding day: the reminder is on today's list without anyone adding it.
+    expect(h.app.todayList().items.map((i) => i.title)).toEqual([
+      'Osteogenic culture: Seed 12 samples',
+    ]);
+
+    // The endpoint shows on the calendar for its month.
+    const endDay = h.app.calendar('2026-08-17').find((d) => d.date === '2026-08-17');
+    expect(endDay!.events.some((e) => e.kind === 'experiment-end')).toBe(true);
+  });
+
+  it('ticking the reminder ticks the stage, and the other way round', () => {
+    const h = harness('2026-08-03T08:00');
+    const b = sampleBoard(h);
+    h.app.setExperiment(b.experiment, { sampleCount: 6, seedingDate: '2026-08-03', durationDays: 7 });
+
+    const reminderId = h.app.todayList().items[0]!.id;
+    h.app.completeReminder(reminderId);
+    expect(h.app.node(b.experiment).experiment!.def.stagesDone).toContain('seed');
+
+    h.app.tickStage(b.experiment, 'seed', false);
+    expect(h.app.state.reminders.find((r) => r.id === reminderId)!.done).toBe(false);
+  });
+
+  it('regenerating the timeline is idempotent and does not lose ticks', () => {
+    const h = harness('2026-08-03T08:00');
+    const b = sampleBoard(h);
+    h.app.setExperiment(b.experiment, { sampleCount: 6, seedingDate: '2026-08-03', durationDays: 14 });
+    h.app.tickStage(b.experiment, 'seed', true);
+
+    const before = h.app.state.reminders.length;
+    h.app.setExperiment(b.experiment, { endpoint: 'Fix and stain' });
+    expect(h.app.state.reminders.length).toBe(before);
+    expect(h.app.node(b.experiment).experiment!.def.stagesDone).toContain('seed');
+  });
+
+  it('moving the seeding date moves every stage with it', () => {
+    const h = harness('2026-08-01T08:00');
+    const b = sampleBoard(h);
+    h.app.setExperiment(b.experiment, { sampleCount: 6, seedingDate: '2026-08-03', durationDays: 7 });
+    const first = h.app.node(b.experiment).experiment!.endsOn;
+
+    h.app.setExperiment(b.experiment, { seedingDate: '2026-08-10' });
+    expect(h.app.node(b.experiment).experiment!.endsOn).not.toBe(first);
+    expect(h.app.node(b.experiment).experiment!.endsOn).toBe('2026-08-17');
+  });
+
+  it('refuses an impossible definition without changing anything', () => {
+    const h = harness();
+    const b = sampleBoard(h);
+    const before = structuredClone(h.app.state);
+    expect(() => h.app.setExperiment(b.experiment, { durationDays: -3 })).toThrow(/at least one day/);
+    expect(h.app.state).toEqual(before);
+  });
+});
+
+describe('protocol scheduling', () => {
+  it('turns offsets into real times', () => {
+    const h = harness('2026-07-30T09:00');
+    const protocol = h.app.state.protocols.find((p) => p.id === 'edc-nhs')!;
+    const run = { id: 'x1', protocolId: 'edc-nhs', batchIds: [], startedAt: '2026-07-30T09:00', completedStepIds: [] };
+    const scheduled = scheduleRun(protocol, run);
+
+    expect(scheduled[0]!.at).toBe('2026-07-30T09:00');
+    expect(scheduled.find((s) => s.step.offsetHours === 4.5)!.at).toBe('2026-07-30T13:30');
+    // The 20-hour lyophilisation step lands the next morning.
+    expect(scheduled.at(-1)!.at).toBe('2026-07-31T05:00');
+  });
+
+  it('formats offsets the way a protocol sheet reads', () => {
+    expect(formatOffset(0)).toBe('start');
+    expect(formatOffset(4)).toBe('+4 h');
+    expect(formatOffset(0.5)).toBe('+0.5 h');
+    expect(formatOffset(51)).toBe('+2 d 3 h');
+    expect(formatOffset(48)).toBe('+2 d');
+  });
+
+  it('measures the whole protocol', () => {
+    const h = harness();
+    expect(totalHours(h.app.state.protocols.find((p) => p.id === 'genipin')!)).toBe(87);
+  });
+});
+
+describe('scaffold inventory', () => {
+  it('tracks fabrication and stock', () => {
+    const h = harness('2026-07-30T09:00');
+    const { id: type } = h.app.addScaffoldType('Collagen sponge', { material: 'Type I collagen' });
+    h.app.addBatch(type, 24);
+    h.app.addBatch(type, 12);
+
+    const inv = h.app.inventory();
+    expect(inv.types[0]!.total).toBe(36);
+    expect(inv.batches).toHaveLength(2);
+    expect(inv.batches[0]!.state).toBe('fabricated');
+  });
+
+  it('gives a readable id to a named record', () => {
+    const h = harness();
+    const { id } = h.app.addScaffoldType('Collagen sponge');
+    expect(id).toBe('collagen-sponge');
+  });
+
+  it('refuses a duplicate type and a type still in use', () => {
+    const h = harness();
+    const { id } = h.app.addScaffoldType('Collagen sponge');
+    expect(() => h.app.addScaffoldType('collagen sponge')).toThrow(/already exists/);
+
+    h.app.addBatch(id, 5);
+    expect(() => h.app.deleteScaffoldType(id)).toThrow(/still use/);
+  });
+
+  it('rejects a nonsense count with a question rather than a code', () => {
+    const h = harness();
+    const { id } = h.app.addScaffoldType('Collagen sponge');
+    expect(() => h.app.addBatch(id, 0)).toThrow(/How many did you make/);
+    expect(() => h.app.addBatch(id, 2.5)).toThrow(/whole number/);
+  });
+});
+
+describe('crosslinking runs', () => {
+  function setup() {
+    const h = harness('2026-07-30T09:00');
+    const { id: type } = h.app.addScaffoldType('Collagen sponge');
+    const a = h.app.addBatch(type, 24).id;
+    const b = h.app.addBatch(type, 12).id;
+    return { h, type, a, b };
+  }
+
+  it('puts every protocol step into the to-do list automatically', () => {
+    const { h, a, b } = setup();
+    const delta = h.app.startRun('edc-nhs', [a, b]);
+    expect(delta.reminders).toBe(8);
+
+    // Steps due today are already on today's list. Nobody typed them in.
+    const titles = h.app.todayList().items.map((i) => i.title);
+    expect(titles).toContain('EDC/NHS crosslinking: Prepare MES buffer and EDC/NHS solution');
+    expect(titles).toContain('EDC/NHS crosslinking: Wash in distilled water (3 changes)');
+
+    // Tomorrow's step is waiting, not shown today.
+    expect(titles).not.toContain('EDC/NHS crosslinking: Lyophilise');
+    h.clock.set('2026-07-31T06:00');
+    expect(h.app.todayList().items.map((i) => i.title)).toContain('EDC/NHS crosslinking: Lyophilise');
+  });
+
+  it('moves the batches through their lifecycle', () => {
+    const { h, a, b } = setup();
+    const run = h.app.startRun('genipin', [a, b]).id;
+    expect(h.app.inventory().batches.every((x) => x.state === 'crosslinking')).toBe(true);
+
+    const protocol = h.app.state.protocols.find((p) => p.id === 'genipin')!;
+    for (const step of protocol.steps) h.app.tickRunStep(run, step.id, true);
+
+    expect(h.app.inventory().batches.every((x) => x.state === 'crosslinked')).toBe(true);
+    expect(h.app.inventory().runs[0]!.finished).toBe(true);
+  });
+
+  it('reopening a step puts the batches back into crosslinking', () => {
+    const { h, a } = setup();
+    const stateOfA = () => h.app.inventory().batches.find((x) => x.id === a)!.state;
+    const run = h.app.startRun('edc-nhs', [a]).id;
+    const protocol = h.app.state.protocols.find((p) => p.id === 'edc-nhs')!;
+    for (const step of protocol.steps) h.app.tickRunStep(run, step.id, true);
+    expect(stateOfA()).toBe('crosslinked');
+
+    h.app.tickRunStep(run, protocol.steps.at(-1)!.id, false);
+    expect(stateOfA()).toBe('crosslinking');
+  });
+
+  it('cancelling releases the batches and clears the reminders', () => {
+    const { h, a } = setup();
+    const run = h.app.startRun('edc-nhs', [a]).id;
+    expect(h.app.state.reminders.length).toBeGreaterThan(0);
+
+    h.app.cancelRun(run);
+    expect(h.app.inventory().batches[0]!.state).toBe('fabricated');
+    expect(h.app.state.reminders).toHaveLength(0);
+  });
+
+  it('will not crosslink the same batch twice at once', () => {
+    const { h, a } = setup();
+    h.app.startRun('edc-nhs', [a]);
+    expect(() => h.app.startRun('genipin', [a])).toThrow(/already being crosslinked/);
+  });
+
+  it('ticking the reminder is the same as ticking the step', () => {
+    const { h, a } = setup();
+    const run = h.app.startRun('edc-nhs', [a]).id;
+    const reminderId = h.app.todayList().items[0]!.id;
+
+    h.app.completeReminder(reminderId);
+    expect(h.app.state.runs.find((r) => r.id === run)!.completedStepIds).toContain('s1');
+  });
+
+  it('editing a protocol reschedules a live run', () => {
+    const { h, a } = setup();
+    h.app.startRun('edc-nhs', [a]);
+    const before = h.app.inventory().runs[0]!.steps.length;
+
+    h.app.updateProtocol('edc-nhs', {
+      steps: [
+        { name: 'Immerse', offsetHours: 0 },
+        { name: 'Wash', offsetHours: 2 },
+      ],
+    });
+    expect(h.app.inventory().runs[0]!.steps).toHaveLength(2);
+    expect(before).not.toBe(2);
+  });
+
+  it('starts with editable defaults for both agents', () => {
+    const h = harness();
+    const agents = h.app.inventory().protocols.map((p) => p.agent);
+    expect(agents).toContain('EDC/NHS');
+    expect(agents).toContain('Genipin');
+
+    // "builtin" marks provenance, not permission.
+    expect(() => h.app.updateProtocol('genipin', { name: 'My genipin' })).not.toThrow();
+  });
+
+  it('the whole run survives a reload from text', () => {
+    const { h, a, b } = setup();
+    const run = h.app.startRun('edc-nhs', [a, b]).id;
+    h.app.tickRunStep(run, 's1', true);
+
+    const reloaded = h.reload();
+    expect(reloaded.inventory().runs[0]!.done).toBe(1);
+    expect(reloaded.inventory().batches.every((x) => x.state === 'crosslinking')).toBe(true);
+  });
+});

@@ -634,7 +634,7 @@ export class App {
     const tags: string[] = [];
     let name = clean;
     for (;;) {
-      const match = /\s#([\p{L}\p{N}_-]+)$/u.exec(name);
+      const match = /(?:^|\s)#([\p{L}\p{N}_-]+)$/u.exec(name);
       if (!match) break;
       tags.unshift(match[1]!);
       name = name.slice(0, match.index).trimEnd();
@@ -682,15 +682,14 @@ export class App {
     const node = this.state.nodes[id];
     if (!node) throw notFound('node', id);
     return this.mutate(`Remove "${node.name}" from ${date}`, (draft) => {
-      let touched = false;
-      for (const entry of draft.planner) {
-        if (entry.nodeId === id && !entry.outcome) {
-          entry.outcome = 'deferred';
-          touched = true;
-        }
-      }
-      if (!touched) draft.planner.push({ date, nodeId: id, order: 0, outcome: 'deferred' });
-      // A date-planned task removed from today should stop claiming the day.
+      // Only today's own entry is closed. A rolled-over item keeps its original
+      // open entry and gets a tombstone for today instead, because "not today"
+      // is a statement about today — saying it should not mean never again.
+      const own = draft.planner.find((e) => e.date === date && e.nodeId === id && !e.outcome);
+      if (own) own.outcome = 'deferred';
+      else draft.planner.push({ date, nodeId: id, order: 0, outcome: 'deferred' });
+
+      // A date-planned task taken off today stops claiming the day.
       const target = draft.nodes[id];
       if (target?.plannedFor === date) target.plannedFor = undefined;
       return { ok: true as const, message: `Removed "${node.name}" from ${date}.` };
