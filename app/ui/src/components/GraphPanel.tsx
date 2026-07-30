@@ -205,10 +205,16 @@ export function GraphPanel({
     [data, showDone],
   );
 
-  // fit the viewBox to content on first data and on demand
+  // First sight is 1:1 at the top — on a big board "fit everything" is an
+  // unreadable speck cloud. The Fit button gives the full overview on demand.
   useEffect(() => {
     if (!lay) return;
-    setVb({ x: 0, y: 0, w: Math.max(lay.width, 600), h: Math.max(lay.height, 300) });
+    const r = svgRef.current?.getBoundingClientRect();
+    if (fitKey === 0 && r && r.width > 50) {
+      setVb({ x: 0, y: 0, w: r.width, h: r.height });
+    } else {
+      setVb({ x: 0, y: 0, w: Math.max(lay.width, 600), h: Math.max(lay.height, 300) });
+    }
   }, [lay === null, fitKey, showDone]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const drawEdges = useMemo(() => {

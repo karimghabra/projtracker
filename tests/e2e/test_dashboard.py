@@ -238,7 +238,14 @@ def graph_node(page, nid):
     return page.locator(f'[data-testid="graph-node"][data-nid="{nid}"]')
 
 
+def fit_graph(page):
+    """The panel opens 1:1 at the top; bring everything into the canvas so
+    node coordinates are clickable."""
+    page.locator('[data-testid="graph-fit"]').click()
+
+
 def select_graph_node(page, nid):
+    fit_graph(page)
     node = graph_node(page, nid)
     node.scroll_into_view_if_needed()
     node.click()
@@ -248,6 +255,7 @@ def select_graph_node(page, nid):
 def drag_dependency(page, src: int, dst: int) -> None:
     """Draw src -> dst with the mouse: press the source card's port, release
     over the target card."""
+    fit_graph(page)
     node = graph_node(page, src)
     node.scroll_into_view_if_needed()
     node.hover()  # the port fades in on hover
