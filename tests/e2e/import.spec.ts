@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import ExcelJS from 'exceljs';
 import { expect, test } from './fixtures.ts';
 
@@ -113,5 +114,65 @@ test.describe('importing a workbook', () => {
 
     await page.getByLabel('What to do with Tendon').selectOption('skip');
     await expect(page.getByTestId('confirm-import')).toBeDisabled();
+  });
+});
+
+test.describe('exporting', () => {
+  test('writes a workbook the app can read straight back', async ({ h }) => {
+    const { page } = h;
+
+    // Build something worth exporting.
+    await page.getByTestId('nav-projects').click();
+    await page.getByTestId('open-import').click();
+    await page.getByTestId('import-file').setInputFiles({
+      name: 'tracker.xlsx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      buffer: Buffer.from(await workbook()),
+    });
+    await page.getByTestId('confirm-import').click();
+    await expect(page.getByTestId('tree').getByText('Tendon scaffold study')).toBeVisible();
+
+    // Export it.
+    const download = page.waitForEvent('download');
+    await page.getByTestId('export-xlsx').click();
+    const file = await download;
+    expect(file.suggestedFilename()).toMatch(/^Protracker \d{4}-\d{2}-\d{2}\.xlsx$/);
+
+    const path = await file.path();
+    const bytes = await readFile(path);
+    expect(bytes.length).toBeGreaterThan(1000);
+
+    // Read it back into an empty vault and check it is the same board.
+    await page.goto(`/?vault=export-roundtrip-${Date.now()}#/projects`);
+    await page.getByTestId('open-import').click();
+    await page.getByTestId('import-file').setInputFiles({
+      name: 'exported.xlsx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      buffer: bytes,
+    });
+    await page.getByTestId('confirm-import').click();
+
+    const tree = page.getByTestId('tree');
+    await expect(tree.getByText('Tendon scaffold study')).toBeVisible();
+    await expect(tree.getByText('CAD design')).toBeVisible();
+    await expect(tree.getByText('Draft geometry')).toBeVisible();
+    await expect(tree.getByText('Tensile to failure')).toBeVisible();
+  });
+
+  test('says so when it has saved', async ({ h }) => {
+    const { page } = h;
+    await page.getByTestId('nav-projects').click();
+    await page.getByTestId('open-import').click();
+    await page.getByTestId('import-file').setInputFiles({
+      name: 'tracker.xlsx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      buffer: Buffer.from(await workbook()),
+    });
+    await page.getByTestId('confirm-import').click();
+
+    const download = page.waitForEvent('download');
+    await page.getByTestId('export-xlsx').click();
+    await download;
+    await expect(page.locator('.toast').last()).toContainText('Saved Protracker');
   });
 });

@@ -1309,8 +1309,24 @@ export class App {
             notes: row.notes,
             tags: row.tags,
             plannedFor: row.plannedFor,
+            kind: row.kind === 'experiment' ? 'experiment' : 'task',
           }).id;
           created += 1;
+
+          if (row.culture) {
+            app.setExperiment(taskId, {
+              sampleCount: row.culture.sampleCount,
+              cellsPerScaffold: row.culture.cellsPerScaffold,
+              cellLine: row.culture.cellLine,
+              scaffoldTypeName: row.culture.scaffoldTypeName,
+              scaffoldsExpected: row.culture.scaffoldsExpected,
+              seedingDate: row.culture.seedingDate,
+              durationDays: row.culture.durationDays,
+              mediaChangeEveryDays: row.culture.mediaChangeEveryDays,
+              mediaPhases: row.culture.mediaPhases,
+              endpoint: row.culture.endpoint,
+            });
+          }
 
           // Strikethrough means done; colour is a separate health axis and is
           // never allowed to decide whether something is finished.

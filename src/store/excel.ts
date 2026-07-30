@@ -18,9 +18,70 @@ import type { Health } from '../core/model.ts';
 
 export type RowKind = 'project' | 'milestone' | 'goal' | 'task' | 'experiment';
 
+export interface CultureSpec {
+  sampleCount: number;
+  cellsPerScaffold?: number;
+  cellLine?: string;
+  scaffoldTypeName?: string;
+  scaffoldsExpected?: string;
+  seedingDate?: string;
+  durationDays: number;
+  mediaChangeEveryDays?: number;
+  mediaPhases: { name: string; startDay: number }[];
+  endpoint?: string;
+}
+
+/** The inverse of `encodeCulture`. Anything unparseable is simply left out. */
+export function decodeCulture(text: string): CultureSpec | undefined {
+  const trimmed = text.trim();
+  if (!trimmed) return undefined;
+
+  const fields = new Map<string, string>();
+  for (const part of trimmed.split(';')) {
+    const at = part.indexOf('=');
+    if (at < 0) continue;
+    fields.set(part.slice(0, at).trim().toLowerCase(), part.slice(at + 1).trim());
+  }
+  if (fields.size === 0) return undefined;
+
+  const num = (key: string) => {
+    const raw = fields.get(key);
+    if (raw === undefined) return undefined;
+    const value = Number(raw);
+    return Number.isFinite(value) ? value : undefined;
+  };
+
+  const phases = (fields.get('phases') ?? '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const at = entry.lastIndexOf('@');
+      if (at < 0) return null;
+      const day = Number(entry.slice(at + 1));
+      return Number.isFinite(day) ? { name: entry.slice(0, at).trim(), startDay: day } : null;
+    })
+    .filter((p): p is { name: string; startDay: number } => p !== null);
+
+  return {
+    sampleCount: num('samples') ?? 0,
+    cellsPerScaffold: num('cells'),
+    cellLine: fields.get('line') || undefined,
+    scaffoldTypeName: fields.get('scaffold') || undefined,
+    scaffoldsExpected: fields.get('expected') || undefined,
+    seedingDate: fields.get('seed') || undefined,
+    durationDays: num('days') ?? 21,
+    mediaChangeEveryDays: num('every'),
+    mediaPhases: phases,
+    endpoint: fields.get('endpoint') || undefined,
+  };
+}
+
 export interface ImportRow {
   kind: RowKind;
   name: string;
+  /** Present when the row carried a cell culture definition. */
+  culture?: CultureSpec;
   seq?: number;
   notes?: string;
   done: boolean;
@@ -77,6 +138,10 @@ const HEADERS: Record<string, keyof ColumnMap> = {
   planned: 'planned',
   tags: 'tags',
   tag: 'tags',
+  kind: 'kind',
+  type: 'kind',
+  culture: 'culture',
+  experiment: 'culture',
 };
 
 interface ColumnMap {
@@ -90,6 +155,8 @@ interface ColumnMap {
   health?: number;
   planned?: number;
   tags?: number;
+  kind?: number;
+  culture?: number;
 }
 
 function normalise(value: unknown): string {
@@ -282,12 +349,15 @@ export function readWorkbook(workbook: Workbookish): ImportPlan {
       // The deepest thing this row introduces owns the row's own attributes;
       // a container mentioned in passing gets only its name.
       const deepest: RowKind = task ? 'task' : goal ? 'goal' : 'milestone';
+      const culture = decodeCulture(at('culture'));
+      const isExperiment = normalise(at('kind')) === 'experiment' || culture !== undefined;
       const push = (kind: RowKind, name: string, key: keyof ColumnMap) => {
         const cell = cellOf(key);
         const own = kind === deepest;
         rows.push({
-          kind,
+          kind: own && kind === 'task' && isExperiment ? 'experiment' : kind,
           name,
+          culture: own ? culture : undefined,
           seq: own ? seq : undefined,
           notes: own ? at('notes') || undefined : undefined,
           done: own ? cell?.font?.strike === true || isDoneText(at('status')) : false,
@@ -312,7 +382,9 @@ export function readWorkbook(workbook: Workbookish): ImportPlan {
       if (task) push('task', task, 'task');
     }
 
-    if (rows.length === 0) {
+    // A project with a preamble but no rows is still a project you asked to
+    // keep. Only a sheet that names nothing at all is skipped.
+    if (rows.length === 0 && !preambleName(sheet, header.row)) {
       plan.skipped.push({ sheet: sheet.name, reason: 'header found but no data rows' });
       continue;
     }

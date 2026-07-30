@@ -1,6 +1,6 @@
 {
   "name": "protracker",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "A lab project tracker: projects, milestones, goals, experiments and scaffold inventory over a dependency graph, stored as plain text.",
   "type": "module",
   "license": "MIT",
@@ -25,7 +25,8 @@
     "fieldtest": "vitest run tests/unit/fieldtest.test.ts",
     "start": "npm run build && electron .",
     "pack": "npm run build && electron-builder --win --publish never",
-    "screenshots": "playwright test tests/e2e/screenshots.spec.ts"
+    "screenshots": "playwright test tests/e2e/screenshots.spec.ts",
+    "pack:all": "npm run build && electron-builder --win --linux --publish never"
   },
   "dependencies": {
     "exceljs": "^4.4.0",
@@ -80,6 +81,29 @@
       "uninstallerIcon": "build/icon.ico",
       "installerHeaderIcon": "build/icon.ico",
       "deleteAppDataOnUninstall": false
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "universal"
+          ]
+        }
+      ],
+      "category": "public.app-category.productivity",
+      "artifactName": "Protracker-${version}-${arch}.${ext}",
+      "icon": "build/icon.png"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Office",
+      "artifactName": "Protracker-${version}.${ext}",
+      "icon": "build/icon.png",
+      "maintainer": "Karim Ghabra"
     }
   }
 }

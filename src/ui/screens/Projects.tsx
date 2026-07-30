@@ -14,6 +14,7 @@ import { ConfirmDialog, Empty, HealthChip, InlineEdit, ProgressBar, StatusChip }
 import { NodeDetail } from '../components/NodeDetail.tsx';
 import { NewProjectWizard } from './NewProject.tsx';
 import { ImportButton, ImportDialog } from '../components/ImportDialog.tsx';
+import { ExportButton } from '../components/ExportButton.tsx';
 import {
   IconChevronDown,
   IconChevronRight,
@@ -80,6 +81,7 @@ export function ProjectsScreen({
         <div className="inline" style={{ marginBottom: 'var(--space-3)' }}>
           <h2 style={{ fontSize: 14 }}>All work</h2>
           <span className="spacer" />
+          <ExportButton />
           <ImportButton onOpen={() => setImporting(true)} />
           <button className="btn primary sm" onClick={() => setWizard(true)} data-testid="add-project">
             <IconPlus size={13} /> New project

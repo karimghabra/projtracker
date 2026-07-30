@@ -1,26 +1,48 @@
 name: Release
 
-# Builds the Windows installer and attaches it to a GitHub release.
-#
-# Triggered by a version tag, or by hand from the Actions tab when you just
-# want a fresh build to download.
+# Builds installers for all three platforms and attaches them to a GitHub
+# release. Triggered by a version tag, or by hand from the Actions tab when you
+# just want a fresh build to download.
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to publish as (e.g. v1.0.0). Leave blank for a draft named after the run.'
+        description: 'Tag to publish as (e.g. v1.2.0). Blank names it after the run.'
         required: false
 
 permissions:
   contents: write
 
 jobs:
-  windows:
-    name: Windows installer
-    runs-on: windows-latest
-    timeout-minutes: 30
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+
+    strategy:
+      # One platform failing should not deny you the others.
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: Windows installer
+            target: --win
+            artifact: Protracker-Windows
+            pattern: 'release/*.exe'
+          - os: macos-latest
+            label: macOS disk image
+            target: --mac
+            artifact: Protracker-macOS
+            pattern: 'release/*.dmg'
+          - os: ubuntu-latest
+            label: Linux AppImage and deb
+            target: --linux
+            artifact: Protracker-Linux
+            pattern: |
+              release/*.AppImage
+              release/*.deb
 
     steps:
       - uses: actions/checkout@v4
@@ -47,14 +69,36 @@ jobs:
         run: npm run build:electron
 
       - name: Package
-        run: npx electron-builder --win --publish never
+        run: npx electron-builder ${{ matrix.target }} --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # A build can succeed and still ship a blank window. Launch the real
-      # executable and make sure it is still alive and quiet before publishing.
+      # executable and make sure it is alive and quiet before publishing.
+      # Only on Windows: the other two need a display server to start.
       - name: Verify the packaged app starts
+        if: matrix.os == 'windows-latest'
         run: node scripts/verify-package.mjs release/win-unpacked/Protracker.exe 12
+
+      - name: Keep the installer as a build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.pattern }}
+          retention-days: 30
+          if-no-files-found: error
+
+  publish:
+    name: Publish the release
+    needs: build
+    runs-on: ubuntu-latest
+    if: always() && needs.build.result != 'cancelled'
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
 
       - name: Name the tag
         id: name
@@ -68,26 +112,32 @@ jobs:
             echo "tag=build-${{ github.run_number }}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Upload the installer as a build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Protracker-Windows-Setup
-          path: release/*.exe
-          retention-days: 30
+      - name: List what is going out
+        shell: bash
+        run: ls -la artifacts/
 
-      - name: Publish a release
-        uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.name.outputs.tag }}
           name: Protracker ${{ steps.name.outputs.tag }}
           draft: false
           prerelease: ${{ github.ref_type != 'tag' }}
           generate_release_notes: true
-          files: release/*.exe
+          files: artifacts/*
           body: |
-            **Windows installer** — download `Protracker-Setup-*.exe` below and run it.
+            Download the one for your machine and run it.
 
-            No Python, no Rust, no compilers. It installs per-user by default, so
-            it does not need an administrator.
+            | Platform | File |
+            |---|---|
+            | Windows | `Protracker-Setup-*.exe` |
+            | macOS | `Protracker-*.dmg` |
+            | Linux | `Protracker-*.AppImage` or `.deb` |
+
+            No Python, no Rust, no compilers. Windows and macOS install
+            per-user, so no administrator is needed.
+
+            The builds are unsigned, so Windows SmartScreen will warn on first
+            run (More info → Run anyway) and macOS will need
+            right-click → Open the first time.
 
             Your data lives in plain text files. Settings shows you where.

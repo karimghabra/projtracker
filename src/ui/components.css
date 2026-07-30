@@ -595,3 +595,5 @@ kbd {
 }
 
 .band-toggle text { pointer-events: none; }
+
+.flip { transform: rotate(180deg); }

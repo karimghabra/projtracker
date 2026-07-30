@@ -9,7 +9,7 @@
  * at the same one and neither needs to know the other exists.
  */
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { App } from '../commands/app.ts';
@@ -17,6 +17,7 @@ import { toCommandError } from '../commands/errors.ts';
 import { formatDayMonth, systemClock } from '../core/dates.ts';
 import { formatOffset } from '../core/protocols.ts';
 import { readWorkbookFile } from '../store/excel.ts';
+import { exportWorkbook } from '../store/excelExport.ts';
 import { NodeVault } from '../store/nodeVault.ts';
 
 const HELP = `protracker — a lab project tracker
@@ -67,6 +68,7 @@ usage: pt [--vault DIR] [--json] <command> [args]
 
   bringing a workbook across
     import <file.xlsx> [--preview] [--merge]
+    export <file.xlsx>        write the board back out as a workbook
 
   the vault
     where                     where the files are
@@ -407,6 +409,15 @@ async function run(
         out(`review  ${item.sheet}${item.line ? `:${item.line}` : ''}  ${item.message}`);
       }
       return 0;
+    }
+
+    case 'export': {
+      const file = rest[0];
+      if (!file) throw new Error('Where to? pt export board.xlsx');
+      const bytes = await exportWorkbook(app.state);
+      writeFileSync(file, bytes);
+      const delta = { ok: true as const, message: `Wrote ${bytes.length} bytes to ${file}.` };
+      return say(delta), 0;
     }
 
     // -------------------------------------------------------------- vault
