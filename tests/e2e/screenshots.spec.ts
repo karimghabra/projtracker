@@ -109,6 +109,20 @@ test.describe('screenshots', () => {
         await expect(page.locator('.shell')).toBeVisible();
         await page.screenshot({ path: `screenshots/${theme}-${screen}.png`, animations: 'disabled' });
       }
+
+      // The two dialogs worth looking at, and the tree part-collapsed — none
+      // of which a screen capture reaches on its own.
+      await page.getByTestId('nav-projects').click();
+      await page.getByTestId('show-milestones').click();
+      await page.screenshot({ path: `screenshots/${theme}-projects-collapsed.png`, animations: 'disabled' });
+      await page.getByTestId('show-all').click();
+
+      await page.getByTestId('nav-settings').click();
+      await page.getByTestId('open-backup').click();
+      await expect(page.getByRole('heading', { name: 'Backup' })).toBeVisible();
+      await page.waitForTimeout(200);
+      await page.screenshot({ path: `screenshots/${theme}-backup.png`, animations: 'disabled' });
+      await page.keyboard.press('Escape');
     }
   });
 });

@@ -187,13 +187,18 @@ function TreeRow({
   const { run } = useApp();
   // Open down to tasks by default. This is the editor for the work; hiding the
   // work behind two clicks makes it a viewer.
-  const [open, setOpen] = useState(node.depth < bulk.openTo);
-
-  // A bulk expand or collapse overrides whatever this row was set to by hand.
-  // Anything else would leave a "collapse everything" that visibly did not.
-  useEffect(() => {
-    setOpen(node.depth < bulk.openTo);
-  }, [bulk, node.depth]);
+  //
+  // A bulk expand or collapse overrides whatever this row was set to by hand —
+  // anything else leaves a "collapse everything" that visibly did not. It is
+  // reconciled during render rather than in an effect, because an effect runs
+  // after paint: the toolbar button would light up a frame before the tree
+  // moved, and on a big board that flash is visible.
+  const [state, setState] = useState({ nonce: bulk.nonce, open: node.depth < bulk.openTo });
+  if (state.nonce !== bulk.nonce) {
+    setState({ nonce: bulk.nonce, open: node.depth < bulk.openTo });
+  }
+  const open = state.nonce === bulk.nonce ? state.open : node.depth < bulk.openTo;
+  const setOpen = (next: boolean) => setState({ nonce: bulk.nonce, open: next });
   const [adding, setAdding] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const childKind = childKindOf(node.kind);
