@@ -73,12 +73,29 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # A build can succeed and still ship a blank window. Launch the real
-      # executable and make sure it is alive and quiet before publishing.
-      # Only on Windows: the other two need a display server to start.
-      - name: Verify the packaged app starts
+      # A build can succeed and still ship an app that dies at module load.
+      # This drives the real packaged binary through Electron's automation
+      # interface and fails unless a window renders and the file bridge works.
+      #
+      # The check it replaces asked only whether the process was still alive.
+      # It passed a build that crashed every single launch, because Electron's
+      # crash dialog keeps the process very much alive, and a Windows GUI app
+      # has no console for the stderr it was reading.
+      - name: Verify the packaged app actually runs
         if: matrix.os == 'windows-latest'
-        run: node scripts/verify-package.mjs release/win-unpacked/Protracker.exe 12
+        run: npm run test:desktop
+
+      - name: Verify the packaged app actually runs
+        if: matrix.os == 'ubuntu-latest'
+        run: xvfb-run --auto-servernum npm run test:desktop
+
+      - name: Keep the trace when the desktop check fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-check-${{ matrix.artifact }}
+          path: test-results/
+          retention-days: 14
 
       - name: Keep the installer as a build artifact
         uses: actions/upload-artifact@v4

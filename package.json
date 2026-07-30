@@ -1,6 +1,6 @@
 {
   "name": "protracker",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "A lab project tracker: projects, milestones, goals, experiments and scaffold inventory over a dependency graph, stored as plain text.",
   "type": "module",
   "license": "MIT",
@@ -27,7 +27,9 @@
     "pack": "npm run build && electron-builder --win --publish never",
     "screenshots": "playwright test tests/e2e/screenshots.spec.ts",
     "pack:all": "npm run build && electron-builder --win --linux --publish never",
-    "icon": "python scripts/make-icon.py"
+    "icon": "python scripts/make-icon.py",
+    "test:desktop": "playwright test --config playwright.desktop.config.ts",
+    "verify:pack": "npm run pack && npm run test:desktop"
   },
   "dependencies": {
     "exceljs": "^4.4.0",

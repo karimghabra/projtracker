@@ -10,9 +10,16 @@
 import { BrowserWindow, app, dialog, ipcMain, shell } from 'electron';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
-const here = dirname(fileURLToPath(import.meta.url));
+/**
+ * The directory this file was loaded from.
+ *
+ * Deliberately `__dirname` and not `fileURLToPath(import.meta.url)`: the main
+ * process is bundled to CommonJS, where import.meta does not exist. esbuild
+ * emits it as an empty object, so the URL is undefined and fileURLToPath throws
+ * at module load — before any window, any handler, or any log line.
+ */
+const here = __dirname;
 const isDev = !app.isPackaged;
 
 let vaultRoot = '';
