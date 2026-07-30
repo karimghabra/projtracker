@@ -15,6 +15,8 @@
  */
 
 import type { Health } from '../core/model.ts';
+import type { BackupRead } from './backup.ts';
+import { BACKUP_MARKER, readBackupGrid } from './backup.ts';
 
 export type RowKind = 'project' | 'milestone' | 'goal' | 'task' | 'experiment';
 
@@ -301,6 +303,30 @@ function preambleName(sheet: Sheetish, headerRow: number): string | undefined {
   return undefined;
 }
 
+/**
+ * The vault sheet, if the workbook carries one.
+ *
+ * Separate from `readWorkbook` because it answers a different question. The
+ * importer merges rows into whatever is already there; this is the raw vault,
+ * and restoring it replaces everything. Confusing the two would be the worst
+ * kind of bug, so they do not share a code path.
+ */
+export function readBackupSheet(workbook: Workbookish): BackupRead | null {
+  const sheet = workbook.worksheets.find(
+    (candidate) => cellText(candidate.getRow(1).getCell(1)) === BACKUP_MARKER,
+  );
+  if (!sheet) return null;
+
+  const grid: string[][] = [];
+  for (let index = 1; index <= sheet.rowCount; index++) {
+    const row = sheet.getRow(index);
+    // Trimming is safe here only because every content cell is fenced; the
+    // fence characters are the outer ones, so the payload is never touched.
+    grid.push([1, 2, 3, 4, 5].map((column) => cellText(row.getCell(column))));
+  }
+  return readBackupGrid(grid);
+}
+
 export function readWorkbook(workbook: Workbookish): ImportPlan {
   const plan: ImportPlan = { sheets: [], skipped: [], review: [] };
   const namesSeen = new Map<string, number>();
@@ -310,6 +336,13 @@ export function readWorkbook(workbook: Workbookish): ImportPlan {
     // be reading our own arithmetic as if it were data.
     if (cellText(sheet.getRow(1).getCell(1)).startsWith('Protracker summary')) {
       plan.skipped.push({ sheet: sheet.name, reason: 'generated summary — nothing to import' });
+      continue;
+    }
+
+    // The vault sheet is the backup, not a source of rows. Restoring from it
+    // is a separate, deliberate act — see `readBackupSheet`.
+    if (cellText(sheet.getRow(1).getCell(1)) === BACKUP_MARKER) {
+      plan.skipped.push({ sheet: sheet.name, reason: 'backup of the vault — restore it instead' });
       continue;
     }
 

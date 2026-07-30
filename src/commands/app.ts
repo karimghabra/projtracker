@@ -44,9 +44,11 @@ import { emptyExperiment, stagesOf, validateExperiment } from '../core/experimen
 import { isRunComplete, scheduleRun } from '../core/protocols.ts';
 import { overdue, plannedAhead, upcomingReminders } from '../core/planner.ts';
 import { parsePeriod } from '../core/periods.ts';
+import type { RestoreReport, VaultFiles } from '../store/backup.ts';
+import { restoreVault, snapshotVault } from '../store/backup.ts';
 import type { ImportPlan } from '../store/excel.ts';
 import { canonicalise } from '../store/serialize.ts';
-import { Store, initialState } from '../store/store.ts';
+import { Store, initialState, loadState } from '../store/store.ts';
 import type { Vault } from '../store/vault.ts';
 import { CommandError, conflict, invalid, notAllowed, notFound } from './errors.ts';
 import { allocateId, allocateSlugId } from './ids.ts';
@@ -1446,6 +1448,40 @@ export class App {
         created,
       };
     });
+  }
+
+  // ---------------------------------------------------------------- backup
+
+  /**
+   * The vault exactly as it sits on disk.
+   *
+   * Files rather than state on purpose. A backup taken from parsed state would
+   * only ever be as good as today's serializer; taken from the bytes, it stays
+   * correct even if a later version writes those bytes differently.
+   */
+  backupFiles(): VaultFiles {
+    return snapshotVault(this.store.vault);
+  }
+
+  /**
+   * Replace everything with the contents of a backup.
+   *
+   * Deliberately not undoable: it clears the history, because a stack of
+   * snapshots of some entirely different state is worse than an empty one. The
+   * caller is expected to have made a person confirm.
+   */
+  restoreBackup(files: VaultFiles): Delta & RestoreReport {
+    if (Object.keys(files).length === 0) {
+      throw invalid('That backup has no files in it, so there is nothing to restore.');
+    }
+    const report = restoreVault(this.store.vault, files);
+    this.store.reset(loadState(this.store.vault));
+    this.cachedIndex = undefined;
+    return {
+      ok: true,
+      message: `Restored ${Object.keys(files).length} file(s) from the backup.`,
+      ...report,
+    };
   }
 
   // --------------------------------------------------------------- history

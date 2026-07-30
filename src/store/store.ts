@@ -97,7 +97,10 @@ export class Store {
   private batch: State | null = null;
 
   constructor(
-    private readonly vault: Vault,
+    // Public because a backup and a restore work on the files themselves, not
+    // on the parsed state: the whole point of the backup is that it reproduces
+    // bytes the serializer might one day write differently.
+    readonly vault: Vault,
     initial?: State,
   ) {
     this.current = initial ?? loadState(vault);

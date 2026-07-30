@@ -25,6 +25,8 @@ import { buildIndex, derivedStatus, isDone, progressOf, rootProjects } from '../
 import type { GraphIndex } from '../core/graph.ts';
 import { dateOf } from '../core/dates.ts';
 import { encodePeriod } from '../core/periods.ts';
+import type { BackupMeta, VaultFiles } from './backup.ts';
+import { BACKUP_HEADERS, BACKUP_SHEET, backupGrid } from './backup.ts';
 
 const HEALTH_FILL: Record<Health, string | undefined> = {
   not_begun: undefined,
@@ -195,9 +197,41 @@ function writeSummary(book: Bookish, index: GraphIndex, today: string): void {
   sheet.views = [{ state: 'frozen', ySplit: 3 }];
 }
 
-export function writeWorkbook(book: Bookish, state: State, today: string): void {
+/**
+ * The lossless half of the workbook.
+ *
+ * Hidden, because a manager opening this has no use for it and every reason to
+ * be confused by it — but present, so that "Export to Excel" is a real backup
+ * and not just a report. Everything above this line is a rendering; this is the
+ * vault.
+ */
+function writeVaultSheet(book: Bookish, files: VaultFiles, meta: BackupMeta): void {
+  const sheet = book.addWorksheet(BACKUP_SHEET, { state: 'hidden' });
+  const rows = backupGrid(files, meta);
+
+  for (const row of rows) sheet.addRow([...row]);
+  sheet.getRow(1).getCell(1).font = { bold: true };
+  headerFont(sheet, rows.findIndex((r) => r[0] === BACKUP_HEADERS[0]) + 1);
+  sheet.columns = [{ width: 26 }, { width: 6 }, { width: 6 }, { width: 18 }, { width: 60 }];
+}
+
+function headerFont(sheet: Sheetish, rowNumber: number): void {
+  if (rowNumber < 1) return;
+  const row = sheet.getRow(rowNumber);
+  for (let i = 1; i <= BACKUP_HEADERS.length; i++) {
+    row.getCell(i).font = { bold: true };
+    row.getCell(i).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_FILL } };
+  }
+}
+
+export function writeWorkbook(
+  book: Bookish,
+  state: State,
+  today: string,
+  backup?: { files: VaultFiles; meta: BackupMeta },
+): void {
   const index = buildIndex(state);
-  const taken = new Set<string>(['summary']);
+  const taken = new Set<string>(['summary', BACKUP_SHEET.toLowerCase()]);
 
   writeSummary(book, index, today);
 
@@ -278,14 +312,20 @@ export function writeWorkbook(book: Bookish, state: State, today: string): void 
     // spreadsheet is filter it.
     sheet.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: EXPORT_HEADERS.length } };
   }
+
+  if (backup) writeVaultSheet(book, backup.files, backup.meta);
 }
 
-export async function exportWorkbook(state: State, today = dateOf(new Date().toISOString())): Promise<Uint8Array> {
+export async function exportWorkbook(
+  state: State,
+  today = dateOf(new Date().toISOString()),
+  backup?: { files: VaultFiles; meta: BackupMeta },
+): Promise<Uint8Array> {
   const ExcelJS = await import('exceljs');
   const book = new ExcelJS.default.Workbook();
   book.creator = 'Protracker';
   book.created = new Date();
-  writeWorkbook(book as unknown as Bookish, state, today);
+  writeWorkbook(book as unknown as Bookish, state, today, backup);
   return new Uint8Array((await book.xlsx.writeBuffer()) as ArrayBuffer);
 }
 
