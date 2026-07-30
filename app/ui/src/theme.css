@@ -85,33 +85,42 @@ body {
 }
 
 /* --- the one-page dashboard ------------------------------------------------
-   Every panel lives on a single scrollable page. Panels are sections in a
-   grid: the daily loop (Today, To do, Projects) up top, the graph full-width
-   beneath it, journal + upcoming at the bottom. Each panel scrolls inside
-   itself so the page height stays bounded. */
-.dash { padding: 0 20px 24px; }
-.dash-grid {
-  display: grid; gap: 16px; padding: 16px 0 6px;
-  grid-template-columns: minmax(340px, 5fr) minmax(320px, 4.5fr) minmax(300px, 4fr);
-  grid-template-areas:
-    "today todo tree"
-    "graph graph graph"
-    "journal journal upcoming";
-  align-items: stretch;
-}
-.dash-grid > section { max-height: 620px; min-height: 260px; }
-.dash-grid > section.graph-panel { max-height: none; }
+   Everything is visible at once: the dashboard FILLS the viewport and the
+   page itself never scrolls (a scrolling page behind internally-scrolling
+   panels made the wheel useless — panels swallowed it, and passing the
+   cursor over the graph mangled its zoom). Panels scroll inside themselves;
+   those are the only scrollbars. Narrow windows fall back to a stacked,
+   page-scrolling column. */
+.dash { padding: 0 16px 14px; }
+.dash-grid { display: grid; gap: 14px; padding-top: 12px; }
 .p-today { grid-area: today; }
 .p-todo { grid-area: todo; }
 .p-tree { grid-area: tree; }
 .graph-panel { grid-area: graph; }
 .p-journal { grid-area: journal; }
 .p-upcoming { grid-area: upcoming; }
-@media (max-width: 1150px) {
+@media (max-width: 1149.98px) {
   .dash-grid {
     grid-template-columns: 1fr;
     grid-template-areas: "today" "todo" "tree" "graph" "journal" "upcoming";
   }
+  .dash-grid > section { max-height: 70vh; }
+  .graph-canvas { height: 440px; }
+}
+@media (min-width: 1150px) {
+  .content { overflow: hidden; display: flex; flex-direction: column; }
+  .dash { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .dash-grid {
+    flex: 1; min-height: 0;
+    grid-template-columns: minmax(0, 5fr) minmax(0, 4.5fr) minmax(0, 4fr);
+    grid-template-rows: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas:
+      "today todo tree"
+      "graph graph journal"
+      "graph graph upcoming";
+  }
+  .dash-grid > section { min-height: 0; }
+  .graph-canvas { flex: 1; min-height: 0; }
 }
 .panel-body { flex: 1; overflow-y: auto; min-height: 0; }
 .panel-body .rows { flex: none; overflow: visible; }
@@ -127,7 +136,7 @@ body {
    Provenance is line style, never colour alone: explicit dependencies are
    solid accent with an arrowhead, chosen ranks solid grey, guessed ranks
    dashed, overruled guesses dotted-and-faint. The legend repeats all four. */
-.graph-canvas { height: 540px; position: relative; }
+.graph-canvas { position: relative; }
 .graph-canvas svg {
   width: 100%; height: 100%; display: block; cursor: grab; touch-action: none;
 }
@@ -282,25 +291,26 @@ label.check input { width: auto; }
   margin: 0; font-size: 21px; font-weight: 650; letter-spacing: -.015em;
 }
 
-/* --- stat row (hero numbers, not a chart) --------------------------------- */
+/* --- stat row (hero numbers, kept slim — they must not eat panel height) -- */
 .stats {
   display: grid; grid-template-columns: repeat(4, 1fr);
-  gap: 12px; padding: 18px 0 4px;
+  gap: 12px; padding: 12px 0 0; flex: none;
 }
 @media (max-width: 1100px) { .stats { grid-template-columns: repeat(2, 1fr); } }
 .stat {
   background: var(--surface); border: 1px solid var(--hairline);
-  border-radius: var(--r-md); padding: 13px 15px; box-shadow: var(--shadow);
+  border-radius: var(--r-md); padding: 7px 14px; box-shadow: var(--shadow);
+  display: flex; align-items: baseline; gap: 10px;
 }
 .stat .label {
   font-size: 11px; text-transform: uppercase; letter-spacing: .07em;
   color: var(--muted); font-weight: 600;
 }
 .stat .value {
-  font-size: 27px; font-weight: 640; letter-spacing: -.02em; margin-top: 3px;
+  font-size: 20px; font-weight: 640; letter-spacing: -.02em;
   font-variant-numeric: tabular-nums;
 }
-.stat .sub { font-size: 12px; color: var(--ink-2); }
+.stat .sub { font-size: 11.5px; color: var(--ink-2); }
 
 /* --- panels --------------------------------------------------------------- */
 section {

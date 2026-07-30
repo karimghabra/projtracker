@@ -244,20 +244,29 @@ export function GraphPanel({
     return { x: p.x, y: p.y };
   }, []);
 
-  const onWheel = (e: React.WheelEvent) => {
-    const factor = e.deltaY > 0 ? 1.15 : 1 / 1.15;
-    const p = svgPoint(e.clientX, e.clientY);
-    setVb((old) => {
-      const w = Math.min(Math.max(old.w * factor, 300), 12000);
-      const h = (w / old.w) * old.h;
-      return {
-        x: p.x - ((p.x - old.x) / old.w) * w,
-        y: p.y - ((p.y - old.y) / old.h) * h,
-        w,
-        h,
-      };
-    });
-  };
+  // native non-passive listener: React's onWheel can't preventDefault, so a
+  // wheel over the canvas would zoom AND scroll whatever is behind it
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const factor = e.deltaY > 0 ? 1.15 : 1 / 1.15;
+      const p = svgPoint(e.clientX, e.clientY);
+      setVb((old) => {
+        const w = Math.min(Math.max(old.w * factor, 300), 12000);
+        const h = (w / old.w) * old.h;
+        return {
+          x: p.x - ((p.x - old.x) / old.w) * w,
+          y: p.y - ((p.y - old.y) / old.h) * h,
+          w,
+          h,
+        };
+      });
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [svgPoint, data !== null && (lay?.placed.size ?? 0) > 0]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const onBgPointerDown = (e: React.PointerEvent) => {
     setSelected(null);
@@ -529,7 +538,6 @@ export function GraphPanel({
             ref={svgRef}
             data-testid="graph-svg"
             viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`}
-            onWheel={onWheel}
             role="application"
             aria-label="Dependency graph editor"
           >
