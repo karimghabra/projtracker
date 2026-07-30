@@ -17,12 +17,20 @@ VALID_PARENT_KINDS = {
 # Task lifecycle states the user sets directly (spec 3.4).
 # blocked/ready are derived by the graph and never stored.
 USER_SET_TASK_STATES = ("in_progress", "done", "dropped")
-CONTAINER_STATES = ("active", "paused", "archived")
+# Containers may also be *finished* outright: research goals are answered by
+# evidence, not by exhausting their task list ("we got what we needed from it,
+# mark it done"), and a pivot away from a goal must not read as failure.
+# 'done'/'abandoned' short-circuit the completion roll-up and take their
+# undone descendants out of the ready set.
+CONTAINER_STATES = ("active", "paused", "archived", "done", "abandoned")
+FINISHED_CONTAINER_STATES = ("done", "abandoned")
 
 # Quarter-outlook health, orthogonal to status: the tracker's colour legend
 # says a task can be both completed and off track ("Blue w/ Strikethrough"),
-# so this axis never writes status. Tasks only; containers roll theirs up.
+# so this axis never writes status.
 # Uncoloured rows mean 'not_begun' — the user's stated default.
+# Settable on any node: the real workbook colours goal rows too, and a tracker
+# authored in the app must be able to carry every colour the PM reads.
 HEALTH_STATES = ("on_track", "not_begun", "off_track", "wont_finish")
 DEFAULT_HEALTH = "not_begun"
 
@@ -51,7 +59,18 @@ class Node:
     actual_minutes: int | None = None
     tags: list[str] = field(default_factory=list)
     ref: str | None = None  # stable dotted id; survives renames across imports
-    health: str | None = None  # HEALTH_STATES; tasks only, None on containers
+    health: str | None = None  # HEALTH_STATES; None = uncoloured (not_begun)
+    # The PM workbook's own columns, carried verbatim so a tracker authored in
+    # the app exports complete. 'success_criteria' (col F) is where the user
+    # states what would count as evidence; 'troubleshooting' (col J) is the
+    # failure log. Both were silently dropped on import before.
+    success_criteria: str | None = None
+    troubleshooting: str | None = None
+    team_lead: str | None = None
+    responsible_party: str | None = None
+    # projects only: the workbook's 'Tier Level' preamble cell. Free text
+    # because the real file carries a number there but nothing constrains it.
+    tier_level: str | None = None
     priority: str | None = None  # PRIORITIES; tasks only, None = normal
     # tasks only: when set, completing this task auto-creates a follow-up
     # task that becomes ready this many days later (earliest_start gating)

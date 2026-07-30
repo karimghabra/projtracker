@@ -58,6 +58,18 @@ COLUMN_ROLES = {
     "tags": "tags",
     "notes": "notes",
     "ref": "ref",
+    # The PM template's own columns. Before these were mapped they fell into
+    # `extras` and were dropped on the floor: 'Success Criteria' is where the
+    # user states what would count as evidence, and 'Trouble shooting
+    # Comments' is the failure log — the two most valuable columns in the file.
+    "success criteria": "success",
+    "success criterion": "success",
+    "trouble shooting comments": "trouble",
+    "troubleshooting comments": "trouble",
+    "troubleshooting": "trouble",
+    "trouble shooting": "trouble",
+    "team lead": "team_lead",
+    "responsible party": "responsible",
 }
 
 # an explicit "no" in a flag-style cell (Remind, Today); any other non-empty
@@ -79,7 +91,7 @@ DEPENDENCY_NOTE_TERMS = (
 )
 
 
-def classify_health(rgb: str | None) -> str:
+def classify_health(rgb: str | None) -> str | None:
     """Fill colour -> quarter outlook, per the tracker's colour legend:
 
         green  on track for deadline           -> on_track
@@ -87,29 +99,35 @@ def classify_health(rgb: str | None) -> str:
         red    will not be done this quarter   -> wont_finish
         blue   off track                       -> off_track
 
-    Classified by hue so a hand-picked green still reads as green; an unfilled
-    or washed-out cell is 'not_begun', the user's stated default. Completion
+    Classified by hue so a hand-picked green still reads as green. Completion
     is carried by strikethrough, not colour — the legend pairs both green and
-    blue with strikethrough, so the two axes stay independent."""
+    blue with strikethrough, so the two axes stay independent.
+
+    Returns **None** for a cell with no colour applied, which is deliberately
+    distinct from 'not_begun' (yellow) even though both *read* as "not begun".
+    Conflating them made yellow unexportable: an explicitly yellow row and an
+    untouched row became the same value, so a re-export painted neither. `None`
+    means "the user did not colour this"; downstream readers that only want the
+    outlook still fold it via `health or DEFAULT_HEALTH`."""
     if not rgb:
-        return DEFAULT_HEALTH
+        return None
     try:
         r, g, b = (int(rgb[i:i + 2], 16) / 255 for i in (0, 2, 4))
     except (ValueError, IndexError):
-        return DEFAULT_HEALTH
+        return None
     hue, light, sat = colorsys.rgb_to_hls(r, g, b)
     if sat < 0.15 or light < 0.12 or light > 0.95:
-        return DEFAULT_HEALTH  # white, black, grey: no colour was applied
+        return None  # white, black, grey: no colour was applied
     deg = hue * 360
     if deg < 20 or deg >= 330:
         return "wont_finish"
     if deg < 70:
-        return DEFAULT_HEALTH  # yellow/amber
+        return DEFAULT_HEALTH  # yellow/amber -> 'not_begun'
     if deg < 170:
         return "on_track"
     if deg < 265:
         return "off_track"
-    return DEFAULT_HEALTH  # purple/magenta: not in the legend
+    return None  # purple/magenta: not in the legend
 
 
 def note_dependency_terms(note: str | None) -> tuple[str, ...]:
@@ -146,6 +164,13 @@ class NodeSpec:
     links: tuple = ()  # ((label, href), ...) from the Links column (11.4)
     today_listed: bool = False  # non-empty Today cell; tasks only
     today_pos: int | None = None  # 1-based Today order when the cell is numeric
+    # PM workbook columns, carried on every kind (the real file colours and
+    # annotates goal rows, not just tasks)
+    success_criteria: str | None = None
+    troubleshooting: str | None = None
+    team_lead: str | None = None
+    responsible_party: str | None = None
+    tier_level: str | None = None  # projects only, from the preamble
     extras: tuple = ()  # ((header, value), ...) from unrecognized columns
     sheet: str | None = None
     row: int | None = None
@@ -293,10 +318,11 @@ def _find_header(rows):
     return None, None, None
 
 
-def _read_preamble(rows, hdr_i) -> tuple[str | None, str | None]:
-    """('Project name', 'Project finish date') from the block above the
-    header row. Other preamble labels (tier, colour legend) are ignored."""
-    pre_name = pre_deadline = None
+def _read_preamble(rows, hdr_i) -> tuple:
+    """('Project name', 'Project finish date', 'Project start date',
+    'Tier Level') from the block above the header row. The colour legend, which
+    also lives up here, is ignored — it is a constant, not data."""
+    pre_name = pre_deadline = pre_start = pre_tier = None
     for entry in rows[:hdr_i]:
         texts = [_clean(v) for v in entry[1]]
         for idx, t in enumerate(texts):
@@ -308,7 +334,11 @@ def _read_preamble(rows, hdr_i) -> tuple[str | None, str | None]:
                 pre_name = value
             elif low == "project finish date":
                 pre_deadline = value
-    return pre_name, pre_deadline
+            elif low == "project start date":
+                pre_start = value
+            elif low == "tier level":
+                pre_tier = value
+    return pre_name, pre_deadline, pre_start, pre_tier
 
 
 def _classify_sheet(
@@ -323,7 +353,7 @@ def _classify_sheet(
         return
 
     # preamble labels above the header ('Project name', dates, color legend)
-    pre_name, pre_deadline = _read_preamble(rows, hdr_i)
+    pre_name, pre_deadline, pre_start, pre_tier = _read_preamble(rows, hdr_i)
     header_cells = rows[hdr_i][1]
 
     def header_name(role):
@@ -338,6 +368,18 @@ def _classify_sheet(
     def cell(row_cells, role):
         idx = colmap.get(role)
         return row_cells[idx] if idx is not None and idx < len(row_cells) else None
+
+    def styling_kw(role, strikes, fills):
+        """{health, status} from the fill and strikethrough of a structural
+        column. The real workbook colours and strikes *container* rows too — a
+        struck goal means "this question is answered", which is now a state a
+        container can hold — so both axes are read for every kind."""
+        idx = colmap.get(role)
+        if idx is None:
+            return {}
+        health = classify_health(fills[idx] if idx < len(fills) else None)
+        struck = bool(idx < len(strikes) and strikes[idx])
+        return {"health": health, "status": "done" if struck else None}
 
     project = milestone = goal = None
     project_seen = False
@@ -366,7 +408,10 @@ def _classify_sheet(
                 pname = title
             plan.nodes.append(NodeSpec(
                 kind="project", name=pname, path=(),
-                deadline=_parse_date(pre_deadline)[0], sheet=title, row=rownum,
+                deadline=_parse_date(pre_deadline)[0],
+                earliest_start=_parse_date(pre_start)[0],
+                tier_level=pre_tier,
+                sheet=title, row=rownum,
             ))
             project = pname
             project_seen = True
@@ -481,6 +526,10 @@ def _classify_sheet(
             ref=_clean(cell(cells, "ref")),
             status=status,
             health=health,
+            success_criteria=_clean(cell(cells, "success")),
+            troubleshooting=_clean(cell(cells, "trouble")),
+            team_lead=_clean(cell(cells, "team_lead")),
+            responsible_party=_clean(cell(cells, "responsible")),
             priority=priority,
             followup_days=followup,
             remind=remind_flag,
@@ -496,6 +545,19 @@ def _classify_sheet(
             ) + tuple(kept_extras),
             sheet=title, row=rownum, occurrence=occurrence,
         )
+        # Extras are carried but not stored, so an unrecognised column with
+        # content has to be *said out loud* — silence here is how 31 cells of
+        # Success Criteria and Trouble shooting Comments went missing.
+        for hname, value in spec.extras:
+            if (hname, value) in kept_extras:
+                continue  # already reported by the date/priority/repeat paths
+            plan.review.append({
+                "sheet": title, "row": rownum, "values": [name],
+                "reason": (
+                    f"column {hname!r} is not a recognised tracker column; "
+                    f"its value {value!r} was not imported"
+                ),
+            })
         plan.nodes.append(spec)
         terms = note_dependency_terms(note)
         if terms:
@@ -528,7 +590,8 @@ def _classify_sheet(
         if role == "project":
             project, milestone, goal = name, None, None
             project_seen = True
-            emit("project", name, (), cells, rownum)
+            emit("project", name, (), cells, rownum,
+                 **styling_kw("project", strikes, fills))
         elif role == "milestone":
             ensure_project(rownum)
             if project is None:
@@ -538,7 +601,8 @@ def _classify_sheet(
                 })
                 continue
             milestone, goal = name, None
-            emit("milestone", name, (project,), cells, rownum)
+            emit("milestone", name, (project,), cells, rownum,
+                 **styling_kw("milestone", strikes, fills))
         elif role == "goal":
             ensure_project(rownum)
             if milestone is None:
@@ -548,7 +612,8 @@ def _classify_sheet(
                 })
                 continue
             goal, seq_counter = name, 0
-            emit("goal", name, (project, milestone), cells, rownum)
+            emit("goal", name, (project, milestone), cells, rownum,
+                 **styling_kw("goal", strikes, fills))
         else:  # task
             def occurrence_of(path):
                 key = (path, name)
@@ -601,7 +666,7 @@ def _shared_preamble_names(sheets: dict[str, list[tuple]]) -> frozenset:
         hdr_i, colmap, _ = _find_header(rows)
         if hdr_i is None or "project" in colmap:
             continue  # skipped sheet, or one that names its own projects
-        name, _deadline = _read_preamble(rows, hdr_i)
+        name = _read_preamble(rows, hdr_i)[0]
         if name is not None:
             counts[name] = counts.get(name, 0) + 1
     return frozenset(n for n, k in counts.items() if k > 1)

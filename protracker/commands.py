@@ -16,6 +16,8 @@ from .graph import CycleError, Graph
 from .model import (
     CONTAINER_STATES,
     DEFAULT_HEALTH,
+    FINISHED_CONTAINER_STATES,
+    HEALTH_STATES,
     KINDS,
     PRIORITIES,
     PRIORITY_RANK,
@@ -29,6 +31,12 @@ UPDATABLE_FIELDS = {
     "name", "description", "deadline", "earliest_start", "weight",
     "est_minutes", "est_source", "tags", "seq_index", "status",
     "priority", "followup_days", "remind", "wait_reason", "repeat",
+    # authoring fields: a tracker built in the app must be able to carry every
+    # column the PM workbook shows, including the colour axis and the date a
+    # row went green-with-strikethrough
+    "health", "completed_at",
+    "success_criteria", "troubleshooting", "team_lead", "responsible_party",
+    "tier_level",
 }
 
 KIND_BY_DEPTH = ("project", "milestone", "goal", "task")
@@ -135,6 +143,14 @@ class Commands:
             )
         if value is not None and kind != "task":
             raise CommandError("invalid_field", "priority applies to tasks only")
+
+    @staticmethod
+    def _validate_health(value):
+        if value is not None and value not in HEALTH_STATES:
+            raise CommandError(
+                "invalid_field",
+                f"health must be one of {', '.join(HEALTH_STATES)} (or null)",
+            )
 
     @staticmethod
     def _validate_followup_days(value, kind: str):
@@ -253,6 +269,27 @@ class Commands:
                 )
         if "seq_index" in fields and n.kind != "task":
             raise CommandError("invalid_field", "seq_index applies to tasks only")
+        if "health" in fields:
+            self._validate_health(fields["health"])
+        if "completed_at" in fields:
+            # The date a row went green-with-strikethrough is editable, but it
+            # never *drives* status: status stays derived (tasks) or explicit
+            # (containers). Clearing it on something already done would export
+            # as struck-but-undated, so refuse rather than write a lie.
+            self._validate_date(fields["completed_at"], "completed_at")
+            # Judge against the status this call *lands on*, so reopening and
+            # clearing the date in one call is allowed.
+            landing = fields.get("status", n.status)
+            still_finished = (
+                landing == "done"
+                or (n.kind != "task" and landing in FINISHED_CONTAINER_STATES)
+            )
+            if fields["completed_at"] is None and still_finished:
+                raise CommandError(
+                    "invalid_field",
+                    "cannot clear completed_at while the node is finished; "
+                    "reopen it first",
+                )
         if "priority" in fields:
             self._validate_priority(fields["priority"], n.kind)
         if "followup_days" in fields:
@@ -295,6 +332,15 @@ class Commands:
         self._validate_date(fields.get("earliest_start"), "earliest_start")
         if "seq_index" in fields:
             fields["seq_source"] = "user"  # a hand-set order is user provenance
+        # Finishing a container stamps its completion date so it exports
+        # struck-through with a date, the same as a completed task; reopening
+        # it clears the stamp. An explicit completed_at in the same call wins.
+        if "status" in fields and n.kind != "task":
+            finishing = fields["status"] in FINISHED_CONTAINER_STATES
+            if finishing and not n.completed_at:
+                fields.setdefault("completed_at", self._now())
+            elif not finishing and n.completed_at:
+                fields.setdefault("completed_at", None)
 
         pre = self._graph()
         updated = self.repo.update_node(node_id, **fields)
@@ -1098,6 +1144,13 @@ class Commands:
                     fields["est_source"] = "user"
                 if spec.tags and list(spec.tags) != match.tags:
                     fields["tags"] = list(spec.tags)
+                # PM workbook columns: a blank cell never clears a stored
+                # value, matching how the planner fields already behave
+                for _attr in ("success_criteria", "troubleshooting",
+                              "team_lead", "responsible_party", "tier_level"):
+                    _v = getattr(spec, _attr)
+                    if _v is not None and _v != getattr(match, _attr):
+                        fields[_attr] = _v
                 if spec.ref and spec.ref != match.ref:
                     owner = ref_owner.get(spec.ref)
                     if owner is not None and owner != match.id:
@@ -1208,6 +1261,11 @@ class Commands:
                         remind=spec.remind,
                         wait_reason=spec.wait_reason,
                         repeat=spec.repeat,
+                        success_criteria=spec.success_criteria,
+                        troubleshooting=spec.troubleshooting,
+                        team_lead=spec.team_lead,
+                        responsible_party=spec.responsible_party,
+                        tier_level=spec.tier_level,
                     )
                 )
                 nodes_by_id[node.id] = node
@@ -1400,6 +1458,35 @@ class Commands:
             )
             deps_added.append(asdict(dep))
         return deps_added
+
+    def export_pm(self, path: str) -> dict:
+        """Write the workbook the project manager expects (spec §4.3, measured
+        from the user's template): preamble, colour legend, header on row 7,
+        and exactly the eleven columns `Project Milestone(s) … Notes`.
+
+        This format is a **deliverable, not a backup**. It has no Ref, Seq,
+        Depends on, Est, Tags, Steps, Links or Today column, so the write is
+        deliberately lossy and the omissions are returned rather than being
+        left for the user to discover. Use `export_excel` for a lossless copy.
+
+        Refs are still stamped on the database first, so a project authored
+        here keeps a stable identity even though the file cannot carry it."""
+        from .exporter import build_pm_export, write_pm_workbook
+        from .importer import generate_ref
+
+        path = normalize_path(path)
+        self._ensure_refs(generate_ref)
+        sheets, node_count, omissions = build_pm_export(self._graph())
+        try:
+            write_pm_workbook(path, sheets)
+        except OSError as exc:
+            raise CommandError(
+                "unwritable_path", f"could not write {path}: {exc}"
+            ) from None
+        return {
+            "exported": path, "sheets": len(sheets), "nodes": node_count,
+            "format": "pm", "omitted": omissions,
+        }
 
     def export_excel(self, path: str) -> dict:
         """Write the full graph as a template-format workbook: one sheet per

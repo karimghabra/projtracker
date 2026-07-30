@@ -532,11 +532,14 @@ def test_classify_health_covers_the_legend():
     assert classify_health(BLUE) == "off_track"
 
 
-def test_classify_health_defaults_to_not_begun():
-    # the user's rule: no colour means yellow
-    for washed_out in (None, "", "FFFFFF", "000000", "A5A5A5"):
-        assert classify_health(washed_out) == "not_begun"
-    assert classify_health("nonsense") == "not_begun"
+def test_classify_health_returns_none_when_no_colour_applied():
+    """None ('uncoloured') is distinct from 'not_begun' (explicitly yellow) —
+    conflating them made an authored yellow impossible to export."""
+    for washed_out in ("FFFFFF", "000000", "D9D9D9"):
+        assert classify_health(washed_out) is None
+    assert classify_health("nonsense") is None
+    assert classify_health(None) is None
+    assert classify_health(YELLOW) == "not_begun"
 
 
 def test_classify_health_is_hue_based_not_exact_match():
@@ -570,19 +573,28 @@ def test_fill_sets_health_and_strikethrough_still_sets_status():
         "done", "off_track")
     assert (tasks["red open"].status, tasks["red open"].health) == (
         None, "wont_finish")
+    # uncoloured is None, not 'not_begun': the user never painted it, and
+    # keeping that distinct is what lets an authored yellow round-trip
     assert (tasks["uncoloured"].status, tasks["uncoloured"].health) == (
-        None, "not_begun")
+        None, None)
 
 
-def test_containers_carry_no_health():
+def test_containers_carry_colour_and_strikethrough_too():
+    """The real workbook colours and strikes container rows, not just tasks —
+    a struck goal is the user saying "this question is answered" — so both
+    axes are read for every kind."""
     plan = classify_workbook({
         "S": RC((PH,), (("P",), (), (GREEN,)), ((None, "M"), (), (None, GREEN)),
-                ((None, None, "G"), (), (None, None, GREEN)),
+                ((None, None, "G"), (0, 0, 1), (None, None, GREEN)),
                 ((None, None, None, "t1"),))
     })
-    for n in plan.nodes:
-        if n.kind != "task":
-            assert n.health is None, f"{n.kind} must not carry a task colour"
+    by_kind = {n.kind: n for n in plan.nodes}
+    assert by_kind["project"].health == "on_track"
+    assert by_kind["milestone"].health == "on_track"
+    goal = by_kind["goal"]
+    assert (goal.health, goal.status) == ("on_track", "done")
+    # the task row is uncoloured and unstruck, so neither axis is set
+    assert (by_kind["task"].health, by_kind["task"].status) == (None, None)
 
 
 def test_theme_palette_uses_the_index_order_not_the_xml_order(tmp_path):
@@ -654,6 +666,7 @@ def test_health_and_completion_survive_an_export_round_trip(c, tmp_path):
         ("on track", GREEN, False),
         ("off track done", BLUE, True),
         ("doomed", RED, False),
+        ("not begun", YELLOW, False),
         ("plain", None, False),
     ]):
         cell = ws.cell(row=5 + i, column=4, value=name)
@@ -670,7 +683,10 @@ def test_health_and_completion_survive_an_export_round_trip(c, tmp_path):
         "on track": ("on_track", "active"),
         "off track done": ("off_track", "done"),
         "doomed": ("wont_finish", "active"),
-        "plain": ("not_begun", "active"),
+        # explicit yellow and no colour at all must stay distinguishable, or
+        # an authored yellow cannot survive being exported
+        "not begun": ("not_begun", "active"),
+        "plain": (None, "active"),
     }
 
     out = str(tmp_path / "out.xlsx")

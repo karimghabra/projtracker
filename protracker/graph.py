@@ -16,7 +16,7 @@ import dataclasses
 from collections import defaultdict
 from datetime import date
 
-from .model import Dependency, Node
+from .model import FINISHED_CONTAINER_STATES, Dependency, Node
 
 DAG_KINDS = ("task", "goal")  # only these may be dependency endpoints
 
@@ -88,10 +88,30 @@ class Graph:
 
     # --- completion roll-up (spec 3.2) ---
 
+    def finished_ancestor(self, nid: int) -> Node | None:
+        """The nearest ancestor container explicitly finished ('done' or
+        'abandoned'), if any.
+
+        A research goal is answered by evidence, not by exhausting its task
+        list — "we got what we needed from it" — and a pivot away from a goal
+        must not read as failure. Either way the work underneath is no longer
+        wanted, so it stops gating and stops appearing as available."""
+        n = self.nodes[nid]
+        while n.parent_id is not None:
+            n = self.nodes[n.parent_id]
+            if n.kind != "task" and n.status in FINISHED_CONTAINER_STATES:
+                return n
+        return None
+
     def is_complete(self, nid: int) -> bool:
         if nid in self._complete:
             return self._complete[nid]
         n = self.nodes[nid]
+        # An explicitly finished container is complete regardless of its
+        # children: the user has declared the question closed.
+        if n.kind != "task" and n.status in FINISHED_CONTAINER_STATES:
+            self._complete[nid] = True
+            return True
         if n.kind == "task":
             result = n.status == "done"
         elif n.kind == "goal":
@@ -268,6 +288,12 @@ class Graph:
             raise ValueError(f"node {tid} is a {t.kind}, not a task")
         if t.status in ("in_progress", "done", "dropped"):
             return t.status
+        # Work under a goal the user has closed or pivoted away from is no
+        # longer wanted. 'moot' is deliberately distinct from 'dropped': the
+        # task did not fail, it stopped being needed — and a pivot must never
+        # read as failure. Derived, so reopening the goal restores it.
+        if self.finished_ancestor(tid) is not None:
+            return "moot"
         blockers = self.blockers(tid)
         if not blockers:
             return "ready"

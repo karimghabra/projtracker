@@ -24,9 +24,14 @@ SPARSE = FIXTURES / "tracker_sparse.xlsx"
 # ---------------------------------------------------------------- real format
 
 
-def make_real_format(path: Path):
+def make_real_format(path: Path, extra_column: bool = False):
     """Mimics 'real Project Tracker Template.xlsx': preamble rows, header on
-    row 6, no Project column, extra columns, strikethrough = done."""
+    row 6, no Project column, strikethrough = done.
+
+    With `extra_column`, appends a column the importer does not recognise, so
+    the extras-and-review path stays exercised now that every column of the
+    real template is mapped."""
+    tail = ["Vendor"] if extra_column else []
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Rocket"
@@ -38,14 +43,15 @@ def make_real_format(path: Path):
     ws.append([])  # row 5 spacer
     ws.append(["Project Milestone(s)", "Goal(s)", "Tasks", "Team Lead",
                "Responsible Party", "Success Criteria", "Start", "Finish",
-               "Priority", "Trouble shooting Comments", "Notes"])
+               "Priority", "Trouble shooting Comments", "Notes"] + tail)
     ws.append(["Design phase", None, None, None, None, None, None,
                "2026-09-01", None, None, None])
     ws.append([None, "Engine spec", None, "Alice", None, None, None, None,
                None, None, "needs the fuel study first"])
     ws.append([None, None, "Draft requirements", "Alice", "Bob", "signed off",
                "2026-08-01", "2026-08-15", "High",
-               "blocked until vendor call", None])
+               "blocked until vendor call", None]
+              + (["Acme Ltd"] if extra_column else []))
     ws.append([None, None, "Review with team", None, None, None, None, None,
                None, None, None])
     done_row = ws.max_row
@@ -77,8 +83,15 @@ def test_real_format_classification(tmp_path):
     assert draft.kind == "task"
     assert draft.deadline == "2026-08-15"
     assert draft.earliest_start == "2026-08-01"
-    assert dict(draft.extras)["Team Lead"] == "Alice"
-    assert dict(draft.extras)["Trouble shooting Comments"] == "blocked until vendor call"
+    # every column of the real template is a first-class field, not an extra:
+    # these four used to be silently discarded
+    assert draft.extras == ()
+    assert draft.team_lead == "Alice"
+    assert draft.responsible_party == "Bob"
+    assert draft.success_criteria == "signed off"
+    assert draft.troubleshooting == "blocked until vendor call"
+    assert by_name["Engine spec"].team_lead == "Alice"  # containers too
+    assert project.tier_level == "1"  # preamble
     review = by_name["Review with team"]
     assert review.status == "done"  # strikethrough
     assert draft.status is None
@@ -217,7 +230,7 @@ def test_emit_prompt_writes_query_and_calls_no_llm(tmp_path):
 
 def test_outline_includes_extras(tmp_path):
     path = tmp_path / "real.xlsx"
-    make_real_format(path)
+    make_real_format(path, extra_column=True)
     r = augment.run(str(path), str(tmp_path / "out"), dry_run=True)
     c = Commands(Repository(r["outputs"]["db"]))
     plan = classify_workbook(read_workbook_rows(str(path)))
@@ -227,5 +240,14 @@ def test_outline_includes_extras(tmp_path):
         for n in c.list_nodes() if (n["kind"], n["name"]) in by_key
     }
     outline = augment.build_outline(c, [], extras_by_ref)
-    assert 'Team Lead: "Alice"' in outline
-    assert "blocked until vendor call" in outline
+    assert 'Vendor: "Acme Ltd"' in outline
+
+
+def test_unrecognised_column_is_reported_not_dropped(tmp_path):
+    """An unmapped column with content must be said out loud. Silence here is
+    how 31 cells of the user's real tracker went missing."""
+    path = tmp_path / "real.xlsx"
+    make_real_format(path, extra_column=True)
+    plan = classify_workbook(read_workbook_rows(str(path)))
+    reasons = [r["reason"] for r in plan.review]
+    assert any("'Vendor'" in r and "not imported" in r for r in reasons), reasons

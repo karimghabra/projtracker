@@ -61,7 +61,26 @@ def build_parser() -> argparse.ArgumentParser:
     st.add_argument("--est-source", dest="est_source")
     st.add_argument("--seq", type=int)
     st.add_argument("--tags")
-    st.add_argument("--status")
+    st.add_argument(
+        "--status",
+        help="containers only: active | paused | archived | done | abandoned "
+             "('done' = the goal is answered; 'abandoned' = pivoted away)",
+    )
+    st.add_argument(
+        "--health",
+        choices=["on_track", "not_begun", "off_track", "wont_finish", "none"],
+        help="the colour the PM workbook shows (green/yellow/blue/red)",
+    )
+    st.add_argument(
+        "--completed-at", dest="completed_at",
+        help="the date this went green-with-strikethrough (YYYY-MM-DD)",
+    )
+    st.add_argument("--success", dest="success_criteria",
+                    help="Success Criteria (workbook col F)")
+    st.add_argument("--trouble", dest="troubleshooting",
+                    help="Trouble shooting Comments (workbook col J)")
+    st.add_argument("--team-lead", dest="team_lead")
+    st.add_argument("--responsible", dest="responsible_party")
     st.add_argument("--priority", choices=["pinned", "high", "normal", "low", "none"])
     st.add_argument("--followup-days", dest="followup_days", type=int)
     st.add_argument(
@@ -165,9 +184,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     exp = sub.add_parser(
-        "export", help="export the graph as a template-format workbook"
+        "export", help="export the graph as an Excel workbook"
     )
     exp.add_argument("path")
+    exp.add_argument(
+        "--format", choices=["full", "pm"], default="full",
+        help="'full' (default) is the lossless interchange format; 'pm' is the "
+             "project manager's deliverable layout — 11 named columns, colour "
+             "legend, header on row 7 — and is deliberately lossy",
+    )
 
     sub.add_parser(
         "graph-data",
@@ -343,15 +368,22 @@ def dispatch(args: argparse.Namespace, c: Commands):
                 ("tags", _split_tags(args.tags)),
                 ("status", args.status),
                 ("repeat", args.repeat),
+                ("health", args.health),
+                ("completed_at", args.completed_at),
+                ("success_criteria", args.success_criteria),
+                ("troubleshooting", args.troubleshooting),
+                ("team_lead", args.team_lead),
+                ("responsible_party", args.responsible_party),
             )
             if value is not None
         }
         if not fields:
             raise CommandError("invalid_field", "nothing to update")
         # 'none' is the explicit clear sentinel; the is-not-None filter above
-        # would otherwise make clearing a priority impossible
-        if fields.get("priority") == "none":
-            fields["priority"] = None
+        # would otherwise make clearing these impossible
+        for clearable in ("priority", "health", "completed_at"):
+            if fields.get(clearable) == "none":
+                fields[clearable] = None
         return c.update_node(args.id, **fields)
     if cmd == "mv":
         return c.move_node(
@@ -402,6 +434,8 @@ def dispatch(args: argparse.Namespace, c: Commands):
             decisions[name] = target
         return c.import_excel(args.path, decisions=decisions or None)
     if cmd == "export":
+        if args.format == "pm":
+            return c.export_pm(args.path)
         return c.export_excel(args.path)
     if cmd == "graph-data":
         return c.graph_data()
@@ -732,6 +766,8 @@ def print_human(result, cmd: str):
             )
         _print_changes(result)
     elif cmd == "export":
+        for line in result.get("omitted", []):
+            print(f"  note: {line}")
         print(
             f"exported {result['nodes']} nodes across "
             f"{result['sheets']} sheets to {result['exported']}"

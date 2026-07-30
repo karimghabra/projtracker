@@ -26,7 +26,12 @@ CREATE TABLE IF NOT EXISTS nodes (
     actual_minutes INTEGER,
     tags          TEXT,                           -- JSON array
     ref           TEXT,                           -- stable dotted id (import)
-    health        TEXT,                           -- quarter outlook (tasks only)
+    health        TEXT,                           -- quarter outlook (any node)
+    success_criteria  TEXT,                       -- PM workbook col F
+    troubleshooting   TEXT,                       -- PM workbook col J
+    team_lead         TEXT,                       -- PM workbook col D
+    responsible_party TEXT,                       -- PM workbook col E
+    tier_level        TEXT,                       -- PM workbook preamble
     priority      TEXT,                           -- pinned/high/normal/low (tasks)
     followup_days INTEGER,                        -- auto follow-up on completion
     remind        INTEGER,                        -- 1 = auto-lands on Today at earliest_start
@@ -93,7 +98,8 @@ NODE_COLUMNS = (
     "seq_source", "deadline", "earliest_start", "weight", "est_minutes",
     "est_source", "actual_minutes", "tags", "ref", "health", "priority",
     "followup_days", "remind", "wait_reason", "repeat", "recur_key",
-    "links", "completed_at",
+    "links", "completed_at", "success_criteria", "troubleshooting",
+    "team_lead", "responsible_party", "tier_level",
 )
 
 
@@ -109,6 +115,9 @@ class Repository:
             "priority": "TEXT", "followup_days": "INTEGER",
             "remind": "INTEGER", "wait_reason": "TEXT", "repeat": "TEXT",
             "recur_key": "TEXT", "links": "TEXT",
+            "success_criteria": "TEXT", "troubleshooting": "TEXT",
+            "team_lead": "TEXT", "responsible_party": "TEXT",
+            "tier_level": "TEXT",
         })
         self._ensure_columns("daily_notes", {
             "node_id": "INTEGER REFERENCES nodes(id)",
@@ -163,6 +172,11 @@ class Repository:
             links=json.loads(row["links"]) if row["links"] else [],
             created_at=row["created_at"],
             completed_at=row["completed_at"],
+            success_criteria=row["success_criteria"],
+            troubleshooting=row["troubleshooting"],
+            team_lead=row["team_lead"],
+            responsible_party=row["responsible_party"],
+            tier_level=row["tier_level"],
         )
 
     @staticmethod

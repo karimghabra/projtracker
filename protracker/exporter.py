@@ -35,15 +35,57 @@ PLANNER_HEADER = (
 
 INVESTIGATE_PREFIX = "INVESTIGATE"
 
-# The colour legend, written back on the task-name cell so a round trip keeps
-# the convention the user actually reads. 'not_begun' is deliberately absent:
-# it is the default for an unfilled cell, so leaving it unpainted round-trips
-# identically and keeps the sheet looking the way it was authored.
+# The colour legend, written back on the name cell so a round trip keeps the
+# convention the user actually reads. 'not_begun' IS painted (yellow): it means
+# the user explicitly marked the row "not begun but will land this quarter",
+# which is a statement. A node with `health is None` was never coloured and is
+# left unpainted, so an untouched sheet still round-trips looking untouched.
 LEGEND_FILL = {
     "on_track": "70AD47",
+    "not_begun": "FFC000",
     "off_track": "5B9BD5",
     "wont_finish": "FF0000",
 }
+
+
+# --- the project manager's format (the deliverable) -----------------------
+#
+# Measured from the user's own template. This is a *deliverable*, not an
+# interchange format: it has no Ref, Seq, Depends on, Est, Tags, Steps, Links
+# or Today column, so an export in this shape is deliberately LOSSY and cannot
+# round-trip everything. `build_export` above stays the lossless format.
+
+PM_HEADER = (
+    "Project Milestone(s)", "Goal(s)", "Tasks", "Team Lead",
+    "Responsible Party", "Success Criteria", "Start", "Finish",
+    "Priority", "Trouble shooting Comments", "Notes",
+)
+
+# (row, text) in column F, above the header. Row 5 is left blank and the last
+# line sits on row 6, matching the live tracker rather than the template (the
+# template has no blank row and puts its header on row 6). Import finds the
+# header by NAME, so either layout reads back.
+PM_LEGEND = (
+    (1, "Green - on track for deadline"),
+    (2, "Yellow – tasks that have not begun but will be completed by "
+        "the quarter"),
+    (3, "Red – tasks that will not be done this quarter"),
+    (4, "Blue – off track & Blue w/ Strikethrough – off track but was "
+        "completed"),
+    (6, "Green & Strikethrough - completed (by deadline)"),
+)
+PM_HEADER_ROW = 7
+PM_PREAMBLE_LABELS = (
+    "Project name", "Tier Level", "Project start date", "Project finish date",
+)
+# the structural column each kind is written into (0-based); a project has no
+# row of its own — it is named in the preamble
+PM_COL_BY_KIND = {"milestone": 0, "goal": 1, "task": 2}
+# what the workbook cannot carry, reported so the loss is never silent
+PM_OMITTED_FIELDS = (
+    "dependencies", "sequence ranks", "estimates", "tags", "steps", "links",
+    "Today membership", "recurrence rules", "wait reasons", "completion dates",
+)
 
 
 def _sheet_title(name: str) -> str:
@@ -229,12 +271,138 @@ def build_export(
     return sheets, node_count
 
 
+def build_pm_export(g: Graph) -> tuple[list[tuple], int, list[str]]:
+    """Returns ([(title, preamble, rows, styles), ...], node_count, omissions).
+
+    One sheet per project in the PM's own layout. `preamble` is the four
+    labelled cells above the header; `rows` are 11-tuples matching PM_HEADER;
+    `styles` runs parallel to rows, naming the cell that carries the legend.
+
+    Pure — no openpyxl, no I/O — so the layout is unit-testable without a file.
+    """
+    def date_or_na(value: str | None) -> str:
+        return value or "N/A"
+
+    def row_for(n: Node, col: int) -> tuple:
+        cells = [None] * len(PM_HEADER)
+        cells[col] = n.name
+        cells[3] = n.team_lead
+        cells[4] = n.responsible_party
+        cells[5] = n.success_criteria
+        cells[6] = n.earliest_start
+        cells[7] = n.deadline
+        cells[8] = n.priority if n.kind == "task" else None
+        cells[9] = n.troubleshooting
+        cells[10] = n.description
+        return tuple(cells)
+
+    def style_for(n: Node, col: int) -> dict:
+        """Strikethrough only for what is genuinely finished, so a re-import
+        reproduces the same states. A container struck here is one the user
+        explicitly finished — derived completion is left unstruck, because
+        promoting it would turn "all its tasks happen to be done" into the
+        stronger claim "I closed this question"."""
+        if n.kind == "task":
+            done = n.status == "done"
+            health = n.health
+        else:
+            done = n.status == "done"
+            # a pivot is not a completion: show it as "will not be done"
+            health = "wont_finish" if n.status == "abandoned" else n.health
+        return {"col": col, "health": health, "done": done}
+
+    node_count = 0
+    sheets: list[tuple] = []
+    projects = sorted(
+        (n for n in g.nodes.values() if n.kind == "project"), key=lambda n: n.id
+    )
+    for project in projects:
+        rows: list[tuple] = []
+        styles: list[dict] = []
+        node_count += 1
+        for milestone in g.children(project.id):
+            node_count += 1
+            rows.append(row_for(milestone, PM_COL_BY_KIND["milestone"]))
+            styles.append(style_for(milestone, PM_COL_BY_KIND["milestone"]))
+            for goal in g.children(milestone.id):
+                node_count += 1
+                rows.append(row_for(goal, PM_COL_BY_KIND["goal"]))
+                styles.append(style_for(goal, PM_COL_BY_KIND["goal"]))
+                for task in g.tasks_under(goal.id):
+                    node_count += 1
+                    rows.append(row_for(task, PM_COL_BY_KIND["task"]))
+                    styles.append(style_for(task, PM_COL_BY_KIND["task"]))
+        preamble = (
+            project.name,
+            project.tier_level,
+            date_or_na(project.earliest_start),
+            date_or_na(project.deadline),
+        )
+        sheets.append((_sheet_title(project.name), preamble, rows, styles))
+
+    omissions = []
+    planner = [
+        n for n in g.nodes.values()
+        if n.kind == "task" and n.parent_id is None
+    ]
+    if planner:
+        omissions.append(
+            f"{len(planner)} standalone planner task(s) have no place in this "
+            "format and were not written"
+        )
+    omissions.append(
+        "this format carries no " + ", ".join(PM_OMITTED_FIELDS)
+        + " — use the default format for a lossless backup"
+    )
+    return sheets, node_count, omissions
+
+
+def write_pm_workbook(path: str, sheets: list[tuple]) -> None:
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill
+
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+    if not sheets:
+        # No projects yet — a workbook with zero sheets cannot be saved, and a
+        # blank form is the useful thing to hand back anyway.
+        sheets = [("Tracker", (None, None, None, None), [], [])]
+    for title, preamble, rows, styles in sheets:
+        ws = wb.create_sheet(title=title)
+        for i, label in enumerate(PM_PREAMBLE_LABELS, start=1):
+            ws.cell(row=i, column=1, value=label).font = Font(bold=True)
+            value = preamble[i - 1]
+            if value is not None:
+                ws.cell(row=i, column=2, value=value)
+        for r, text in PM_LEGEND:
+            ws.cell(row=r, column=6, value=text)
+        for c, head in enumerate(PM_HEADER, start=1):
+            ws.cell(row=PM_HEADER_ROW, column=c, value=head).font = Font(bold=True)
+        for offset, (row, style) in enumerate(zip(rows, styles), start=1):
+            r = PM_HEADER_ROW + offset
+            for c, value in enumerate(row, start=1):
+                if value is not None:
+                    ws.cell(row=r, column=c, value=value)
+            cell = ws.cell(row=r, column=style["col"] + 1)
+            hexval = LEGEND_FILL.get(style["health"])
+            if hexval:
+                cell.fill = PatternFill(
+                    "solid", start_color=hexval, end_color=hexval
+                )
+            if style["done"]:
+                cell.font = Font(strikethrough=True)
+        ws.freeze_panes = f"A{PM_HEADER_ROW + 1}"
+    wb.save(path)
+
+
 def write_workbook(path: str, sheets: list[tuple]) -> None:
     import openpyxl
     from openpyxl.styles import Font, PatternFill
 
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
+    if not sheets:  # an empty graph must still produce a loadable file
+        sheets = [("Tracker", PROJECT_HEADER, [], [])]
     for title, header, rows, styles in sheets:
         ws = wb.create_sheet(title=title)
         ws.append(list(header))
