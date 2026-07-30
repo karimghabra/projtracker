@@ -26,7 +26,7 @@
 
 import { useCallback, useMemo, useRef, useState } from 'react';
 import type { DerivedStatus } from '../../core/model.ts';
-import type { GraphEdgeView, GraphNodeView } from '../../commands/views.ts';
+import type { GraphDetail, GraphEdgeView, GraphNodeView } from '../../commands/views.ts';
 import { useApp } from '../state/store.ts';
 import { Empty } from '../components/ui.tsx';
 import {
@@ -75,6 +75,7 @@ export function GraphScreen() {
   const [projectIds, setProjectIds] = useState<string[] | null>(null);
   const [collapsed, setCollapsed] = useState<string[]>([]);
   const [focusId, setFocusId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<GraphDetail | 'auto'>('auto');
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
   const [dragFrom, setDragFrom] = useState<string | null>(null);
@@ -89,6 +90,8 @@ export function GraphScreen() {
     projectIds: projectIds ?? undefined,
     collapsed,
     focusId: focusId ?? undefined,
+    detail: detail === 'auto' ? undefined : detail,
+    zoom,
   });
 
   const needle = query.trim().toLowerCase();
@@ -167,6 +170,7 @@ export function GraphScreen() {
   };
 
   const filtering = focusId !== null || projectIds !== null || hideDone || collapsed.length > 0;
+  const folded = graph.levelCounts.goal - graph.nodes.length;
 
   return (
     <div className="graph-screen">
@@ -202,6 +206,23 @@ export function GraphScreen() {
         <span className="spacer" />
 
         <label className="inline nowrap" style={{ gap: 6 }}>
+          <span className="faint">Detail</span>
+          <select
+            className="select sm-select"
+            style={{ width: 132 }}
+            value={detail}
+            aria-label="Level of detail"
+            data-testid="detail-level"
+            onChange={(event) => setDetail(event.target.value as GraphDetail | 'auto')}
+          >
+            <option value="auto">Auto ({graph.detail}s)</option>
+            <option value="project">Projects ({graph.levelCounts.project})</option>
+            <option value="milestone">Milestones ({graph.levelCounts.milestone})</option>
+            <option value="goal">Goals ({graph.levelCounts.goal})</option>
+          </select>
+        </label>
+
+        <label className="inline nowrap" style={{ gap: 6 }}>
           <input
             type="checkbox"
             className="check"
@@ -224,15 +245,17 @@ export function GraphScreen() {
 
         <button
           className="btn ghost icon"
-          onClick={() => setZoom((z) => Math.min(1.8, +(z * 1.2).toFixed(3)))}
+          onClick={() => setZoom((z) => Math.min(2.6, +(z * 1.25).toFixed(3)))}
           aria-label="Zoom in"
+          title="Zoom in — on Auto detail this also reveals more of the hierarchy"
         >
           <IconPlus size={14} />
         </button>
         <button
           className="btn ghost icon"
-          onClick={() => setZoom((z) => Math.max(0.3, +(z / 1.2).toFixed(3)))}
+          onClick={() => setZoom((z) => Math.max(0.3, +(z / 1.25).toFixed(3)))}
           aria-label="Zoom out"
+          title="Zoom out — on Auto detail this folds the hierarchy up"
         >
           <IconMinus size={14} />
         </button>
@@ -245,6 +268,7 @@ export function GraphScreen() {
           disabled={!filtering && zoom === 1}
           onClick={() => {
             setZoom(1);
+            setDetail('auto');
             clearFilters();
           }}
         >
@@ -262,6 +286,15 @@ export function GraphScreen() {
           <button className="btn ghost sm" onClick={clearFilters} data-testid="clear-filters">
             Clear
           </button>
+        </div>
+      )}
+
+      {!filtering && detail === 'auto' && folded > 0 && (
+        <div className="graph-notice subtle" data-testid="graph-detail-notice">
+          <span className="grow">
+            Showing {graph.detail}s — {folded} more inside. Zoom in, or double-click a card, to
+            open it up. Links between what is folded away are still drawn.
+          </span>
         </div>
       )}
 
@@ -360,6 +393,11 @@ export function GraphScreen() {
                 isSource={dragFrom === node.id}
                 validTarget={dropTargetValid(node.id)}
                 onSelect={() => setSelected(node.id)}
+                onOpen={() => {
+                  // Straight to this one thing, at full detail.
+                  setFocusId(node.id);
+                  setDetail('goal');
+                }}
                 onStartLink={() => setDragFrom(node.id)}
                 onDropLink={() => {
                   if (dragFrom && dragFrom !== node.id) run((a) => a.addDep(dragFrom, node.id));
@@ -467,6 +505,15 @@ function Edge({
         opacity={edge.suppressed ? 0.45 : 1}
         markerEnd={isDep ? 'url(#arrow)' : 'url(#arrow-grey)'}
       />
+      {(edge.count ?? 1) > 1 && (
+        <g transform={`translate(${midX}, ${midY})`} pointerEvents="none">
+          <title>{edge.count} links folded together</title>
+          <circle r="9" fill="var(--bg-raised)" stroke="var(--accent)" strokeWidth="1.2" />
+          <text className="graph-edge-count" y="3.5">
+            {edge.count}
+          </text>
+        </g>
+      )}
       {onRemove && (
         <g
           className="edge-remove"
@@ -492,6 +539,7 @@ function GraphNode({
   isSource,
   validTarget,
   onSelect,
+  onOpen,
   onStartLink,
   onDropLink,
 }: {
@@ -503,6 +551,7 @@ function GraphNode({
   isSource: boolean;
   validTarget: boolean;
   onSelect: () => void;
+  onOpen: () => void;
   onStartLink: () => void;
   onDropLink: () => void;
 }) {
@@ -517,6 +566,7 @@ function GraphNode({
       data-matched={matched === true ? 'true' : undefined}
       opacity={dim ? 0.22 : 1}
       onMouseUp={dragging && !isSource ? onDropLink : undefined}
+      onDoubleClick={node.contains > 0 ? onOpen : undefined}
       style={{ cursor: 'pointer' }}
     >
       <rect
@@ -532,6 +582,15 @@ function GraphNode({
         {node.kind}
         {node.progress ? ` · ${node.progress.done}/${node.progress.total}` : ''}
       </text>
+      {node.contains > 0 && (
+        <>
+          <title>Double-click to open — {node.contains} inside</title>
+          <rect x={NODE_W - 34} y={7} width={27} height={14} rx={7} fill="var(--bg-raised)" stroke="var(--border-strong)" />
+          <text x={NODE_W - 20.5} y={17.5} className="graph-node-count">
+            {node.contains}
+          </text>
+        </>
+      )}
       <text x={11} y={34} className="graph-node-name">
         {node.name.length > 21 ? `${node.name.slice(0, 20)}…` : node.name}
       </text>

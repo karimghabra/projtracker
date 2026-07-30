@@ -26,7 +26,7 @@ import type {
   WaitingOn,
 } from '../core/model.ts';
 import { isContainerKind, pathNameOf, refOf } from '../core/model.ts';
-import type { EffectiveEdge, GraphIndex } from '../core/graph.ts';
+import type { GraphIndex } from '../core/graph.ts';
 import {
   blockersOf,
   derivedStatus,
@@ -389,13 +389,15 @@ export interface GraphNodeView {
   derived: DerivedStatus;
   health: Health;
   projectId?: NodeId;
-  /** Column: 0 project, 1 milestone, 2 goal. The hierarchy reads left to right. */
+  /** Column: depth within the hierarchy. The tree reads left to right. */
   rank: number;
   /** Row, in depth-first order so children sit beside their parent. */
   lane: number;
   progress: { done: number; total: number } | null;
   waitingOn?: WaitingOn;
   blockedBy: string[];
+  /** How many nodes are folded into this one at the current detail level. */
+  contains: number;
 }
 
 export interface GraphEdgeView {
@@ -406,6 +408,11 @@ export interface GraphEdgeView {
   seqSource?: SeqSource;
   depId?: string;
   suppressed?: string;
+  /**
+   * How many underlying links this one edge stands for. Above one it is a
+   * roll-up — the detail is inside, and clicking through reveals it.
+   */
+  count?: number;
 }
 
 export interface GraphBand {
@@ -416,6 +423,15 @@ export interface GraphBand {
   laneCount: number;
 }
 
+/** How far down the hierarchy the board is currently drawn. */
+export type GraphDetail = 'project' | 'milestone' | 'goal';
+
+export const DETAIL_DEPTH: Record<GraphDetail, number> = {
+  project: 0,
+  milestone: 1,
+  goal: 2,
+};
+
 export interface GraphView {
   nodes: GraphNodeView[];
   edges: GraphEdgeView[];
@@ -425,6 +441,10 @@ export interface GraphView {
   projects: { id: NodeId; name: string; nodes: number; hidden: boolean }[];
   /** How many nodes the current filters are leaving out. */
   hiddenCount: number;
+  /** The level actually drawn, after `auto` has been resolved. */
+  detail: GraphDetail;
+  /** How many cards each level would draw, for the level picker to say so. */
+  levelCounts: Record<GraphDetail, number>;
 }
 
 export interface GraphOptions {
@@ -440,20 +460,41 @@ export interface GraphOptions {
    * The answer to "I have twelve projects and I want to see this one thing".
    */
   focusId?: NodeId;
+  /** How deep to draw. Omit for `auto`, which picks a level that fits. */
+  detail?: GraphDetail;
+  /** Used by `auto`: zooming in buys more detail. */
+  zoom?: number;
 }
 
 /**
- * The graph the user draws on: project → milestone → goal, one band per
- * project, hierarchy flowing left to right.
- *
- * Tasks are deliberately not drawn. The spec asks for the hierarchy down to
- * goals, and a board carrying every task stops being readable at about the
- * third project — which defeats the purpose of having a board.
- *
- * Layout is a tidy tree: a goal takes the next free row, and a parent is
- * centred against its children. Dependency arrows are drawn on top of that
- * rather than driving it, because the hierarchy is the thing being navigated.
+ * Roughly how many cards read comfortably at once. Not a hard cap — the board
+ * still scrolls — but the point past which a reader stops seeing structure and
+ * starts seeing wallpaper.
  */
+const COMFORTABLE = 45;
+
+/**
+ * Pick the deepest level that still fits, given how far you have zoomed in.
+ *
+ * This is what makes the board hold up as projects accumulate: at three
+ * projects you see goals, at fifteen you see milestones, at forty you see
+ * projects — without anyone touching a filter.
+ *
+ * Zoom only ever *buys* detail; it never takes it away. Folding a board that
+ * already fits, just because someone zoomed out to look at all of it, would be
+ * exactly backwards — zooming out is how you see the whole thing. Deliberate
+ * coarsening is what the level picker is for.
+ *
+ * The budget grows as the square of the zoom because what runs out is screen
+ * area, not width.
+ */
+export function autoDetail(counts: Record<GraphDetail, number>, zoom = 1): GraphDetail {
+  const budget = COMFORTABLE * Math.max(1, zoom * zoom);
+  if (counts.goal <= budget) return 'goal';
+  if (counts.milestone <= budget) return 'milestone';
+  return 'project';
+}
+
 export function graphView(index: GraphIndex, today: DateOnly, options: GraphOptions = {}): GraphView {
   const state = index.state;
   const allProjects = rootProjects(index);
@@ -479,7 +520,10 @@ export function graphView(index: GraphIndex, today: DateOnly, options: GraphOpti
     }
   }
 
-  const isVisible = (id: NodeId) => {
+  const depthOf = (id: NodeId) => (index.ancestors.get(id) ?? []).length;
+
+  /** Everything the filters allow, before the detail level is applied. */
+  const allowed = (id: NodeId) => {
     const node = state.nodes[id];
     if (!node) return false;
     if (node.kind !== 'project' && node.kind !== 'milestone' && node.kind !== 'goal') return false;
@@ -487,11 +531,24 @@ export function graphView(index: GraphIndex, today: DateOnly, options: GraphOpti
     const projectId = node.kind === 'project' ? node.id : findProject(index, id)?.id;
     if (chosen && projectId && !chosen.has(projectId)) return false;
     if (focusSet && !focusSet.has(id)) return false;
-    // A collapsed band keeps its project card and nothing else.
     if (collapsed.has(projectId ?? '') && node.kind !== 'project') return false;
     if (options.hideDone && node.kind !== 'project' && isDone(index, id)) return false;
     return true;
   };
+
+  // What each level would cost, so `auto` can choose and the picker can say.
+  const levelCounts: Record<GraphDetail, number> = { project: 0, milestone: 0, goal: 0 };
+  for (const id of index.order) {
+    if (!allowed(id)) continue;
+    const depth = depthOf(id);
+    if (depth <= 0) levelCounts.project += 1;
+    if (depth <= 1) levelCounts.milestone += 1;
+    if (depth <= 2) levelCounts.goal += 1;
+  }
+
+  const detail = options.detail ?? autoDetail(levelCounts, options.zoom);
+  const maxDepth = DETAIL_DEPTH[detail];
+  const isVisible = (id: NodeId) => allowed(id) && depthOf(id) <= maxDepth;
 
   const rank = new Map<NodeId, number>();
   const lane = new Map<NodeId, number>();
@@ -541,8 +598,27 @@ export function graphView(index: GraphIndex, today: DateOnly, options: GraphOpti
 
   const visibleSet = new Set(rank.keys());
 
+  /**
+   * The drawn card a node is represented by: itself if drawn, otherwise the
+   * nearest drawn ancestor. This is what lets a link between two goals survive
+   * zooming out — it becomes a link between their milestones, then between
+   * their projects, rather than vanishing.
+   */
+  const liftToVisible = (id: NodeId): NodeId | null => {
+    if (visibleSet.has(id)) return id;
+    for (const ancestor of index.ancestors.get(id) ?? []) {
+      if (visibleSet.has(ancestor)) return ancestor;
+    }
+    return null;
+  };
+
   const nodes: GraphNodeView[] = [...visibleSet].map((id) => {
     const node = state.nodes[id]!;
+    const folded = (index.descendants.get(id) ?? []).filter((d) => {
+      const kind = state.nodes[d]?.kind;
+      return (kind === 'milestone' || kind === 'goal') && !visibleSet.has(d) && allowed(d);
+    }).length;
+
     return {
       id,
       kind: node.kind,
@@ -555,6 +631,7 @@ export function graphView(index: GraphIndex, today: DateOnly, options: GraphOpti
       progress: progressOf(index, id),
       waitingOn: node.waitingOn,
       blockedBy: blockersOf(index, id).map((b) => b.node.name),
+      contains: folded,
     };
   });
 
@@ -566,30 +643,57 @@ export function graphView(index: GraphIndex, today: DateOnly, options: GraphOpti
     if (parent && visibleSet.has(parent)) edges.push({ from: parent, to: id, via: 'child' });
   }
 
-  const relevant = index.edges.filter((e) => visibleSet.has(e.from) && visibleSet.has(e.to));
+  // Dependency and order edges, lifted to whatever is currently drawn and then
+  // merged. An edge that lifts to a single card is internal to it and dropped —
+  // the card's own contents are not a dependency on itself.
+  const merged = new Map<string, GraphEdgeView>();
+  const relevant = index.edges.filter((e) => allowed(e.from) && allowed(e.to));
   const live = relevant.filter((e) => !e.suppressed);
-  const kept = new Set(transitiveReduction(live).map(edgeKey));
+  const kept = new Set(transitiveReduction(live).map((e) => `${e.from}>${e.to}`));
 
   for (const edge of relevant) {
-    // A rank closure (1→2, 1→3, 2→3) draws as a chain; the implied edge is
-    // dropped for legibility only, never for meaning.
-    if (!edge.suppressed && edge.via === 'seq' && !kept.has(edgeKey(edge))) continue;
     if (edge.suppressed && !options.showGuessed) continue;
-    edges.push({
-      from: edge.from,
-      to: edge.to,
+
+    const from = liftToVisible(edge.from);
+    const to = liftToVisible(edge.to);
+    if (!from || !to || from === to) continue;
+
+    const lifted = from !== edge.from || to !== edge.to;
+    // A rank closure (1→2, 1→3, 2→3) draws as a chain; the implied edge is
+    // dropped for legibility only, never for meaning. Lifted edges skip this,
+    // because at a coarser level the closure is the whole point.
+    if (!lifted && !edge.suppressed && edge.via === 'seq' && !kept.has(`${edge.from}>${edge.to}`)) {
+      continue;
+    }
+
+    const key = `${from}>${to}`;
+    const existing = merged.get(key);
+    if (existing) {
+      existing.count = (existing.count ?? 1) + 1;
+      // A real link outranks an inferred order when they collapse together.
+      if (edge.via === 'dep' && existing.via !== 'dep') {
+        existing.via = 'dep';
+        existing.depId = edge.depId;
+        existing.suppressed = undefined;
+      }
+      continue;
+    }
+
+    merged.set(key, {
+      from,
+      to,
       via: edge.via,
       seqSource: edge.seqSource,
-      depId: edge.depId,
+      // Only an un-lifted edge can be removed by clicking it; a roll-up stands
+      // for several and has no single link to delete.
+      depId: lifted ? undefined : edge.depId,
       suppressed: edge.suppressed,
+      count: 1,
     });
   }
+  edges.push(...merged.values());
 
   const drawn = visibleSet.size;
-  const total = index.order.filter((id) => {
-    const kind = state.nodes[id]?.kind;
-    return kind === 'project' || kind === 'milestone' || kind === 'goal';
-  }).length;
 
   return {
     nodes,
@@ -602,12 +706,10 @@ export function graphView(index: GraphIndex, today: DateOnly, options: GraphOpti
       nodes: 1 + (index.descendants.get(p.id) ?? []).length,
       hidden: !visibleSet.has(p.id),
     })),
-    hiddenCount: Math.max(0, total - drawn),
+    hiddenCount: Math.max(0, levelCounts.goal - drawn),
+    detail,
+    levelCounts,
   };
-}
-
-function edgeKey(edge: EffectiveEdge): string {
-  return `${edge.from}>${edge.to}`;
 }
 
 // ------------------------------------------------------------ spreadsheet

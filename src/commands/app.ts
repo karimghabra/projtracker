@@ -22,6 +22,7 @@ import type {
   Ordering,
   ProtocolStep,
   ScaffoldBatch,
+  SeqSource,
   State,
   StoredStatus,
 } from '../core/model.ts';
@@ -101,6 +102,15 @@ export interface Delta {
 export interface AddNodeOptions {
   kind?: NodeKind;
   seq?: number;
+  /**
+   * Override where the rank came from.
+   *
+   * Normally supplying a number means you stated it. The importer is the
+   * exception: it always has a number to pass, but when the workbook had no
+   * Seq column that number came from row order — which is a guess, and has to
+   * be recorded as one so it will yield to a link drawn later.
+   */
+  seqSource?: SeqSource;
   notes?: string;
   ordering?: Ordering;
   tags?: string[];
@@ -325,7 +335,7 @@ export class App {
         notes: options.notes,
         seq: seqGiven ? options.seq! : nextSeq(draft, parentId),
         // A rank we picked is a guess and must never masquerade as a statement.
-        seqSource: seqGiven ? 'user' : 'assumed',
+        seqSource: options.seqSource ?? (seqGiven ? 'user' : 'assumed'),
         ordering: isContainerKind(kind) ? (options.ordering ?? 'sequential') : undefined,
         status: 'active',
         health: 'not_begun',
@@ -1265,6 +1275,7 @@ export class App {
             milestoneSeq = row.seq ?? milestoneSeq + 1;
             milestoneId = app.addNode(projectId, row.name, {
               seq: milestoneSeq,
+              seqSource: row.seq === undefined ? 'assumed' : 'user',
               notes: row.notes,
               tags: row.tags,
             }).id;
@@ -1284,6 +1295,7 @@ export class App {
             goalSeq = row.seq ?? goalSeq + 1;
             goalId = app.addNode(milestoneId, row.name, {
               seq: goalSeq,
+              seqSource: row.seq === undefined ? 'assumed' : 'user',
               notes: row.notes,
               tags: row.tags,
             }).id;
@@ -1306,6 +1318,8 @@ export class App {
           taskSeq = row.seq ?? taskSeq + 1;
           const taskId = app.addNode(goalId, row.name, {
             seq: taskSeq,
+            // Row order is a guess about intent, not a statement of it.
+            seqSource: row.seq === undefined ? 'assumed' : 'user',
             notes: row.notes,
             tags: row.tags,
             plannedFor: row.plannedFor,

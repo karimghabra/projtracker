@@ -597,3 +597,23 @@ kbd {
 .band-toggle text { pointer-events: none; }
 
 .flip { transform: rotate(180deg); }
+
+.graph-node-count {
+  font-size: 9px;
+  font-weight: 700;
+  fill: var(--text-muted);
+  text-anchor: middle;
+  pointer-events: none;
+}
+
+.graph-edge-count {
+  font-size: 9.5px;
+  font-weight: 700;
+  fill: var(--accent);
+  text-anchor: middle;
+}
+
+.graph-notice.subtle {
+  background: var(--bg-sunken);
+  color: var(--text-muted);
+}

@@ -238,3 +238,59 @@ describe('applying an import', () => {
     expect(reloaded.state.nodes).toEqual(h.app.state.nodes);
   });
 });
+
+describe('where an imported order came from', () => {
+  it('marks row order as a guess when the sheet has no Seq column', async () => {
+    const book = new ExcelJS.Workbook();
+    const sheet = book.addWorksheet('Bench');
+    sheet.addRow(['Goal', 'Task']);
+    sheet.addRow(['Staining', 'Order antibodies']);
+    sheet.addRow(['', 'Optimise dilution']);
+    sheet.addRow(['', 'Run the panel']);
+
+    const reread = new ExcelJS.Workbook();
+    await reread.xlsx.load(await book.xlsx.writeBuffer());
+
+    const h = harness();
+    h.app.applyImport(readWorkbook(reread as never));
+
+    // Nobody said this was the order — it is where the rows happened to sit.
+    for (const name of ['Order antibodies', 'Optimise dilution', 'Run the panel']) {
+      expect(h.app.flat().find((n) => n.name === name)!.seqSource).toBe('assumed');
+    }
+  });
+
+  it('marks a Seq column as a statement', async () => {
+    const h = harness();
+    h.app.applyImport(await fixture());
+
+    // The Tendon sheet has a Seq column, so those numbers were stated.
+    expect(h.app.flat().find((n) => n.name === 'Export STL')!.seqSource).toBe('user');
+    // The Assays sheet has no Seq column at all.
+    expect(h.app.flat().find((n) => n.name === 'Optimise dilution')!.seqSource).toBe('assumed');
+  });
+
+  it('an imported guess yields to a link drawn afterwards', async () => {
+    const book = new ExcelJS.Workbook();
+    const sheet = book.addWorksheet('Bench');
+    sheet.addRow(['Goal', 'Task']);
+    sheet.addRow(['Staining', 'Second in the file']);
+    sheet.addRow(['', 'First in reality']);
+    const reread = new ExcelJS.Workbook();
+    await reread.xlsx.load(await book.xlsx.writeBuffer());
+
+    const h = harness();
+    h.app.applyImport(readWorkbook(reread as never));
+
+    const first = h.app.flat().find((n) => n.name === 'First in reality')!;
+    const second = h.app.flat().find((n) => n.name === 'Second in the file')!;
+    // Row order put them the wrong way round, so the second is blocked.
+    expect(h.app.node(first.id).derived).toBe('blocked');
+
+    // Saying what actually gates what retires the guess, rather than colliding
+    // with it — which is the whole reason provenance is tracked.
+    h.app.addDep(first.id, second.id);
+    expect(h.app.node(first.id).derived).toBe('ready');
+    expect(h.app.node(second.id).derived).toBe('blocked');
+  });
+});
