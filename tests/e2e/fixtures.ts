@@ -88,7 +88,9 @@ export async function createProject(
       const group = groups.nth(groupIndex++);
       for (const [tIndex, task] of (goal.tasks ?? []).entries()) {
         await group.getByRole('button', { name: 'Add task' }).click();
-        await group.getByLabel(`Task ${tIndex + 1} of ${goal.name}`).fill(task);
+        // Exact, because "Sequence number for task 1 of CAD" also contains
+        // "Task 1 of CAD" and getByLabel matches substrings.
+        await group.getByLabel(`Task ${tIndex + 1} of ${goal.name}`, { exact: true }).fill(task);
       }
     }
   }

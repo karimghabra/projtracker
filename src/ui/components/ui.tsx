@@ -259,11 +259,19 @@ export function InlineEdit({
   }, [value, editing]);
 
   if (!editing) {
+    // Double-click, not single. A single click belongs to whatever contains
+    // this — selecting a row should not drop you into a text field.
     return (
       <button
         className={className}
-        onClick={() => setEditing(true)}
-        aria-label={ariaLabel ? `${ariaLabel}: ${value}. Click to rename.` : undefined}
+        onDoubleClick={() => setEditing(true)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === 'F2') {
+            event.preventDefault();
+            setEditing(true);
+          }
+        }}
+        aria-label={ariaLabel ? `${ariaLabel}: ${value}. Press Enter to rename.` : undefined}
         style={{
           border: 0,
           background: 'transparent',

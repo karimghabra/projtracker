@@ -68,7 +68,8 @@ export function NewProjectWizard({ onClose }: { onClose: () => void }) {
     step === 0 ? name.trim().length > 0 : step === 1 ? namedMilestones.length > 0 : true;
 
   const commit = () => {
-    const result = run((app) => {
+    const result = run((outer) =>
+      outer.transaction(`Create project "${name.trim()}"`, (app) => {
       const projectId = app.addProject(name.trim(), { notes: notes.trim() || undefined }).id;
 
       for (const milestone of namedMilestones) {
@@ -94,7 +95,8 @@ export function NewProjectWizard({ onClose }: { onClose: () => void }) {
         }
       }
       return { ok: true as const, message: `Created "${name.trim()}".` };
-    });
+      }),
+    );
     if (result) onClose();
   };
 

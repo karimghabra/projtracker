@@ -135,11 +135,25 @@ export class App {
   }
 
   private mutate<T>(label: string, fn: (draft: State) => T): T {
-    return this.store.mutate(label, (draft) => {
-      const result = fn(draft);
+    const result = this.store.mutate(label, (draft) => {
+      const value = fn(draft);
       syncGeneratedReminders(draft);
-      return result;
+      return value;
     });
+    // Inside a transaction the draft keeps its identity while its contents
+    // change, so identity alone cannot tell the cache it is stale.
+    this.cachedIndex = undefined;
+    return result;
+  }
+
+  /**
+   * Several verbs, one undo step. Used by the project wizard, which is forty
+   * calls expressing a single decision.
+   */
+  transaction<T>(label: string, fn: (app: App) => T): T {
+    const result = this.store.transaction(label, () => fn(this));
+    this.cachedIndex = undefined;
+    return result;
   }
 
   // ------------------------------------------------------------- resolving

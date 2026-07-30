@@ -73,6 +73,8 @@ export class Store {
   private current: State;
   private past: HistoryEntry[] = [];
   private future: HistoryEntry[] = [];
+  /** Set while a transaction is open; every mutation lands on this draft. */
+  private batch: State | null = null;
 
   constructor(
     private readonly vault: Vault,
@@ -81,8 +83,12 @@ export class Store {
     this.current = initial ?? loadState(vault);
   }
 
+  /**
+   * Inside a transaction this is the evolving draft, so a verb that validates
+   * against current state sees what earlier verbs in the same transaction did.
+   */
   get state(): State {
-    return this.current;
+    return this.batch ?? this.current;
   }
 
   /** A defensive copy, for callers that intend to read at leisure. */
@@ -112,8 +118,39 @@ export class Store {
    * if it throws, nothing is committed and no history entry is recorded.
    */
   mutate<T>(label: string, fn: (draft: State) => T): T {
+    // Inside a transaction, join it: no snapshot, no history entry, no write.
+    // The transaction does all three once, at the end.
+    if (this.batch) return fn(this.batch);
+
     const draft = cloneState(this.current);
     const result = fn(draft);
+
+    this.past.push({ label, state: this.current });
+    if (this.past.length > HISTORY_LIMIT) this.past.shift();
+    this.future = [];
+    this.current = draft;
+    this.persist();
+    return result;
+  }
+
+  /**
+   * Run several mutations as one undoable step.
+   *
+   * Creating a project from the wizard is forty calls and one decision; undo
+   * should honour the decision, not the calls. If the body throws, nothing is
+   * committed — the draft is simply discarded.
+   */
+  transaction<T>(label: string, fn: () => T): T {
+    if (this.batch) return fn();
+
+    const draft = cloneState(this.current);
+    this.batch = draft;
+    let result: T;
+    try {
+      result = fn();
+    } finally {
+      this.batch = null;
+    }
 
     this.past.push({ label, state: this.current });
     if (this.past.length > HISTORY_LIMIT) this.past.shift();

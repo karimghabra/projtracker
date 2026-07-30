@@ -93,7 +93,9 @@ function TreeRow({
   onSelect: (id: string) => void;
 }) {
   const { run } = useApp();
-  const [open, setOpen] = useState(node.depth < 2);
+  // Open down to tasks by default. This is the editor for the work; hiding the
+  // work behind two clicks makes it a viewer.
+  const [open, setOpen] = useState(node.depth < 3);
   const [adding, setAdding] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const childKind = childKindOf(node.kind);
@@ -139,7 +141,7 @@ function TreeRow({
           {node.kind}
         </span>
 
-        <span className="grow" style={{ minWidth: 0 }} onClick={(event) => event.stopPropagation()}>
+        <span className="grow" style={{ minWidth: 0 }}>
           <InlineEdit
             value={node.name}
             ariaLabel={`Name of ${node.kind}`}
