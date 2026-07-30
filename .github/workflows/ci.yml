@@ -141,3 +141,42 @@ jobs:
           test -s "$RUNNER_TEMP/board.xlsx"
           preview=$(node dist/cli/bin.js import "$RUNNER_TEMP/board.xlsx" --preview)
           case "$preview" in *"Smoke test"*) ;; *) echo "the export did not read back"; exit 1 ;; esac
+
+      # The one thing that has to survive an update going wrong. Deliberately
+      # destroys the vault between the backup and the restore, and checks the
+      # files come back byte for byte rather than merely looking similar.
+      - name: A backup restores the vault exactly
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export PROTRACKER_VAULT="$RUNNER_TEMP/vault"
+          node dist/cli/bin.js backup "$RUNNER_TEMP/backup.xlsx"
+          test -s "$RUNNER_TEMP/backup.xlsx"
+          before=$(find "$PROTRACKER_VAULT" -name '*.pt' | sort | xargs cat | shasum | cut -d' ' -f1)
+
+          node dist/cli/bin.js rm smoke-test
+          node dist/cli/bin.js add project "Something else entirely"
+
+          # Without --yes it must refuse, because this cannot be undone.
+          if node dist/cli/bin.js restore "$RUNNER_TEMP/backup.xlsx"; then
+            echo "restore went ahead without being asked twice"; exit 1
+          fi
+
+          node dist/cli/bin.js restore "$RUNNER_TEMP/backup.xlsx" --yes
+          after=$(find "$PROTRACKER_VAULT" -name '*.pt' | sort | xargs cat | shasum | cut -d' ' -f1)
+          test "$before" = "$after"
+
+          # And what the backup did not have is gone, not merged alongside.
+          tree=$(node dist/cli/bin.js tree)
+          case "$tree" in *"Something else entirely"*) echo "restore merged instead of replacing"; exit 1 ;; esac
+
+      # An export is a report, not a backup, and restoring from one would
+      # silently invent a board that merely resembles the old one.
+      - name: An export is refused as a backup
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export PROTRACKER_VAULT="$RUNNER_TEMP/vault"
+          if node dist/cli/bin.js restore "$RUNNER_TEMP/board.xlsx" --yes; then
+            echo "an export was accepted as a backup"; exit 1
+          fi

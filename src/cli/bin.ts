@@ -16,8 +16,9 @@ import { App } from '../commands/app.ts';
 import { toCommandError } from '../commands/errors.ts';
 import { formatDayMonth, systemClock } from '../core/dates.ts';
 import { formatOffset } from '../core/protocols.ts';
-import { readWorkbookFile } from '../store/excel.ts';
+import { readBackupFile, readWorkbookFile } from '../store/excel.ts';
 import { exportWorkbook } from '../store/excelExport.ts';
+import { APP_VERSION } from '../core/version.ts';
 import { NodeVault } from '../store/nodeVault.ts';
 
 const HELP = `protracker — a lab project tracker
@@ -69,7 +70,9 @@ usage: pt [--vault DIR] [--json] <command> [args]
 
   bringing a workbook across
     import <file.xlsx> [--preview] [--merge]
-    export <file.xlsx>        write the board back out as a workbook
+    export <file.xlsx>        the readable workbook, for a person
+    backup <file.xlsx>        the workbook plus the whole vault, for a restore
+    restore <file.xlsx> --yes replace everything from a backup
 
   the vault
     where                     where the files are
@@ -422,6 +425,45 @@ async function run(
       writeFileSync(file, bytes);
       const delta = { ok: true as const, message: `Wrote ${bytes.length} bytes to ${file}.` };
       return say(delta), 0;
+    }
+
+    case 'backup': {
+      const file = rest[0];
+      if (!file) throw new Error('Where to? pt backup "Protracker backup.xlsx"');
+      // The same workbook `export` writes, plus the vault itself on a hidden
+      // sheet. Scriptable on purpose: this is the form that belongs in a cron
+      // job, and a backup nobody has to remember to take is the only kind that
+      // reliably exists.
+      const files = app.backupFiles();
+      const bytes = await exportWorkbook(app.state, app.today, {
+        files,
+        meta: { generatedAt: app.now, version: APP_VERSION },
+      });
+      writeFileSync(file, bytes);
+      return say({ message: `Backed up ${Object.keys(files).length} vault file(s) to ${file}.` }), 0;
+    }
+
+    case 'restore': {
+      const file = rest[0];
+      if (!file) throw new Error('Restore from what? pt restore "Protracker backup.xlsx"');
+      const read = await readBackupFile(readFileSync(file));
+      if (!read) {
+        throw new Error(
+          `${file} has no backup in it. An export is a report; use a file written by "pt backup".`,
+        );
+      }
+      if (read.problems.length) {
+        // Nothing is written. Naming what is wrong beats restoring most of it.
+        for (const problem of read.problems) out(problem);
+        throw new Error('That backup is damaged, so nothing was changed.');
+      }
+      if (flags['yes'] !== true) {
+        out(`This replaces everything in ${root} with ${Object.keys(read.files).length} file(s)`);
+        out(`from ${file}, backed up ${read.meta.generatedAt || 'at an unknown time'}.`);
+        out('It cannot be undone. Add --yes to go ahead.');
+        return 1;
+      }
+      return say(app.restoreBackup(read.files)), 0;
     }
 
     // -------------------------------------------------------------- vault

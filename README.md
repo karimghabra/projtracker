@@ -145,7 +145,9 @@ pt progress                   # which projects have gone quiet
 pt crosslink edc-nhs b12      # start a run; its steps land in the to-do list
 pt remind "Order collagen" --on 2026-08-14 --span 3
 pt import "My Tracker.xlsx" --preview
-pt export board.xlsx
+pt export board.xlsx           # a report, for a person
+pt backup backup.xlsx          # the same, plus the whole vault: restorable
+pt restore backup.xlsx --yes   # replace everything from a backup
 pt undo
 ```
 
