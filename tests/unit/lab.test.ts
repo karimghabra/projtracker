@@ -87,9 +87,11 @@ describe('experiments in the app', () => {
     });
 
     // Seeding day: the reminder is on today's list without anyone adding it.
-    expect(h.app.todayList().items.map((i) => i.title)).toEqual([
-      'Osteogenic culture: Seed 12 samples',
-    ]);
+    // The row carries the step; the experiment's name is the group heading, so
+    // a dozen stages do not repeat it a dozen times.
+    const [row] = h.app.todayList().items;
+    expect(row!.title).toBe('Seed 12 samples');
+    expect(row!.group).toMatchObject({ label: 'Osteogenic culture' });
 
     // The endpoint shows on the calendar for its month.
     const endDay = h.app.calendar('2026-08-17').find((d) => d.date === '2026-08-17');
@@ -220,13 +222,17 @@ describe('crosslinking runs', () => {
 
     // Steps due today are already on today's list. Nobody typed them in.
     const titles = h.app.todayList().items.map((i) => i.title);
-    expect(titles).toContain('EDC/NHS crosslinking: Prepare MES buffer and EDC/NHS solution');
-    expect(titles).toContain('EDC/NHS crosslinking: Wash in distilled water (3 changes)');
+    expect(titles).toContain('Prepare MES buffer and EDC/NHS solution');
+    expect(titles).toContain('Wash in distilled water (3 changes)');
+
+    // They arrive as one group, so a run does not bury the rest of the day.
+    const groups = new Set(h.app.todayList().items.map((i) => i.group?.label));
+    expect([...groups]).toEqual(['EDC/NHS crosslinking']);
 
     // Tomorrow's step is waiting, not shown today.
-    expect(titles).not.toContain('EDC/NHS crosslinking: Lyophilise');
+    expect(titles).not.toContain('Lyophilise');
     h.clock.set('2026-07-31T06:00');
-    expect(h.app.todayList().items.map((i) => i.title)).toContain('EDC/NHS crosslinking: Lyophilise');
+    expect(h.app.todayList().items.map((i) => i.title)).toContain('Lyophilise');
   });
 
   it('moves the batches through their lifecycle', () => {

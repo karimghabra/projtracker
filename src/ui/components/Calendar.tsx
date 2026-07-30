@@ -89,7 +89,7 @@ export function Calendar({ onPickDay }: { onPickDay?: (date: string) => void }) 
                   className={`calendar-event ${KIND_TONE[event.kind]} ${event.done ? 'done' : ''}`}
                   title={`${event.title}${event.time ? ` at ${event.time}` : ''}`}
                 >
-                  {event.time && <span className="mono">{event.time}</span>} {event.title}
+                  {event.title}
                 </div>
               ))}
               {day.events.length > 3 && (

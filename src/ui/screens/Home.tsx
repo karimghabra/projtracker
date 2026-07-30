@@ -16,6 +16,8 @@ import { NewProjectWizard } from './NewProject.tsx';
 import {
   IconCalendar,
   IconCheck,
+  IconChevronDown,
+  IconChevronRight,
   IconClock,
   IconFlask,
   IconHome,
@@ -91,9 +93,13 @@ function TodayPanel() {
           </Empty>
         ) : (
           <div className="list" data-testid="today-list">
-            {today.items.map((item) => (
-              <TodayRow key={item.key} item={item} />
-            ))}
+            {groupRuns(today.items).map((run) =>
+              run.group ? (
+                <TodayGroup key={run.group.key} label={run.group.label} sub={run.group.sub} items={run.items} />
+              ) : (
+                run.items.map((item) => <TodayRow key={item.key} item={item} />)
+              ),
+            )}
           </div>
         )}
       </div>
@@ -106,6 +112,59 @@ function TodayPanel() {
         />
       </div>
     </section>
+  );
+}
+
+/**
+ * Consecutive rows from the same protocol run or experiment, collected.
+ *
+ * A crosslinking run puts eight timed steps on the list at once; left flat they
+ * bury everything else the day contains. The command layer marks them with a
+ * group, and this turns that into one box with a heading.
+ */
+function groupRuns(
+  items: TodayItemView[],
+): { group?: TodayItemView['group']; items: TodayItemView[] }[] {
+  const out: { group?: TodayItemView['group']; items: TodayItemView[] }[] = [];
+  for (const item of items) {
+    const last = out.at(-1);
+    if (item.group && last?.group?.key === item.group.key) last.items.push(item);
+    else if (!item.group && last && !last.group) last.items.push(item);
+    else out.push({ group: item.group, items: [item] });
+  }
+  return out;
+}
+
+function TodayGroup({
+  label,
+  sub,
+  items,
+}: {
+  label: string;
+  sub?: string;
+  items: TodayItemView[];
+}) {
+  const [open, setOpen] = useState(true);
+  const done = items.filter((i) => i.done).length;
+
+  return (
+    <div className="today-group" data-testid={`today-group-${label}`}>
+      <button
+        className="today-group-head"
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        aria-label={`${label}: ${done} of ${items.length} steps done`}
+      >
+        {open ? <IconChevronDown size={13} /> : <IconChevronRight size={13} />}
+        <strong>{label}</strong>
+        {sub && <span className="faint">{sub}</span>}
+        <span className="spacer" />
+        <span className="chip mono">
+          {done}/{items.length}
+        </span>
+      </button>
+      {open && items.map((item) => <TodayRow key={item.key} item={item} />)}
+    </div>
   );
 }
 
@@ -144,10 +203,10 @@ function TodayRow({ item }: { item: TodayItemView }) {
             </span>
           )}
           {item.source === 'planned' && <span className="chip accent">planned</span>}
-          {item.origin === 'protocol' && <span className="chip warn">protocol</span>}
-          {item.origin === 'experiment' && <span className="chip info">experiment</span>}
+          {!item.group && item.origin === 'protocol' && <span className="chip warn">protocol</span>}
+          {!item.group && item.origin === 'experiment' && <span className="chip info">experiment</span>}
           {item.reminderTime && <span className="row-sub mono">{item.reminderTime}</span>}
-          {item.reminderNotes && <span className="row-sub">{item.reminderNotes}</span>}
+          {!item.group && item.reminderNotes && <span className="row-sub">{item.reminderNotes}</span>}
         </div>
       </div>
 

@@ -96,9 +96,10 @@ test.describe('crosslinking', () => {
     // ...and today's list has the steps due today, without anyone typing them.
     await page.getByTestId('nav-home').click();
     const list = page.getByTestId('today-list');
-    await expect(list.getByText(/Prepare MES buffer/)).toBeVisible();
-    await expect(list.getByText(/Wash in distilled water/)).toBeVisible();
-    await expect(list.getByText('protocol').first()).toBeVisible();
+    await expect(list.getByText('Prepare MES buffer and EDC/NHS solution')).toBeVisible();
+    await expect(list.getByText('Wash in distilled water (3 changes)')).toBeVisible();
+    // One group heading, not eight loose rows competing with the day's work.
+    await expect(list.getByRole('button', { name: /EDC\/NHS crosslinking: 0 of \d+ steps done/ })).toBeVisible();
   });
 
   test('ticking the reminder on Today ticks the protocol step', async ({ h }) => {
@@ -109,7 +110,7 @@ test.describe('crosslinking', () => {
 
     await page.getByTestId('nav-home').click();
     await page
-      .getByRole('checkbox', { name: /Complete EDC\/NHS crosslinking: Prepare MES buffer/ })
+      .getByRole('checkbox', { name: 'Complete Prepare MES buffer and EDC/NHS solution' })
       .check();
 
     await page.getByTestId('nav-inventory').click();
