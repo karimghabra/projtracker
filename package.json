@@ -14,17 +14,17 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "npm run build:ui && npm run build:node",
+    "build": "npm run build:ui && npm run build:electron",
     "build:ui": "vite build",
-    "build:node": "tsc -p tsconfig.node.json",
     "build:electron": "node scripts/build-electron.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:all": "npm run typecheck && npm run test && npm run build:ui && npm run test:e2e",
-    "fieldtest": "node --experimental-strip-types tests/fieldtest/run.ts",
-    "pack": "npm run build:ui && npm run build:electron && electron-builder --win --publish never"
+    "fieldtest": "node dist/fieldtest/run.js",
+    "start": "npm run build && electron .",
+    "pack": "npm run build && electron-builder --win --publish never"
   },
   "dependencies": {
     "exceljs": "^4.4.0",
@@ -65,7 +65,8 @@
           ]
         }
       ],
-      "artifactName": "Protracker-Setup-${version}.${ext}"
+      "artifactName": "Protracker-Setup-${version}.${ext}",
+      "icon": "build/icon.ico"
     },
     "nsis": {
       "oneClick": false,
@@ -73,7 +74,11 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Protracker"
+      "shortcutName": "Protracker",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "deleteAppDataOnUninstall": false
     }
   }
 }

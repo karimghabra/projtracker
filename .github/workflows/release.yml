@@ -1,0 +1,88 @@
+name: Release
+
+# Builds the Windows installer and attaches it to a GitHub release.
+#
+# Triggered by a version tag, or by hand from the Actions tab when you just
+# want a fresh build to download.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to publish as (e.g. v1.0.0). Leave blank for a draft named after the run.'
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    name: Windows installer
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Nothing ships that has not passed. A broken installer is worse than no
+      # installer, because it looks like it worked.
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm run test
+
+      - name: Build the UI
+        run: npm run build:ui
+
+      - name: Build the shell and the CLI
+        run: npm run build:electron
+
+      - name: Package
+        run: npx electron-builder --win --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Name the tag
+        id: name
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=build-${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload the installer as a build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Protracker-Windows-Setup
+          path: release/*.exe
+          retention-days: 30
+
+      - name: Publish a release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.name.outputs.tag }}
+          name: Protracker ${{ steps.name.outputs.tag }}
+          draft: false
+          prerelease: ${{ github.ref_type != 'tag' }}
+          generate_release_notes: true
+          files: release/*.exe
+          body: |
+            **Windows installer** — download `Protracker-Setup-*.exe` below and run it.
+
+            No Python, no Rust, no compilers. It installs per-user by default, so
+            it does not need an administrator.
+
+            Your data lives in plain text files. Settings shows you where.

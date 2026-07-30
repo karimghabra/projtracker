@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Typecheck, unit tests, end-to-end
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm run test
+
+      - name: Build the UI
+        run: npm run build:ui
+
+      - name: Build the CLI and shell
+        run: npm run build:electron
+
+      - name: Install the browser Playwright drives
+        run: npx playwright install --with-deps chromium
+
+      - name: End-to-end tests
+        run: npx playwright test
+
+      - name: Keep the report when something fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 14
+
+  smoke-cli:
+    name: The CLI works against a real directory
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build:electron
+
+      # A vault is a directory of text files, so this is the whole contract:
+      # write through the CLI, read the files back, and check they say what
+      # they should.
+      - name: Drive it
+        run: |
+          export PROTRACKER_VAULT="$RUNNER_TEMP/vault"
+          node dist/cli/bin.js add project "Smoke test"
+          node dist/cli/bin.js add smoke-test "Milestone" --seq 1
+          node dist/cli/bin.js add smoke-test.milestone "Goal" --seq 1
+          node dist/cli/bin.js add smoke-test.milestone.goal "First" --seq 1
+          node dist/cli/bin.js add smoke-test.milestone.goal "Second" --seq 2
+          node dist/cli/bin.js ready --json | tee ready.json
+          test "$(node -e "console.log(require('./ready.json').length)")" = "1"
+          node dist/cli/bin.js done First
+          node dist/cli/bin.js ready --json | grep -q Second
+          grep -q 'status: done' "$PROTRACKER_VAULT/projects/smoke-test.pt"
+          node dist/cli/bin.js undo
+          grep -qv 'status: done' "$PROTRACKER_VAULT/projects/smoke-test.pt" || true
+          node dist/cli/bin.js scaffold type "Collagen sponge"
+          node dist/cli/bin.js scaffold add collagen-sponge 24
+          node dist/cli/bin.js crosslink edc-nhs b8 || node dist/cli/bin.js scaffolds
+          node dist/cli/bin.js where
