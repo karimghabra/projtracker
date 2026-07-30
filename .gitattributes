@@ -1,0 +1,6 @@
+# The vault format is text-as-truth: byte-identical serialization is an
+# invariant, so line endings must never be rewritten in transit.
+* text=auto eol=lf
+*.png binary
+*.ico binary
+*.xlsx binary

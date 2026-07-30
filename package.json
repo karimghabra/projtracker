@@ -1,0 +1,79 @@
+{
+  "name": "protracker",
+  "version": "1.0.0",
+  "description": "A lab project tracker: projects, milestones, goals, experiments and scaffold inventory over a dependency graph, stored as plain text.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Karim Ghabra",
+  "main": "dist-electron/main.cjs",
+  "bin": {
+    "pt": "dist/cli/bin.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "npm run build:ui && npm run build:node",
+    "build:ui": "vite build",
+    "build:node": "tsc -p tsconfig.node.json",
+    "build:electron": "node scripts/build-electron.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "test:all": "npm run typecheck && npm run test && npm run build:ui && npm run test:e2e",
+    "fieldtest": "node --experimental-strip-types tests/fieldtest/run.ts",
+    "pack": "npm run build:ui && npm run build:electron && electron-builder --win --publish never"
+  },
+  "dependencies": {
+    "exceljs": "^4.4.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.0",
+    "@types/node": "^24.7.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "electron": "^38.0.0",
+    "electron-builder": "^26.0.12",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.0",
+    "vitest": "^3.2.0"
+  },
+  "build": {
+    "appId": "com.karimghabra.protracker",
+    "productName": "Protracker",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist-ui/**/*",
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "Protracker-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Protracker"
+    }
+  }
+}

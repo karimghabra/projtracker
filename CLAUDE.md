@@ -1,1 +1,0 @@
-Read scheduler_spec.md first (the spec; there is no SPEC.md), then HANDOFF.md for what is actually built and why it diverges. Strict layering per §8.1: core library has no I/O, all clients go through the command layer, every mutating verb returns a state delta. All logic must be unit-tested.

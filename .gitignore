@@ -1,47 +1,20 @@
-# --- private data: never publish -------------------------------------------
-# The real tracker and everything derived from it stay local. These rules are
-# deliberately broad and fail safe: any workbook or database dropped in the
-# project root is ignored by default, so a new file is private until someone
-# decides otherwise. The test fixtures are synthetic and unignored explicitly.
+node_modules/
+dist/
+dist-ui/
+dist-electron/
+release/
+coverage/
+*.tsbuildinfo
+
+# Playwright
+test-results/
+playwright-report/
+blob-report/
+.playwright/
+
+# Private data never enters the repository: real vaults, real workbooks.
+/vault/
 /*.xlsx
-/*.xlsm
-/*.csv
-*.db
-*.sqlite
-~$*
-
-# generated output directories (each built from real data at some point)
-real_out/
-augment_out/
-augment_live/
-augment_demo/
-emit_demo/
-mygraph.html
-
-# the fixtures the suite needs are synthetic (a coffee shop, not a lab)
-!tests/fixtures/*.xlsx
-
-# --- secrets ---------------------------------------------------------------
-.env
-.env.*
-*.pem
-*.key
-
-# --- build / tooling artefacts ---------------------------------------------
-__pycache__/
-*.py[cod]
-.pytest_cache/
-.ruff_cache/
-build/
-*.egg-info/
-/protracker-cli-*.spec
-app/src-tauri/target/
-app/src-tauri/gen/
-app/src-tauri/binaries/
-app/dist/
-app/ui/node_modules/
-.claude/settings.local.json
-
-# stray artefact of a broken shell command in an earlier session; left on disk
-# rather than deleted, but it is not source and must not be published
-tests/fixtures*&&*
+/*.xls
+!tests/fixtures/**/*.xlsx
+.scratch/
