@@ -10,6 +10,11 @@
 import { BrowserWindow, app, dialog, ipcMain, shell } from 'electron';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
+import type { BackupMeta, VaultFiles } from '../store/backup.ts';
+import type { Grid } from '../sync/backupSync.ts';
+import { pullBackup, pushBackup } from '../sync/backupSync.ts';
+import type { ServiceAccount } from '../sync/sheets.ts';
+import { GoogleSheets, parseServiceAccount, parseSpreadsheetId } from '../sync/sheets.ts';
 
 /**
  * The directory this file was loaded from.
@@ -59,6 +64,107 @@ function listFiles(prefix: string): string[] {
   };
   walk(vaultRoot, '');
   return out.sort();
+}
+
+// ------------------------------------------------------- Google Sheets backup
+
+interface SheetsSettings {
+  account?: ServiceAccount;
+  spreadsheetId?: string;
+  lastPushAt?: string;
+}
+
+/**
+ * Credentials live beside the app, never in the vault.
+ *
+ * If they were in the vault they would be in the backup, and the backup is the
+ * thing the user shares with friends — handing out a private key with it. They
+ * are also outside anything the renderer can read: the bridge exposes a status,
+ * never the key.
+ */
+function settingsFile(): string {
+  return join(app.getPath('userData'), 'google-sheets.json');
+}
+
+function readSettings(): SheetsSettings {
+  try {
+    return JSON.parse(readFileSync(settingsFile(), 'utf8')) as SheetsSettings;
+  } catch {
+    return {};
+  }
+}
+
+function writeSettings(settings: SheetsSettings): void {
+  writeFileSync(settingsFile(), `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
+}
+
+function statusOf(settings: SheetsSettings): {
+  configured: boolean;
+  clientEmail?: string;
+  spreadsheetId?: string;
+  lastPushAt?: string;
+} {
+  return {
+    configured: Boolean(settings.account && settings.spreadsheetId),
+    clientEmail: settings.account?.clientEmail,
+    spreadsheetId: settings.spreadsheetId,
+    lastPushAt: settings.lastPushAt,
+  };
+}
+
+function connect(settings: SheetsSettings): GoogleSheets {
+  if (!settings.account) throw new Error('No Google service account key has been set up yet.');
+  if (!settings.spreadsheetId) throw new Error('No spreadsheet has been chosen yet.');
+  return new GoogleSheets(settings.account, settings.spreadsheetId);
+}
+
+function registerSheetsHandlers(): void {
+  ipcMain.handle('pt:sheets:status', () => statusOf(readSettings()));
+
+  ipcMain.handle('pt:sheets:chooseKey', async () => {
+    const result = await dialog.showOpenDialog({
+      title: 'Choose your Google service account key',
+      properties: ['openFile'],
+      filters: [{ name: 'Service account key', extensions: ['json'] }],
+    });
+    if (result.canceled || !result.filePaths[0]) return statusOf(readSettings());
+
+    // parseServiceAccount throws something readable; letting it through to the
+    // renderer is the whole point of having written those messages.
+    const account = parseServiceAccount(readFileSync(result.filePaths[0], 'utf8'));
+    const settings = { ...readSettings(), account };
+    writeSettings(settings);
+    return statusOf(settings);
+  });
+
+  ipcMain.handle('pt:sheets:setSpreadsheet', (_event, link: string) => {
+    const id = parseSpreadsheetId(String(link ?? ''));
+    if (!id) throw new Error('That is not a Google Sheets link. Copy the URL from the address bar.');
+    const settings = { ...readSettings(), spreadsheetId: id };
+    writeSettings(settings);
+    return statusOf(settings);
+  });
+
+  ipcMain.handle('pt:sheets:forget', () => {
+    try {
+      rmSync(settingsFile(), { force: true });
+    } catch {
+      // Already gone is the outcome we wanted.
+    }
+    return statusOf({});
+  });
+
+  ipcMain.handle(
+    'pt:sheets:push',
+    async (_event, payload: { files: VaultFiles; meta: BackupMeta; readable: Grid[] }) => {
+      const settings = readSettings();
+      const report = await pushBackup(connect(settings), payload);
+      writeSettings({ ...settings, lastPushAt: payload.meta.generatedAt });
+      return report;
+    },
+  );
+
+  ipcMain.handle('pt:sheets:pull', async () => pullBackup(connect(readSettings())));
 }
 
 function registerHandlers(): void {
@@ -168,6 +274,7 @@ if (!single) {
   void app.whenReady().then(() => {
     vaultRoot = ensureVault(defaultVault());
     registerHandlers();
+    registerSheetsHandlers();
     createWindow();
 
     app.on('activate', () => {

@@ -142,9 +142,58 @@ function statusWord(index: GraphIndex, node: Node, today: string): string {
 }
 
 /**
+ * One body row, and enough about where it came from to style it.
+ *
+ * Building rows as plain values first is what lets the same board go to an
+ * .xlsx file and to a Google spreadsheet without two definitions of which
+ * columns exist and in what order — the thing that would silently drift.
+ */
+export interface BodyRow {
+  values: (string | number)[];
+  /** Absent on the blank spacer rows. */
+  node?: Node;
+  /** 1-based column holding this node's own name, where done and health are marked. */
+  ownColumn?: number;
+  /** A rule across the whole row: projects on the summary, milestones on a project sheet. */
+  banded?: boolean;
+}
+
+/**
  * A one-page answer to "how is it going", for someone who is not going to open
  * the detail sheets.
  */
+export function summaryRows(index: GraphIndex, today: string): BodyRow[] {
+  const out: BodyRow[] = [];
+
+  for (const project of rootProjects(index)) {
+    const write = (node: Node, level: string, indent: number) => {
+      const progress = progressOf(index, node.id) ?? { done: 0, total: 0 };
+      out.push({
+        values: [
+          `${'    '.repeat(indent)}${node.name}`,
+          level,
+          progress.done,
+          progress.total,
+          progress.total ? progress.done / progress.total : 0,
+          statusWord(index, node, today),
+          node.health === 'not_begun' ? '' : node.health.replace('_', ' '),
+          nextUp(index, node.id, today),
+          datesOf(index, node.id),
+        ],
+        node,
+        ownColumn: 7,
+        banded: indent === 0,
+      });
+    };
+
+    write(project, 'Project', 0);
+    for (const milestone of childrenOf(index.state, project.id)) write(milestone, 'Milestone', 1);
+    out.push({ values: [] });
+  }
+
+  return out;
+}
+
 function writeSummary(book: Bookish, index: GraphIndex, today: string): void {
   const sheet = book.addWorksheet('Summary');
   const title = sheet.addRow([`${SUMMARY_MARKER} — generated ${today}`]);
@@ -152,35 +201,19 @@ function writeSummary(book: Bookish, index: GraphIndex, today: string): void {
   sheet.addRow([]);
   headerRow(sheet, SUMMARY_HEADERS);
 
-  for (const project of rootProjects(index)) {
-    const write = (node: Node, level: string, indent: number) => {
-      const progress = progressOf(index, node.id) ?? { done: 0, total: 0 };
-      const row = sheet.addRow([
-        `${'    '.repeat(indent)}${node.name}`,
-        level,
-        progress.done,
-        progress.total,
-        progress.total ? progress.done / progress.total : 0,
-        statusWord(index, node, today),
-        node.health === 'not_begun' ? '' : node.health.replace('_', ' '),
-        nextUp(index, node.id, today),
-        datesOf(index, node.id),
-      ]);
-      row.getCell(5).numFmt = '0%';
+  for (const body of summaryRows(index, today)) {
+    const row = sheet.addRow([...body.values]);
+    if (!body.node) continue;
+    row.getCell(5).numFmt = '0%';
 
-      if (indent === 0) {
-        for (let i = 1; i <= SUMMARY_HEADERS.length; i++) {
-          row.getCell(i).font = { bold: true };
-          row.getCell(i).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: RULE_FILL } };
-        }
+    if (body.banded) {
+      for (let i = 1; i <= SUMMARY_HEADERS.length; i++) {
+        row.getCell(i).font = { bold: true };
+        row.getCell(i).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: RULE_FILL } };
       }
-      const fill = HEALTH_FILL[node.health];
-      if (fill) row.getCell(7).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill } };
-    };
-
-    write(project, 'Project', 0);
-    for (const milestone of childrenOf(index.state, project.id)) write(milestone, 'Milestone', 1);
-    sheet.addRow([]);
+    }
+    const fill = HEALTH_FILL[body.node.health];
+    if (fill) row.getCell(7).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill } };
   }
 
   sheet.columns = [
@@ -205,6 +238,103 @@ function writeSummary(book: Bookish, index: GraphIndex, today: string): void {
  * and not just a report. Everything above this line is a rendering; this is the
  * vault.
  */
+/**
+ * Every row of one project's sheet, hierarchy filled down.
+ *
+ * Filled down rather than left as a staircase: a manager who sorts or filters
+ * in Excel should not end up with a row that says "Peer review" and nothing
+ * about which project it belongs to. It is safe for the round trip because the
+ * importer emits a level only when the name *changes*, so a repeated value
+ * reads as continuation rather than a second milestone of the same name.
+ */
+export function projectRows(index: GraphIndex, project: Node): BodyRow[] {
+  const out: BodyRow[] = [];
+
+  const write = (nodeId: string, milestone: string, goal: string) => {
+    for (const child of childrenOf(index.state, nodeId)) {
+      const isMilestone = child.kind === 'milestone';
+      const isGoal = child.kind === 'goal';
+      const milestoneName = isMilestone ? child.name : milestone;
+      const goalName = isGoal ? child.name : isMilestone ? '' : goal;
+      const progress = isContainerKind(child.kind) ? progressOf(index, child.id) : null;
+
+      out.push({
+        values: [
+          child.seq,
+          milestoneName,
+          goalName,
+          isContainerKind(child.kind) ? '' : child.name,
+          child.status === 'done' ? 'Done' : child.status === 'dropped' ? 'Dropped' : '',
+          child.doneAt ? encodePeriod(child.doneAt.slice(0, 10), child.donePrecision ?? 'day') : '',
+          progress ? `${progress.done}/${progress.total}` : '',
+          child.health === 'not_begun' ? '' : child.health.replace('_', ' '),
+          child.plannedFor ?? '',
+          child.tags.join(', '),
+          child.notes ?? '',
+          child.kind === 'experiment' ? 'experiment' : '',
+          child.experiment ? encodeCulture(child.experiment) : '',
+        ],
+        node: child,
+        // Where the importer looks for done and health: the column this node's
+        // own name is in.
+        ownColumn: isMilestone ? 2 : isGoal ? 3 : 4,
+        banded: isMilestone,
+      });
+
+      write(child.id, milestoneName, goalName);
+    }
+  };
+
+  write(project.id, '', '');
+  return out;
+}
+
+/**
+ * The whole board as plain grids of text — what a Google spreadsheet wants,
+ * where there are no fonts or fills to carry meaning.
+ *
+ * Because completion is strikethrough and health is fill colour in the .xlsx,
+ * neither survives a plain grid; the Status and Health columns carry both in
+ * words, which is why they exist. This is the readable half of a Sheets
+ * backup, and the vault grid alongside it is the half that restores.
+ */
+export function readableGrids(state: State, today: string): { title: string; rows: string[][] }[] {
+  const index = buildIndex(state);
+  const taken = new Set<string>(['summary', BACKUP_SHEET.toLowerCase()]);
+  const text = (row: BodyRow) =>
+    row.values.map((value) => (typeof value === 'number' ? String(value) : value));
+
+  const sheets: { title: string; rows: string[][] }[] = [
+    {
+      title: 'Summary',
+      rows: [
+        [`${SUMMARY_MARKER} — generated ${today}`],
+        [],
+        [...SUMMARY_HEADERS],
+        ...summaryRows(index, today).map((row) =>
+          row.node
+            ? text(row).map((value, i) => (i === 4 ? `${Math.round(Number(value) * 100)}%` : value))
+            : [],
+        ),
+      ],
+    },
+  ];
+
+  for (const project of rootProjects(index)) {
+    sheets.push({
+      title: sheetName(project.name, taken),
+      rows: [
+        ['Project name', project.name],
+        [],
+        [...EXPORT_HEADERS],
+        ...projectRows(index, project).map(text),
+      ],
+    });
+  }
+
+  return sheets;
+}
+
 function writeVaultSheet(book: Bookish, files: VaultFiles, meta: BackupMeta): void {
   const sheet = book.addWorksheet(BACKUP_SHEET, { state: 'hidden' });
   const rows = backupGrid(files, meta);
@@ -245,52 +375,25 @@ export function writeWorkbook(
     sheet.addRow([]);
     headerRow(sheet, EXPORT_HEADERS);
 
-    // Hierarchy is filled down rather than left as a staircase: a manager who
-    // sorts or filters in Excel should not end up with a row that says
-    // "Peer review" and nothing about which project it belongs to.
-    const write = (nodeId: string, milestone: string, goal: string) => {
-      for (const child of childrenOf(state, nodeId)) {
-        const isMilestone = child.kind === 'milestone';
-        const isGoal = child.kind === 'goal';
-        const milestoneName = isMilestone ? child.name : milestone;
-        const goalName = isGoal ? child.name : isMilestone ? '' : goal;
-        const progress = isContainerKind(child.kind) ? progressOf(index, child.id) : null;
+    for (const body of projectRows(index, project)) {
+      const row = sheet.addRow([...body.values]);
+      if (!body.node || !body.ownColumn) continue;
 
-        const row = sheet.addRow([
-          child.seq,
-          milestoneName,
-          goalName,
-          isContainerKind(child.kind) ? '' : child.name,
-          child.status === 'done' ? 'Done' : child.status === 'dropped' ? 'Dropped' : '',
-          child.doneAt ? encodePeriod(child.doneAt.slice(0, 10), child.donePrecision ?? 'day') : '',
-          progress ? `${progress.done}/${progress.total}` : '',
-          child.health === 'not_begun' ? '' : child.health.replace('_', ' '),
-          child.plannedFor ?? '',
-          child.tags.join(', '),
-          child.notes ?? '',
-          child.kind === 'experiment' ? 'experiment' : '',
-          child.experiment ? encodeCulture(child.experiment) : '',
-        ]);
-
-        // The column this node's own name is in — where done and health are
-        // marked, matching exactly where the importer looks for them.
-        const own = isMilestone ? 2 : isGoal ? 3 : 4;
-        if (child.status === 'done') row.getCell(own).font = { strike: true };
-        const fill = HEALTH_FILL[child.health];
-        if (fill) {
-          row.getCell(own).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill } };
-        }
-        if (isMilestone) {
-          for (let i = 1; i <= EXPORT_HEADERS.length; i++) {
-            row.getCell(i).fill ??= { type: 'pattern', pattern: 'solid', fgColor: { argb: RULE_FILL } };
-          }
-        }
-
-        write(child.id, milestoneName, goalName);
+      if (body.node.status === 'done') row.getCell(body.ownColumn).font = { strike: true };
+      const fill = HEALTH_FILL[body.node.health];
+      if (fill) {
+        row.getCell(body.ownColumn).fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: fill },
+        };
       }
-    };
-
-    write(project.id, '', '');
+      if (body.banded) {
+        for (let i = 1; i <= EXPORT_HEADERS.length; i++) {
+          row.getCell(i).fill ??= { type: 'pattern', pattern: 'solid', fgColor: { argb: RULE_FILL } };
+        }
+      }
+    }
 
     sheet.columns = [
       { width: 6 },

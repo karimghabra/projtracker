@@ -9,6 +9,7 @@ export default defineConfig({
       '@core': r('./src/core'),
       '@store': r('./src/store'),
       '@commands': r('./src/commands'),
+      '@sync': r('./src/sync'),
     },
   },
   test: {

@@ -1,7 +1,13 @@
 import { useApp } from '../state/store.ts';
 import { Modal } from '../components/ui.tsx';
 
-export function SettingsDialog({ onClose }: { onClose: () => void }) {
+export function SettingsDialog({
+  onClose,
+  onBackup,
+}: {
+  onClose: () => void;
+  onBackup: () => void;
+}) {
   const { app, store } = useApp();
   const state = app.state;
   const counts = {
@@ -35,6 +41,28 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           Plain text files. Open them in any editor; the app reads whatever is there next time it
           starts.
         </span>
+      </div>
+
+      <hr className="sep" />
+
+      <div className="field">
+        <label>Backup</label>
+        <span className="hint">
+          Plain text on one disk is not a backup. Keep a copy somewhere else — a file, or a Google
+          spreadsheet you can also share with people.
+        </span>
+        <div className="inline" style={{ marginTop: 8 }}>
+          <button
+            className="btn"
+            data-testid="open-backup"
+            onClick={() => {
+              onClose();
+              onBackup();
+            }}
+          >
+            Back up or restore…
+          </button>
+        </div>
       </div>
 
       <hr className="sep" />

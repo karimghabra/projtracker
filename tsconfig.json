@@ -8,7 +8,8 @@
     "paths": {
       "@core/*": ["src/core/*"],
       "@store/*": ["src/store/*"],
-      "@commands/*": ["src/commands/*"]
+      "@commands/*": ["src/commands/*"],
+      "@sync/*": ["src/sync/*"]
     },
     "jsx": "react-jsx",
     "types": ["node", "vitest/globals"],

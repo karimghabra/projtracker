@@ -471,6 +471,14 @@ export async function readWorkbookFile(data: ArrayBuffer | Buffer): Promise<Impo
   return readWorkbook(workbook as unknown as Workbookish);
 }
 
+/** The vault out of a backup file, or null if the file has no backup in it. */
+export async function readBackupFile(data: ArrayBuffer | Buffer): Promise<BackupRead | null> {
+  const ExcelJS = await import('exceljs');
+  const workbook = new ExcelJS.default.Workbook();
+  await workbook.xlsx.load(data as ArrayBuffer);
+  return readBackupSheet(workbook as unknown as Workbookish);
+}
+
 export interface ImportSummary {
   projects: number;
   milestones: number;

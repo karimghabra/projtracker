@@ -31,6 +31,7 @@ import { SheetScreen } from './screens/Sheet.tsx';
 import { InventoryScreen } from './screens/Inventory.tsx';
 import { JournalScreen } from './screens/Journal.tsx';
 import { SettingsDialog } from './screens/Settings.tsx';
+import { BackupDialog } from './components/BackupDialog.tsx';
 import { SearchModal } from './components/SearchModal.tsx';
 
 export type ViewName = 'home' | 'projects' | 'graph' | 'sheet' | 'inventory' | 'journal';
@@ -63,6 +64,7 @@ export function AppShell() {
   const [view, setView] = useState<ViewName>(readHash);
   const [theme, setTheme] = useState(() => document.documentElement.dataset['theme'] ?? 'system');
   const [showSettings, setShowSettings] = useState(false);
+  const [showBackup, setShowBackup] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   /** A node chosen from search, handed to whichever screen opens next. */
   const [pendingSelection, setPendingSelection] = useState<string | null>(null);
@@ -214,7 +216,10 @@ export function AppShell() {
         </main>
       </div>
 
-      {showSettings && <SettingsDialog onClose={() => setShowSettings(false)} />}
+      {showSettings && (
+        <SettingsDialog onClose={() => setShowSettings(false)} onBackup={() => setShowBackup(true)} />
+      )}
+      {showBackup && <BackupDialog onClose={() => setShowBackup(false)} />}
       {showSearch && (
         <SearchModal
           onClose={() => setShowSearch(false)}

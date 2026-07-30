@@ -457,6 +457,62 @@ button {
   height: 28px;
 }
 
+.btn.subtle {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.btn.subtle:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+/* One control, several mutually exclusive answers: the buttons share a border
+   and only the chosen one is filled in. */
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.segmented .btn {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.segmented .btn + .btn {
+  border-left: 1px solid var(--border);
+}
+
+.segmented .btn.active {
+  background: var(--bg-hover);
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* A message that has to be read before the thing below it is used. */
+.callout {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 9px 12px;
+  margin-bottom: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.callout.danger {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
 /* ----------------------------------------------------------------- inputs */
 
 .input,

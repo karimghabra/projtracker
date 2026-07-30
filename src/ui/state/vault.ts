@@ -10,6 +10,23 @@
 import type { Vault } from '../../store/vault.ts';
 import { ProxyVault } from '../../store/vault.ts';
 
+/** What the renderer may know about the Google credentials: never the key. */
+export interface SheetsStatus {
+  configured: boolean;
+  clientEmail?: string;
+  spreadsheetId?: string;
+  lastPushAt?: string;
+}
+
+export interface SheetsBridge {
+  status(): Promise<SheetsStatus>;
+  chooseKey(): Promise<SheetsStatus>;
+  setSpreadsheet(link: string): Promise<SheetsStatus>;
+  forget(): Promise<SheetsStatus>;
+  push(payload: unknown): Promise<{ spreadsheet: string; written: string[]; removed: string[]; files: number }>;
+  pull(): Promise<{ files: Record<string, string>; problems: string[]; meta: { generatedAt: string; version: string } }>;
+}
+
 export interface DesktopBridge {
   readFile(path: string): string | null;
   writeFile(path: string, text: string): void;
@@ -17,6 +34,8 @@ export interface DesktopBridge {
   removeFile(path: string): void;
   vaultPath(): string;
   chooseVault(): string | null;
+  /** Absent in the browser build, which has no key and no socket. */
+  sheets?: SheetsBridge;
 }
 
 declare global {

@@ -24,6 +24,37 @@ import {
   IconTrash,
 } from '../components/icons.tsx';
 
+/**
+ * How deep the tree opens.
+ *
+ * A board with eight projects and two hundred tasks is unreadable fully
+ * expanded and useless fully collapsed, and clicking two hundred chevrons is
+ * not a plan. Depth is the axis that matters here — "show me the milestones
+ * and stop" — so this sets a level rather than remembering a set of ids.
+ *
+ * `openTo` is the depth *below* which rows are open, so 0 shows projects only
+ * and anything past the deepest level shows everything.
+ */
+const LEVELS = [
+  { id: 'projects', label: 'Projects', openTo: 0 },
+  { id: 'milestones', label: 'Milestones', openTo: 1 },
+  { id: 'goals', label: 'Goals', openTo: 2 },
+  { id: 'all', label: 'Everything', openTo: 99 },
+] as const;
+
+/** The default: open down to tasks, because this screen is the work editor. */
+const DEFAULT_LEVEL = 3;
+
+/**
+ * A bulk expand or collapse. The nonce is what makes pressing the same button
+ * twice mean something — after collapsing one row by hand, "Everything" has to
+ * open it again even though the level did not change.
+ */
+interface Bulk {
+  openTo: number;
+  nonce: number;
+}
+
 export function ProjectsScreen({
   selectId,
   onSelectionUsed,
@@ -47,7 +78,14 @@ export function ProjectsScreen({
   }, [selectId, onSelectionUsed]);
   const [wizard, setWizard] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [level, setLevel] = useState(DEFAULT_LEVEL);
+  const [bulk, setBulk] = useState<Bulk>({ openTo: LEVELS[DEFAULT_LEVEL]!.openTo, nonce: 0 });
   const tree = app.tree();
+
+  const showTo = (index: number) => {
+    setLevel(index);
+    setBulk({ openTo: LEVELS[index]!.openTo, nonce: bulk.nonce + 1 });
+  };
 
   const selectedNode = selected && app.state.nodes[selected] ? app.node(selected) : null;
 
@@ -80,6 +118,24 @@ export function ProjectsScreen({
       <div className="split-main">
         <div className="inline" style={{ marginBottom: 'var(--space-3)' }}>
           <h2 style={{ fontSize: 14 }}>All work</h2>
+          <div className="segmented" role="group" aria-label="How much of the tree to show">
+            {LEVELS.map((entry, index) => (
+              <button
+                key={entry.id}
+                className={index === level ? 'btn sm active' : 'btn sm'}
+                aria-pressed={index === level}
+                data-testid={`show-${entry.id}`}
+                title={
+                  index === LEVELS.length - 1
+                    ? 'Expand everything'
+                    : `Collapse everything below ${entry.label.toLowerCase()}`
+                }
+                onClick={() => showTo(index)}
+              >
+                {entry.label}
+              </button>
+            ))}
+          </div>
           <span className="spacer" />
           <ExportButton />
           <ImportButton onOpen={() => setImporting(true)} />
@@ -90,7 +146,13 @@ export function ProjectsScreen({
 
         <div className="tree" data-testid="tree">
           {tree.map((node) => (
-            <TreeRow key={node.id} node={node} selected={selected} onSelect={setSelected} />
+            <TreeRow
+              key={node.id}
+              node={node}
+              selected={selected}
+              onSelect={setSelected}
+              bulk={bulk}
+            />
           ))}
         </div>
       </div>
@@ -115,15 +177,23 @@ function TreeRow({
   node,
   selected,
   onSelect,
+  bulk,
 }: {
   node: TreeNode;
   selected: string | null;
   onSelect: (id: string) => void;
+  bulk: Bulk;
 }) {
   const { run } = useApp();
   // Open down to tasks by default. This is the editor for the work; hiding the
   // work behind two clicks makes it a viewer.
-  const [open, setOpen] = useState(node.depth < 3);
+  const [open, setOpen] = useState(node.depth < bulk.openTo);
+
+  // A bulk expand or collapse overrides whatever this row was set to by hand.
+  // Anything else would leave a "collapse everything" that visibly did not.
+  useEffect(() => {
+    setOpen(node.depth < bulk.openTo);
+  }, [bulk, node.depth]);
   const [adding, setAdding] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const childKind = childKindOf(node.kind);
@@ -222,7 +292,13 @@ function TreeRow({
       )}
 
       {open && node.children.map((child) => (
-        <TreeRow key={child.id} node={child} selected={selected} onSelect={onSelect} />
+        <TreeRow
+          key={child.id}
+          node={child}
+          selected={selected}
+          onSelect={onSelect}
+          bulk={bulk}
+        />
       ))}
 
       {confirmDelete && (

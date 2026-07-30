@@ -7,9 +7,11 @@
  */
 
 import { build } from 'esbuild';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
+const { version } = JSON.parse(readFileSync(`${root}package.json`, 'utf8'));
 
 const common = {
   bundle: true,
@@ -17,6 +19,8 @@ const common = {
   target: 'node20',
   sourcemap: true,
   logLevel: 'info',
+  // The same stamp the UI build uses, from the same place.
+  define: { __APP_VERSION__: JSON.stringify(version) },
 };
 
 await build({
