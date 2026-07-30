@@ -27,11 +27,19 @@ export default defineConfig({
   projects: [
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
   ],
+  /**
+   * The built bundle, not the dev server.
+   *
+   * Vite transforms modules on demand, so with several workers hitting cold
+   * routes at once a page load could take tens of seconds and time out — a
+   * flake with nothing to do with the product. `vite preview` serves the same
+   * static files the installer ships, which is both faster and a truer test.
+   */
   webServer: {
-    command: 'npm run dev -- --host 127.0.0.1',
+    command: 'npm run build:ui && npx vite preview --port 5178 --strictPort --host 127.0.0.1',
     url: 'http://127.0.0.1:5178',
     reuseExistingServer: !process.env.CI,
-    timeout: 120_000,
+    timeout: 180_000,
     stdout: 'ignore',
     stderr: 'pipe',
   },
