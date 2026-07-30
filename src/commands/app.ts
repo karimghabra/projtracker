@@ -47,10 +47,11 @@ import { parsePeriod } from '../core/periods.ts';
 import type { RestoreReport, VaultFiles } from '../store/backup.ts';
 import { restoreVault, snapshotVault } from '../store/backup.ts';
 import type { ImportPlan } from '../store/excel.ts';
+import type { SheetChange, SheetEdit } from '../sync/reconcile.ts';
 import { canonicalise } from '../store/serialize.ts';
 import { Store, initialState, loadState } from '../store/store.ts';
 import type { Vault } from '../store/vault.ts';
-import { CommandError, conflict, invalid, notAllowed, notFound } from './errors.ts';
+import { CommandError, conflict, invalid, notAllowed, notFound, toCommandError } from './errors.ts';
 import { allocateId, allocateSlugId } from './ids.ts';
 import type {
   CalendarDay,
@@ -1482,6 +1483,96 @@ export class App {
       message: `Restored ${Object.keys(files).length} file(s) from the backup.`,
       ...report,
     };
+  }
+
+  /**
+   * Apply the changes a person ticked in the spreadsheet review.
+   *
+   * One transaction, so an afternoon of edits made on a phone is one undo away
+   * — which is the only thing that makes accepting them comfortable.
+   *
+   * Nothing is inferred here. `reconcile` decided what each change means and a
+   * person decided which of them to take; this only carries them out, and says
+   * which ones it could not.
+   */
+  applySheetChanges(changes: SheetChange[]): Delta & { applied: number; failed: string[] } {
+    if (changes.length === 0) throw invalid('Nothing was selected.');
+
+    return this.transaction(`Apply ${changes.length} change(s) from the spreadsheet`, (app) => {
+      const failed: string[] = [];
+      let applied = 0;
+
+      for (const change of changes) {
+        try {
+          if (change.sort === 'missing') {
+            if (change.nodeId) app.deleteNode(change.nodeId);
+          } else if (change.create) {
+            app.addNode(change.create.parentId, change.create.name, {
+              seq: change.create.seq,
+              // A row's position in a spreadsheet is a guess about order, not a
+              // statement of it — the same rule the importer follows.
+              seqSource: change.create.seq === undefined ? 'assumed' : 'user',
+            });
+          } else if (change.nodeId && change.edit) {
+            app.applySheetEdit(change.nodeId, change.edit);
+          } else {
+            continue;
+          }
+          applied += 1;
+        } catch (error) {
+          failed.push(`${change.label}: ${toCommandError(error).message}`);
+        }
+      }
+
+      if (applied === 0 && failed.length) throw invalid(failed.join(' '));
+      return {
+        ok: true as const,
+        message: failed.length
+          ? `Applied ${applied} change(s); ${failed.length} could not be applied.`
+          : `Applied ${applied} change(s) from the spreadsheet.`,
+        applied,
+        failed,
+      };
+    });
+  }
+
+  /** One cell's worth of change, routed to the verb that owns it. */
+  private applySheetEdit(id: NodeId, edit: SheetEdit): void {
+    switch (edit.field) {
+      case 'name':
+        this.updateNode(id, { name: edit.value });
+        return;
+      case 'seq':
+        this.setSeq(id, edit.value);
+        return;
+      case 'notes':
+        this.updateNode(id, { notes: edit.value });
+        return;
+      case 'tags':
+        this.updateNode(id, { tags: edit.value.split(',') });
+        return;
+      case 'health':
+        this.updateNode(id, { health: edit.value });
+        return;
+      case 'planned':
+        this.planFor(id, edit.value || null);
+        return;
+      case 'completed':
+        this.setCompletion(id, edit.value);
+        return;
+      case 'status': {
+        const node = this.state.nodes[id];
+        if (!node) throw notFound('node', id);
+        if (edit.value === 'done') {
+          if (node.status !== 'done') this.complete(id);
+        } else if (edit.value === 'dropped') {
+          if (node.status !== 'dropped') this.drop(id);
+        } else if (node.status === 'done' || node.status === 'dropped') {
+          this.reopen(id);
+        }
+        return;
+      }
+    }
   }
 
   // --------------------------------------------------------------- history

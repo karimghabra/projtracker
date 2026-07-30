@@ -82,8 +82,15 @@ export function decodeCulture(text: string): CultureSpec | undefined {
 export interface ImportRow {
   kind: RowKind;
   name: string;
+  /**
+   * The node this row came from, when the sheet was written by Protracker.
+   * Empty on a row somebody typed in by hand, which is what makes it new.
+   */
+  id?: string;
   /** Whatever was in the Completed column, verbatim, for the caller to parse. */
   completedText?: string;
+  /** Explicitly abandoned, as distinct from merely unfinished. */
+  dropped?: boolean;
   /** Present when the row carried a cell culture definition. */
   culture?: CultureSpec;
   seq?: number;
@@ -151,6 +158,8 @@ const HEADERS: Record<string, keyof ColumnMap> = {
   datecompleted: 'completed',
   culture: 'culture',
   experiment: 'culture',
+  id: 'id',
+  nodeid: 'id',
 };
 
 interface ColumnMap {
@@ -167,6 +176,7 @@ interface ColumnMap {
   kind?: number;
   culture?: number;
   completed?: number;
+  id?: number;
 }
 
 function normalise(value: unknown): string {
@@ -405,6 +415,7 @@ export function readWorkbook(workbook: Workbookish): ImportPlan {
         rows.push({
           kind: own && kind === 'task' && isExperiment ? 'experiment' : kind,
           name,
+          id: own ? at('id').trim() || undefined : undefined,
           completedText: own ? at('completed').trim() || undefined : undefined,
           culture: own ? culture : undefined,
           seq: own ? seq : undefined,
@@ -414,6 +425,9 @@ export function readWorkbook(workbook: Workbookish): ImportPlan {
               isDoneText(at('status')) ||
               at('completed').trim() !== ''
             : false,
+          // Dropped is not "not done": it is a decision, and losing it on the
+          // way back in would quietly resurrect abandoned work.
+          dropped: own ? normalise(at('status')) === 'dropped' : false,
           health: own
             ? (healthFromText(at('health')) ?? healthFromColour(cell?.fill?.fgColor?.argb))
             : 'not_begun',
@@ -464,6 +478,45 @@ export function readWorkbook(workbook: Workbookish): ImportPlan {
 }
 
 /** Load a workbook from bytes. exceljs is imported lazily; it is a large dependency. */
+/**
+ * A plain grid of strings, dressed up as the little of a workbook this module
+ * actually uses.
+ *
+ * Google Sheets hands back `string[][]`; exceljs hands back an object graph.
+ * Rather than write the header matching and the hierarchy tracking twice, the
+ * grid borrows exceljs's shape for the length of one call. What a grid cannot
+ * carry is font and fill — which is exactly why `readableGrids` writes "Done"
+ * and "at risk" in words.
+ */
+export function gridsAsWorkbook(grids: { title: string; rows: string[][] }[]): Workbookish {
+  const cellOf = (value: string): Cellish => ({ value });
+  return {
+    worksheets: grids.map((grid) => ({
+      name: grid.title,
+      rowCount: grid.rows.length,
+      getRow: (index: number): Rowish => {
+        const cells = grid.rows[index - 1] ?? [];
+        return {
+          number: index,
+          cellCount: cells.length,
+          getCell: (column: number) => cellOf(cells[column - 1] ?? ''),
+          eachCell: (options, fn) => {
+            cells.forEach((value, i) => {
+              if (!options.includeEmpty && value === '') return;
+              fn(cellOf(value), i + 1);
+            });
+          },
+        };
+      },
+    })),
+  };
+}
+
+/** The same reading `readWorkbook` does, from plain grids. */
+export function readGrids(grids: { title: string; rows: string[][] }[]): ImportPlan {
+  return readWorkbook(gridsAsWorkbook(grids));
+}
+
 export async function readWorkbookFile(data: ArrayBuffer | Buffer): Promise<ImportPlan> {
   const ExcelJS = await import('exceljs');
   const workbook = new ExcelJS.default.Workbook();

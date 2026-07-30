@@ -55,6 +55,7 @@ export const EXPORT_HEADERS = [
   'Notes',
   'Kind',
   'Culture',
+  'ID',
 ] as const;
 
 const SUMMARY_HEADERS = [
@@ -273,6 +274,10 @@ export function projectRows(index: GraphIndex, project: Node): BodyRow[] {
           child.notes ?? '',
           child.kind === 'experiment' ? 'experiment' : '',
           child.experiment ? encodeCulture(child.experiment) : '',
+          // Identity, so an edit made in the spreadsheet can be matched back to
+          // the thing it edited. Without it a rename is indistinguishable from
+          // a delete and a create, and there is no safe way to merge.
+          child.id,
         ],
         node: child,
         // Where the importer looks for done and health: the column this node's
@@ -409,6 +414,7 @@ export function writeWorkbook(
       { width: 44 },
       { width: 11 },
       { width: 40 },
+      { width: 8 },
     ];
     sheet.views = [{ state: 'frozen', ySplit: 3 }];
     // Filter handles on the header, because the first thing anyone does with a
