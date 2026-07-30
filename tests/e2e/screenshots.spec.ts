@@ -60,12 +60,13 @@ test.describe('screenshots', () => {
       await page.getByTestId('type-name').fill(name);
       await page.getByTestId('save-type').click();
     }
-    await page.getByTestId('add-batch').click();
-    await page.getByTestId('batch-count').fill('24');
-    await page.getByTestId('save-batch').click();
-    await page.getByTestId('add-batch').click();
-    await page.getByTestId('batch-count').fill('12');
-    await page.getByTestId('save-batch').click();
+    for (const [count, type] of [['24', 'Collagen sponge'], ['12', 'Collagen–GAG scaffold']] as const) {
+      await page.getByTestId('add-batch').click();
+      await page.locator('#b-type').selectOption({ label: type });
+      await page.getByTestId('batch-count').fill(count);
+      await page.getByTestId('save-batch').click();
+      await expect(page.locator('.modal')).toHaveCount(0);
+    }
 
     await page.getByRole('checkbox', { name: /Select 24 Collagen sponge/ }).check();
     await page.getByTestId('start-crosslink').click();

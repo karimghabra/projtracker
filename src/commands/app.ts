@@ -42,6 +42,7 @@ import type { GraphIndex } from '../core/graph.ts';
 import { emptyExperiment, stagesOf, validateExperiment } from '../core/experiments.ts';
 import { isRunComplete, scheduleRun } from '../core/protocols.ts';
 import { overdue, plannedAhead, upcomingReminders } from '../core/planner.ts';
+import { canonicalise } from '../store/serialize.ts';
 import { Store, initialState } from '../store/store.ts';
 import type { Vault } from '../store/vault.ts';
 import { CommandError, conflict, invalid, notAllowed, notFound } from './errors.ts';
@@ -139,6 +140,9 @@ export class App {
     const result = this.store.mutate(label, (draft) => {
       const value = fn(draft);
       syncGeneratedReminders(draft, now);
+      // Keep memory in the order the files will be written in, so the two are
+      // comparable byte for byte rather than merely equivalent.
+      canonicalise(draft);
       return value;
     });
     // Inside a transaction the draft keeps its identity while its contents

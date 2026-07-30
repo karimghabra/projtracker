@@ -97,7 +97,12 @@ export function todayItems(state: State, index: GraphIndex, date: DateOnly): Tod
     items.push({ key, kind: 'task', title: node.name, order: order++, source: 'planned', node, done: false });
   }
 
-  // Reminders that have come due, including multi-day ones still in their span.
+  // Reminders that have come due, including multi-day ones still in their span
+  // — and anything that came due earlier and was never dealt with.
+  //
+  // A protocol step missed at 13:00 yesterday must not disappear at midnight.
+  // Nothing dated is allowed to vanish silently; overdue items roll forward
+  // the same way unfinished tasks do, and say how late they are.
   for (const reminder of state.reminders) {
     // A reminder ticked today stays on the list, struck through. Ticking a box
     // should look like progress; having the row vanish looks like a mistake.
@@ -105,7 +110,15 @@ export function todayItems(state: State, index: GraphIndex, date: DateOnly): Tod
     const start = dayNumber(reminder.date);
     const end = start + Math.max(0, (reminder.spanDays ?? 1) - 1);
     const day = dayNumber(date);
-    if (day < start || day > end) continue;
+
+    if (day < start) continue;
+    const late = day - end;
+    // A reminder given an explicit span is saying "show me on these days" —
+    // a conference that is over is over. Everything else is a thing to be
+    // done, and rolls forward until it is.
+    const expires = reminder.spanDays !== undefined && reminder.spanDays > 1;
+    if (late > 0 && (reminder.done || expires || late > ROLLOVER_LIMIT_DAYS)) continue;
+
     const key = `reminder:${reminder.id}`;
     if (seen.has(key) || settled.has(reminder.id)) continue;
     seen.add(key);
@@ -114,9 +127,11 @@ export function todayItems(state: State, index: GraphIndex, date: DateOnly): Tod
       kind: 'reminder',
       title: reminder.title,
       order: order++,
-      source: 'reminder',
+      source: late > 0 ? 'rolled-over' : 'reminder',
       reminder,
       node: reminder.nodeId ? state.nodes[reminder.nodeId] : undefined,
+      rolledFrom: late > 0 ? reminder.date : undefined,
+      ageDays: late > 0 ? day - start : undefined,
       done: reminder.done,
     });
   }

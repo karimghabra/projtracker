@@ -263,23 +263,19 @@ export function serializeDeps(state: State): string {
 export function serializePlanner(state: State): string {
   const blocks: Block[] = [];
 
-  const entries = [...state.planner].sort(
-    (a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.order - b.order),
-  );
-  for (const entry of entries) {
+  const entries = [...state.planner].sort(comparePlanner);
+  entries.forEach((entry, i) => {
     blocks.push(
-      block('today', `${entry.date.replace(/-/g, '')}-${entry.nodeId}`, {
+      block('today', `e${String(i).padStart(5, '0')}`, {
         date: entry.date,
         node: entry.nodeId,
         order: String(entry.order),
         outcome: entry.outcome,
       }),
     );
-  }
+  });
 
-  const reminders = [...state.reminders].sort((a, b) =>
-    a.date < b.date ? -1 : a.date > b.date ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
-  );
+  const reminders = [...state.reminders].sort(compareReminders);
   for (const r of reminders) {
     const b = block('reminder', r.id, {
       title: r.title,
@@ -374,8 +370,43 @@ function byId(a: { id: string }, b: { id: string }): number {
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
 
+function comparePlanner(a: PlannerEntry, b: PlannerEntry): number {
+  if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+  if (a.order !== b.order) return a.order - b.order;
+  if (a.nodeId !== b.nodeId) return a.nodeId < b.nodeId ? -1 : 1;
+  return (a.outcome ?? '') < (b.outcome ?? '') ? -1 : (a.outcome ?? '') > (b.outcome ?? '') ? 1 : 0;
+}
+
+function compareReminders(a: Reminder, b: Reminder): number {
+  if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+  return byId(a, b);
+}
+
+function compareNotes(a: Note, b: Note): number {
+  if (a.at !== b.at) return a.at < b.at ? -1 : 1;
+  return byId(a, b);
+}
+
+/**
+ * Put every collection into the order the serializer will write it in.
+ *
+ * Without this, "what is in memory equals what is on disk" is only true up to
+ * ordering — which is exactly the sort of almost-invariant that hides a real
+ * divergence. Called after every mutation, so the two never drift.
+ */
+export function canonicalise(state: State): void {
+  state.planner.sort(comparePlanner);
+  state.reminders.sort(compareReminders);
+  state.notes.sort(compareNotes);
+  state.deps.sort(byId);
+  state.scaffoldTypes.sort(byId);
+  state.batches.sort(byId);
+  state.protocols.sort(byId);
+  state.runs.sort(byId);
+}
+
 export function serializeJournal(notes: Note[]): string {
-  const sorted = [...notes].sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : byId(a, b)));
+  const sorted = [...notes].sort(compareNotes);
   return serialize(
     sorted.map((n) => block('note', n.id, { at: n.at, node: n.nodeId, text: n.text })),
   );

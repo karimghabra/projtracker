@@ -175,15 +175,45 @@ describe('reminders', () => {
     expect(todayTitles(h.app)).toEqual(['Order collagen']);
   });
 
-  it('stays up for several days when it spans them', () => {
+  it('stays up for several days when it spans them, then stops', () => {
     const h = harness('2026-08-04T09:00');
     h.app.addReminder('Conference in Leeds', '2026-08-04', { spanDays: 3 });
     for (const day of ['2026-08-04', '2026-08-05', '2026-08-06']) {
       h.clock.set(`${day}T09:00`);
       expect(todayTitles(h.app)).toEqual(['Conference in Leeds']);
     }
+    // A span says "show me on these days". A conference that is over is over.
     h.clock.set('2026-08-07T09:00');
     expect(h.app.todayList().items).toEqual([]);
+  });
+
+  it('keeps a missed single-day reminder in view rather than losing it', () => {
+    const h = harness('2026-08-04T09:00');
+    h.app.addReminder('Order collagen', '2026-08-04');
+
+    // Four days later, nobody having looked: it is still there, and says how
+    // late. A dated thing that silently disappears is worse than no reminder.
+    h.clock.set('2026-08-08T09:00');
+    const [item] = h.app.todayList().items;
+    expect(item!.title).toBe('Order collagen');
+    expect(item!.source).toBe('rolled-over');
+    expect(item!.ageDays).toBe(4);
+  });
+
+  it('a protocol step missed on the day does not vanish at midnight', () => {
+    const h = harness('2026-07-30T09:00');
+    const { id: type } = h.app.addScaffoldType('Collagen sponge');
+    const batch = h.app.addBatch(type, 12).id;
+    h.app.startRun('edc-nhs', [batch]);
+
+    const dueToday = h.app.todayList().items.length;
+    expect(dueToday).toBeGreaterThan(0);
+
+    // Skip the whole day. Every step is still owed tomorrow.
+    h.clock.set('2026-07-31T09:00');
+    const titles = h.app.todayList().items.map((i) => i.title);
+    expect(titles).toContain('Prepare MES buffer and EDC/NHS solution');
+    expect(h.app.todayList().items.filter((i) => i.source === 'rolled-over').length).toBe(dueToday);
   });
 
   it('can be planned relative to now', () => {

@@ -229,8 +229,11 @@ function BatchPanel({
 
 function AddBatchDialog({ onClose }: { onClose: () => void }) {
   const { app, run } = useApp();
-  const types = app.inventory().types;
-  const [typeId, setTypeId] = useState(types[0]?.id ?? '');
+  const inventory = app.inventory();
+  const types = inventory.types;
+  // Default to whatever was last fabricated: people make the same scaffold
+  // several times in a row, and alphabetical order is nobody's workflow.
+  const [typeId, setTypeId] = useState(inventory.batches[0]?.typeId ?? types[0]?.id ?? '');
   const [count, setCount] = useState(12);
   const [label, setLabel] = useState('');
   const [date, setDate] = useState(app.today);

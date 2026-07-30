@@ -69,36 +69,63 @@ jobs:
       # A vault is a directory of text files, so this is the whole contract:
       # write through the CLI, read the files back, and check they say what
       # they should.
-      - name: Drive it
+      # Split into named steps: when this fails, the API says which one, which
+      # is the difference between a two-minute diagnosis and a guessing game.
+      #
+      # Note the absence of `cmd | grep -q` anywhere below. Under `pipefail`,
+      # grep -q exits on the first match, the writer takes SIGPIPE, and the
+      # pipeline reports failure for a command that did exactly what was asked.
+      # Output is captured into a variable first, every time.
+      - name: Build a board
         shell: bash
         run: |
-          set -euo pipefail
+          set -euxo pipefail
           export PROTRACKER_VAULT="$RUNNER_TEMP/vault"
-          pt() { node dist/cli/bin.js "$@"; }
-          project="$PROTRACKER_VAULT/projects/smoke-test.pt"
+          node dist/cli/bin.js add project "Smoke test"
+          node dist/cli/bin.js add smoke-test "Milestone" --seq 1
+          node dist/cli/bin.js add smoke-test.milestone "Goal" --seq 1
+          node dist/cli/bin.js add smoke-test.milestone.goal "First" --seq 1
+          node dist/cli/bin.js add smoke-test.milestone.goal "Second" --seq 2
 
-          pt add project "Smoke test"
-          pt add smoke-test "Milestone" --seq 1
-          pt add smoke-test.milestone "Goal" --seq 1
-          pt add smoke-test.milestone.goal "First" --seq 1
-          pt add smoke-test.milestone.goal "Second" --seq 2
+      - name: Sequence numbers gate the second task
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export PROTRACKER_VAULT="$RUNNER_TEMP/vault"
+          ready=$(node dist/cli/bin.js ready --json)
+          count=$(printf '%s' "$ready" | node -p 'JSON.parse(require("node:fs").readFileSync(0,"utf8")).length')
+          test "$count" = "1"
 
-          # Only the first task is actionable; the second waits on its rank.
-          test "$(pt ready --json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).length))')" = "1"
+      - name: Completing one frees the next, and reaches the disk
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export PROTRACKER_VAULT="$RUNNER_TEMP/vault"
+          node dist/cli/bin.js done First
+          ready=$(node dist/cli/bin.js ready --json)
+          case "$ready" in *Second*) ;; *) echo "Second did not become ready"; exit 1 ;; esac
+          grep -q 'status: done' "$PROTRACKER_VAULT/projects/smoke-test.pt"
 
-          pt done First
-          pt ready --json | grep -q Second
-          grep -q 'status: done' "$project"
+      - name: Undo reverts the whole image, on disk too
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export PROTRACKER_VAULT="$RUNNER_TEMP/vault"
+          node dist/cli/bin.js undo
+          if grep -q 'status: done' "$PROTRACKER_VAULT/projects/smoke-test.pt"; then
+            echo "undo did not reach the file"; exit 1
+          fi
 
-          # Undo reverts the whole image, on disk as well as in memory.
-          pt undo
-          ! grep -q 'status: done' "$project"
-
-          # Starting a protocol run writes its steps into the planner file.
-          pt scaffold type "Collagen sponge"
-          batch=$(pt scaffold add collagen-sponge 24 --json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).id))')
-          pt crosslink edc-nhs "$batch"
+      - name: A protocol run writes its steps into the planner
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export PROTRACKER_VAULT="$RUNNER_TEMP/vault"
+          node dist/cli/bin.js scaffold type "Collagen sponge"
+          added=$(node dist/cli/bin.js scaffold add collagen-sponge 24 --json)
+          batch=$(printf '%s' "$added" | node -p 'JSON.parse(require("node:fs").readFileSync(0,"utf8")).id')
+          node dist/cli/bin.js crosslink edc-nhs "$batch"
           grep -q 'sourceKind: protocol' "$PROTRACKER_VAULT/planner.pt"
-          pt runs | grep -q 'EDC/NHS'
-
-          pt where
+          runs=$(node dist/cli/bin.js runs)
+          case "$runs" in *EDC/NHS*) ;; *) echo "the run is not listed"; exit 1 ;; esac
+          node dist/cli/bin.js where
