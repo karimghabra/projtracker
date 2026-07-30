@@ -135,9 +135,10 @@ export class App {
   }
 
   private mutate<T>(label: string, fn: (draft: State) => T): T {
+    const now = this.now;
     const result = this.store.mutate(label, (draft) => {
       const value = fn(draft);
-      syncGeneratedReminders(draft);
+      syncGeneratedReminders(draft, now);
       return value;
     });
     // Inside a transaction the draft keeps its identity while its contents
@@ -1271,7 +1272,7 @@ function advanceBatchesIfRunComplete(draft: State, runId: string, now: Stamp): b
  * is idempotent: running it twice changes nothing, and the vault text stays
  * byte-stable. Manual reminders are never touched.
  */
-export function syncGeneratedReminders(draft: State): void {
+export function syncGeneratedReminders(draft: State, now: Stamp): void {
   const manual = draft.reminders.filter((r) => r.source.kind === 'manual');
   const previous = new Map(draft.reminders.map((r) => [r.id, r]));
   const generated: typeof draft.reminders = [];
@@ -1301,7 +1302,7 @@ export function syncGeneratedReminders(draft: State): void {
         time: scheduled.at.slice(11, 16),
         source: { kind: 'protocol', runId: run.id, stepId: scheduled.step.id },
         done: scheduled.done,
-        doneAt: scheduled.done ? (existing?.doneAt ?? scheduled.at) : undefined,
+        doneAt: scheduled.done ? (existing?.doneAt ?? now) : undefined,
         notes: batchSummary || undefined,
       });
     }
@@ -1319,7 +1320,7 @@ export function syncGeneratedReminders(draft: State): void {
         source: { kind: 'experiment', nodeId: node.id, stageId: stage.id },
         nodeId: node.id,
         done: stage.done,
-        doneAt: stage.done ? existing?.doneAt : undefined,
+        doneAt: stage.done ? (existing?.doneAt ?? now) : undefined,
       });
     }
   }

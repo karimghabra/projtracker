@@ -289,7 +289,7 @@
   background: radial-gradient(circle, var(--border) 1px, transparent 1px) 0 0 / 22px 22px;
 }
 
-.graph-canvas svg { display: block; min-width: 100%; min-height: 100%; }
+.graph-canvas svg { display: block; }
 
 .graph-band-label {
   font-size: 11px;
@@ -308,6 +308,15 @@
 
 .graph-node-name { font-size: 13px; font-weight: 600; fill: var(--text); }
 .graph-node-status { font-size: 10px; fill: var(--text-muted); }
+
+/* Labels sit on top of the card, so they must not swallow clicks meant for it. */
+.graph-node-kind,
+.graph-node-name,
+.graph-node-status,
+.graph-band-label {
+  pointer-events: none;
+  user-select: none;
+}
 
 .graph-port { opacity: 0; cursor: crosshair; }
 g:hover > .graph-port { opacity: 1; }

@@ -31,7 +31,6 @@ import {
   blockersOf,
   derivedStatus,
   isDone,
-  layeredLayout,
   progressOf,
   rootProjects,
   projectProgress,
@@ -347,17 +346,20 @@ export interface GraphNodeView {
   derived: DerivedStatus;
   health: Health;
   projectId?: NodeId;
+  /** Column: 0 project, 1 milestone, 2 goal. The hierarchy reads left to right. */
   rank: number;
+  /** Row, in depth-first order so children sit beside their parent. */
   lane: number;
   progress: { done: number; total: number } | null;
   waitingOn?: WaitingOn;
-  experimentSummary?: string;
+  blockedBy: string[];
 }
 
 export interface GraphEdgeView {
   from: NodeId;
   to: NodeId;
-  via: 'dep' | 'seq';
+  /** `child` is containment, `seq` is rank order, `dep` is a link you drew. */
+  via: 'dep' | 'seq' | 'child';
   seqSource?: SeqSource;
   depId?: string;
   suppressed?: string;
@@ -367,65 +369,116 @@ export interface GraphBand {
   projectId: NodeId;
   projectName: string;
   nodeIds: NodeId[];
+  firstLane: number;
+  laneCount: number;
 }
 
 export interface GraphView {
   nodes: GraphNodeView[];
   edges: GraphEdgeView[];
   bands: GraphBand[];
+  laneCount: number;
 }
 
 /**
  * The graph the user draws on: project → milestone → goal, one band per
- * project. Tasks are deliberately not drawn — the spec asks for the hierarchy
- * down to goals, and a board with every task on it stops being readable at
- * about the third project.
+ * project, hierarchy flowing left to right.
+ *
+ * Tasks are deliberately not drawn. The spec asks for the hierarchy down to
+ * goals, and a board carrying every task stops being readable at about the
+ * third project — which defeats the purpose of having a board.
+ *
+ * Layout is a tidy tree: a goal takes the next free row, and a parent is
+ * centred against its children. Dependency arrows are drawn on top of that
+ * rather than driving it, because the hierarchy is the thing being navigated.
  */
-export function graphView(index: GraphIndex, today: DateOnly, options: { showGuessed?: boolean } = {}): GraphView {
+export function graphView(
+  index: GraphIndex,
+  today: DateOnly,
+  options: { showGuessed?: boolean } = {},
+): GraphView {
   const state = index.state;
-  const visible = index.order.filter((id) => {
-    const node = state.nodes[id]!;
-    return node.kind === 'project' || node.kind === 'milestone' || node.kind === 'goal';
-  });
-  void state;
-  const visibleSet = new Set(visible);
+  const isVisible = (id: NodeId) => {
+    const kind = state.nodes[id]?.kind;
+    return kind === 'project' || kind === 'milestone' || kind === 'goal';
+  };
 
+  const rank = new Map<NodeId, number>();
+  const lane = new Map<NodeId, number>();
   const bands: GraphBand[] = [];
+  let nextLane = 0;
+
   for (const project of rootProjects(index)) {
-    const members = [project.id, ...(index.descendants.get(project.id) ?? [])].filter((id) =>
-      visibleSet.has(id),
-    );
-    bands.push({ projectId: project.id, projectName: project.name, nodeIds: members });
+    const firstLane = nextLane;
+    const members: NodeId[] = [];
+
+    // Depth-first: each leaf-most visible node claims a row; a parent is
+    // centred on the rows its children occupy.
+    const place = (id: NodeId, depth: number): { first: number; last: number } => {
+      members.push(id);
+      rank.set(id, depth);
+      const children = (index.children.get(id) ?? []).filter((c) => isVisible(c.id));
+
+      if (children.length === 0) {
+        const row = nextLane++;
+        lane.set(id, row);
+        return { first: row, last: row };
+      }
+
+      let first = Number.POSITIVE_INFINITY;
+      let last = Number.NEGATIVE_INFINITY;
+      for (const child of children) {
+        const span = place(child.id, depth + 1);
+        first = Math.min(first, span.first);
+        last = Math.max(last, span.last);
+      }
+      lane.set(id, (first + last) / 2);
+      return { first, last };
+    };
+
+    place(project.id, 0);
+    bands.push({
+      projectId: project.id,
+      projectName: project.name,
+      nodeIds: members,
+      firstLane,
+      laneCount: Math.max(1, nextLane - firstLane),
+    });
+    // A blank row between projects so the bands do not touch.
+    nextLane += 0.6;
   }
 
-  const layout = new Map<NodeId, { rank: number; lane: number }>();
-  for (const band of bands) {
-    for (const [id, position] of layeredLayout(index, band.nodeIds)) layout.set(id, position);
-  }
+  const visibleSet = new Set(rank.keys());
 
-  const nodes: GraphNodeView[] = visible.map((id) => {
+  const nodes: GraphNodeView[] = [...visibleSet].map((id) => {
     const node = state.nodes[id]!;
-    const position = layout.get(id) ?? { rank: 0, lane: 0 };
     return {
       id,
       kind: node.kind,
       name: node.name,
       derived: derivedStatus(index, id, today),
       health: node.health,
-      projectId: findProject(index, id)?.id ?? (node.kind === 'project' ? node.id : undefined),
-      rank: position.rank,
-      lane: position.lane,
+      projectId: node.kind === 'project' ? node.id : findProject(index, id)?.id,
+      rank: rank.get(id) ?? 0,
+      lane: lane.get(id) ?? 0,
       progress: progressOf(index, id),
       waitingOn: node.waitingOn,
-      experimentSummary: undefined,
+      blockedBy: blockersOf(index, id).map((b) => b.node.name),
     };
   });
+
+  const edges: GraphEdgeView[] = [];
+
+  // Containment, so the hierarchy is visible rather than implied by position.
+  for (const id of visibleSet) {
+    const parent = state.nodes[id]?.parent;
+    if (parent && visibleSet.has(parent)) edges.push({ from: parent, to: id, via: 'child' });
+  }
 
   const relevant = index.edges.filter((e) => visibleSet.has(e.from) && visibleSet.has(e.to));
   const live = relevant.filter((e) => !e.suppressed);
   const kept = new Set(transitiveReduction(live).map(edgeKey));
 
-  const edges: GraphEdgeView[] = [];
   for (const edge of relevant) {
     // A rank closure (1→2, 1→3, 2→3) draws as a chain; the implied edge is
     // dropped for legibility only, never for meaning.
@@ -441,7 +494,7 @@ export function graphView(index: GraphIndex, today: DateOnly, options: { showGue
     });
   }
 
-  return { nodes, edges, bands };
+  return { nodes, edges, bands, laneCount: Math.ceil(nextLane) };
 }
 
 function edgeKey(edge: EffectiveEdge): string {

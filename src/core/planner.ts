@@ -99,7 +99,9 @@ export function todayItems(state: State, index: GraphIndex, date: DateOnly): Tod
 
   // Reminders that have come due, including multi-day ones still in their span.
   for (const reminder of state.reminders) {
-    if (reminder.done) continue;
+    // A reminder ticked today stays on the list, struck through. Ticking a box
+    // should look like progress; having the row vanish looks like a mistake.
+    if (reminder.done && reminder.doneAt?.slice(0, 10) !== date) continue;
     const start = dayNumber(reminder.date);
     const end = start + Math.max(0, (reminder.spanDays ?? 1) - 1);
     const day = dayNumber(date);
@@ -115,7 +117,7 @@ export function todayItems(state: State, index: GraphIndex, date: DateOnly): Tod
       source: 'reminder',
       reminder,
       node: reminder.nodeId ? state.nodes[reminder.nodeId] : undefined,
-      done: false,
+      done: reminder.done,
     });
   }
 
