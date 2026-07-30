@@ -38,6 +38,7 @@ import {
   emptyState,
   isContainerKind,
 } from '../core/model.ts';
+import type { Precision } from '../core/periods.ts';
 import type { Block } from './format.ts';
 import {
   applyExtras,
@@ -71,8 +72,8 @@ export function journalFile(month: string): string {
 
 const NODE_KNOWN = [
   'id', 'name', 'seq', 'seqSource', 'ordering', 'status', 'health',
-  'createdAt', 'startedAt', 'doneAt', 'plannedFor', 'waitingReason', 'waitingUntil',
-  'tags', 'notes',
+  'createdAt', 'startedAt', 'doneAt', 'donePrecision', 'plannedFor',
+  'waitingReason', 'waitingUntil', 'tags', 'notes',
 ] as const;
 
 
@@ -94,6 +95,10 @@ function nodeToBlock(state: State, node: Node): Block {
   f.set('createdAt', node.createdAt);
   if (node.startedAt) f.set('startedAt', node.startedAt);
   if (node.doneAt) f.set('doneAt', node.doneAt);
+  // Omitted when it is to the day, so an existing vault is unchanged by this.
+  if (node.donePrecision && node.donePrecision !== 'day') {
+    f.set('donePrecision', node.donePrecision);
+  }
   if (node.plannedFor) f.set('plannedFor', node.plannedFor);
   if (node.waitingOn) {
     f.set('waitingReason', node.waitingOn.reason);
@@ -197,6 +202,9 @@ function blockToNode(b: Block, parent: string | null, into: State): void {
     createdAt: field(b, 'createdAt') ?? '1970-01-01T00:00',
     startedAt: field(b, 'startedAt'),
     doneAt: field(b, 'doneAt'),
+    // Absent must stay absent: 'day' is the default and is never written, so
+    // materialising it here would make memory differ from disk on every node.
+    donePrecision: readPrecision(field(b, 'donePrecision')),
     plannedFor: field(b, 'plannedFor'),
     waitingOn: waitingReason ? { reason: waitingReason, until: field(b, 'waitingUntil') } : undefined,
     tags: listField(b, 'tags'),
@@ -221,6 +229,10 @@ function blockToNode(b: Block, parent: string | null, into: State): void {
 
   into.nodes[node.id] = node;
   for (const child of b.children) blockToNode(child, node.id, into);
+}
+
+function readPrecision(value: string | undefined): Precision | undefined {
+  return value === 'month' || value === 'quarter' || value === 'year' ? value : undefined;
 }
 
 function oneOf<T extends string>(value: string | undefined, allowed: readonly string[], fallback: T): T {

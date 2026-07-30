@@ -24,6 +24,7 @@ import { childrenOf, isContainerKind } from '../core/model.ts';
 import { buildIndex, derivedStatus, isDone, progressOf, rootProjects } from '../core/graph.ts';
 import type { GraphIndex } from '../core/graph.ts';
 import { dateOf } from '../core/dates.ts';
+import { encodePeriod } from '../core/periods.ts';
 
 const HEALTH_FILL: Record<Health, string | undefined> = {
   not_begun: undefined,
@@ -44,6 +45,7 @@ export const EXPORT_HEADERS = [
   'Goal',
   'Task',
   'Status',
+  'Completed',
   'Progress',
   'Health',
   'Planned',
@@ -226,6 +228,7 @@ export function writeWorkbook(book: Bookish, state: State, today: string): void 
           goalName,
           isContainerKind(child.kind) ? '' : child.name,
           child.status === 'done' ? 'Done' : child.status === 'dropped' ? 'Dropped' : '',
+          child.doneAt ? encodePeriod(child.doneAt.slice(0, 10), child.donePrecision ?? 'day') : '',
           progress ? `${progress.done}/${progress.total}` : '',
           child.health === 'not_begun' ? '' : child.health.replace('_', ' '),
           child.plannedFor ?? '',
@@ -261,6 +264,7 @@ export function writeWorkbook(book: Bookish, state: State, today: string): void 
       { width: 26 },
       { width: 34 },
       { width: 10 },
+      { width: 12 },
       { width: 10 },
       { width: 11 },
       { width: 12 },

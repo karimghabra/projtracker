@@ -148,10 +148,11 @@ describe('writing a workbook', () => {
     const header = projectSheets(book)[0]!.getRow(3);
 
     expect(header.getCell(5).value).toBe('Status');
-    expect(header.getCell(6).value).toBe('Progress');
+    expect(header.getCell(6).value).toBe('Completed');
+    expect(header.getCell(7).value).toBe('Progress');
     // Kind and Culture are for the importer, not for a reader.
-    expect(header.getCell(11).value).toBe('Kind');
-    expect(header.getCell(12).value).toBe('Culture');
+    expect(header.getCell(12).value).toBe('Kind');
+    expect(header.getCell(13).value).toBe('Culture');
   });
 
   it('names sheets Excel will accept', async () => {

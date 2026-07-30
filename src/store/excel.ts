@@ -80,6 +80,8 @@ export function decodeCulture(text: string): CultureSpec | undefined {
 export interface ImportRow {
   kind: RowKind;
   name: string;
+  /** Whatever was in the Completed column, verbatim, for the caller to parse. */
+  completedText?: string;
   /** Present when the row carried a cell culture definition. */
   culture?: CultureSpec;
   seq?: number;
@@ -140,6 +142,11 @@ const HEADERS: Record<string, keyof ColumnMap> = {
   tag: 'tags',
   kind: 'kind',
   type: 'kind',
+  completed: 'completed',
+  completedon: 'completed',
+  completedin: 'completed',
+  donedate: 'completed',
+  datecompleted: 'completed',
   culture: 'culture',
   experiment: 'culture',
 };
@@ -157,6 +164,7 @@ interface ColumnMap {
   tags?: number;
   kind?: number;
   culture?: number;
+  completed?: number;
 }
 
 function normalise(value: unknown): string {
@@ -364,10 +372,15 @@ export function readWorkbook(workbook: Workbookish): ImportPlan {
         rows.push({
           kind: own && kind === 'task' && isExperiment ? 'experiment' : kind,
           name,
+          completedText: own ? at('completed').trim() || undefined : undefined,
           culture: own ? culture : undefined,
           seq: own ? seq : undefined,
           notes: own ? at('notes') || undefined : undefined,
-          done: own ? cell?.font?.strike === true || isDoneText(at('status')) : false,
+          done: own
+            ? cell?.font?.strike === true ||
+              isDoneText(at('status')) ||
+              at('completed').trim() !== ''
+            : false,
           health: own
             ? (healthFromText(at('health')) ?? healthFromColour(cell?.fill?.fgColor?.argb))
             : 'not_begun',

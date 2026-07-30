@@ -16,13 +16,24 @@ import { useApp } from '../state/store.ts';
 import { ConfirmDialog, Empty } from '../components/ui.tsx';
 import { IconPlus, IconSheet, IconTrash } from '../components/icons.tsx';
 
-type ColumnId = 'seq' | 'project' | 'milestone' | 'goal' | 'task' | 'status' | 'health' | 'plannedFor' | 'tags' | 'notes';
+type ColumnId =
+  | 'seq'
+  | 'project'
+  | 'milestone'
+  | 'goal'
+  | 'task'
+  | 'status'
+  | 'completed'
+  | 'health'
+  | 'plannedFor'
+  | 'tags'
+  | 'notes';
 
 interface Column {
   id: ColumnId;
   label: string;
   width: number;
-  kind: 'text' | 'number' | 'date' | 'status' | 'health';
+  kind: 'text' | 'number' | 'date' | 'status' | 'health' | 'period';
 }
 
 const COLUMNS: Column[] = [
@@ -32,6 +43,7 @@ const COLUMNS: Column[] = [
   { id: 'goal', label: 'Goal', width: 168, kind: 'text' },
   { id: 'task', label: 'Task', width: 208, kind: 'text' },
   { id: 'status', label: 'Status', width: 112, kind: 'status' },
+  { id: 'completed', label: 'Completed', width: 118, kind: 'period' },
   { id: 'health', label: 'Health', width: 108, kind: 'health' },
   { id: 'plannedFor', label: 'Planned', width: 122, kind: 'date' },
   { id: 'tags', label: 'Tags', width: 132, kind: 'text' },
@@ -70,6 +82,8 @@ export function SheetScreen() {
           return row[col.id];
         case 'status':
           return row.status;
+        case 'completed':
+          return row.completedValue;
         case 'health':
           return row.health;
         case 'plannedFor':
@@ -105,6 +119,13 @@ export function SheetScreen() {
           else if (value === 'in_progress') run((a) => a.start(row.id), { silent: true });
           else if (value === 'dropped') run((a) => a.drop(row.id), { silent: true });
           else run((a) => a.reopen(row.id), { silent: true });
+          break;
+        }
+        case 'completed': {
+          // Filling a column down passes over milestones and goals; they take
+          // their completion from what is inside them.
+          if (row.kind !== 'task' && row.kind !== 'experiment') return;
+          run((a) => a.setCompletion(row.id, value), { silent: true });
           break;
         }
         case 'health':
@@ -161,13 +182,29 @@ export function SheetScreen() {
           }
           break;
         }
+        case 'd':
+        case 'D': {
+          // Ctrl+D fills from the cell above, the way a spreadsheet does. This
+          // is the whole back-filling workflow: type "Q3" once, then hold it
+          // down the column.
+          if (!event.ctrlKey && !event.metaKey) break;
+          event.preventDefault();
+          const above = rows[cursor.row - 1];
+          const target = rows[cursor.row];
+          const col = COLUMNS[cursor.col];
+          if (above && target && col) {
+            commit(target, col, cellValue(above, col));
+            move(1, 0);
+          }
+          break;
+        }
         default:
           break;
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [cursor, editing, move, rows, cellValue]);
+  }, [cursor, editing, move, rows, cellValue, commit]);
 
   if (rows.length === 0) {
     return (
@@ -185,7 +222,7 @@ export function SheetScreen() {
         <span className="faint">{rows.length} rows</span>
         <span className="spacer" />
         <span className="faint nowrap">
-          Enter edits · Tab moves right · arrows navigate
+          Enter edits · Ctrl+D fills down · Tab moves right · arrows navigate
         </span>
       </div>
 
@@ -216,9 +253,14 @@ export function SheetScreen() {
             >
               {COLUMNS.map((col, colIndex) => {
                 const own = nameColumnFor(row.kind) === col.id;
+                // A container is done when its contents are, so there is
+                // nothing to type in its Completed cell.
+                const leaf = row.kind === 'task' || row.kind === 'experiment';
                 const editable =
-                  col.id === 'seq' || col.id === 'status' || col.id === 'health' ||
-                  col.id === 'plannedFor' || col.id === 'tags' || col.id === 'notes' || own;
+                  col.id === 'seq' || col.id === 'status' ||
+                  (col.id === 'completed' && leaf) ||
+                  col.id === 'health' || col.id === 'plannedFor' || col.id === 'tags' ||
+                  col.id === 'notes' || own;
                 const active = cursor.row === rowIndex && cursor.col === colIndex;
 
                 return (
@@ -305,6 +347,8 @@ function display(row: SheetRow, col: Column): string {
       return own ? (row[col.id] as string) : (row[col.id] as string);
     case 'status':
       return row.derived.replace('_', ' ');
+    case 'completed':
+      return row.completed;
     case 'health':
       return row.health === 'not_begun' ? '' : row.health.replace('_', ' ');
     case 'plannedFor':
@@ -375,6 +419,7 @@ function CellEditor({
       type={col.kind === 'date' ? 'date' : col.kind === 'number' ? 'number' : 'text'}
       value={value}
       aria-label={col.label}
+      placeholder={col.kind === 'period' ? 'Q3 2026' : undefined}
       onChange={(event) => onChange(event.target.value)}
       onKeyDown={onKeyDown}
       onBlur={() => onCommit(value)}

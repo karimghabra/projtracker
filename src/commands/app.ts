@@ -43,6 +43,7 @@ import type { GraphIndex } from '../core/graph.ts';
 import { emptyExperiment, stagesOf, validateExperiment } from '../core/experiments.ts';
 import { isRunComplete, scheduleRun } from '../core/protocols.ts';
 import { overdue, plannedAhead, upcomingReminders } from '../core/planner.ts';
+import { parsePeriod } from '../core/periods.ts';
 import type { ImportPlan } from '../store/excel.ts';
 import { canonicalise } from '../store/serialize.ts';
 import { Store, initialState } from '../store/store.ts';
@@ -507,6 +508,66 @@ export class App {
     return this.setStatus(id, 'active', 'Reopen');
   }
 
+  /**
+   * Set or clear a completion from a single piece of text — what the
+   * spreadsheet's Completed column and the CLI both need. Empty reopens it.
+   */
+  setCompletion(id: NodeId, when: string): Delta {
+    const node = this.state.nodes[id];
+    if (!node) throw notFound('node', id);
+    if (!when.trim()) {
+      return node.status === 'done' ? this.reopen(id) : { ok: true, message: 'Not completed.' };
+    }
+    if (isContainerKind(node.kind)) {
+      throw notAllowed(`A ${node.kind} completes when everything inside it does.`);
+    }
+
+    const period = parsePeriod(when, this.today);
+    if (!period) {
+      throw invalid(
+        `Cannot read "${when}" as a time. Try a date, a month, a quarter or a year — 2026-08-14, Aug 2026, Q3 2026, 2026.`,
+      );
+    }
+
+    const label = `${period.at}${period.precision === 'day' ? '' : ` (${period.precision})`}`;
+    return this.mutate(`Complete "${node.name}" ${label}`, (draft) => {
+      const target = draft.nodes[id]!;
+      target.status = 'done';
+      target.doneAt = `${period.at}T12:00`;
+      target.donePrecision = period.precision === 'day' ? undefined : period.precision;
+      if (target.health === 'not_begun') target.health = 'on_track';
+      for (const step of target.steps) step.done = true;
+      for (const entry of draft.planner) {
+        if (entry.nodeId === id && !entry.outcome) entry.outcome = 'completed';
+      }
+      return { ok: true as const, message: 'Recorded.' };
+    });
+  }
+
+  /**
+   * Complete several at once, all in the same period. Back-filling a year of
+   * work one dialog at a time is how a tracker stops being used.
+   */
+  completeMany(ids: NodeId[], when: string): Delta & { completed: number } {
+    const period = parsePeriod(when, this.today);
+    if (!period) throw invalid(`Cannot read "${when}" as a time.`);
+
+    const eligible = ids.filter((id) => {
+      const node = this.state.nodes[id];
+      return node && !isContainerKind(node.kind);
+    });
+    if (!eligible.length) throw invalid('Nothing selected that can be completed.');
+
+    return this.transaction(`Complete ${eligible.length} items`, (app) => {
+      for (const id of eligible) app.setCompletion(id, when);
+      return {
+        ok: true as const,
+        message: `Marked ${eligible.length} item(s) complete.`,
+        completed: eligible.length,
+      };
+    });
+  }
+
   private setStatus(id: NodeId, status: StoredStatus, verb: string): Delta {
     const node = this.state.nodes[id];
     if (!node) throw notFound('node', id);
@@ -519,7 +580,10 @@ export class App {
       const target = draft.nodes[id]!;
       target.status = status;
       if (status === 'in_progress' && !target.startedAt) target.startedAt = now;
-      if (status !== 'done') target.doneAt = undefined;
+      if (status !== 'done') {
+        target.doneAt = undefined;
+        target.donePrecision = undefined;
+      }
       if (status === 'active' && target.health === 'not_begun' && target.startedAt) {
         target.health = 'on_track';
       }
@@ -531,7 +595,15 @@ export class App {
    * Complete a task, and report what it freed. The count is the point: it turns
    * ticking something off from bookkeeping into feedback.
    */
-  complete(id: NodeId): Delta & { unblocked: string[] } {
+  /**
+   * Complete a task, and report what it freed. The count is the point: it turns
+   * ticking something off from bookkeeping into feedback.
+   *
+   * `when` accepts anything `parsePeriod` understands — a date, a month, a
+   * quarter, a year — for back-filling work that was finished long before
+   * anyone started recording it here. Omitted means now, to the minute.
+   */
+  complete(id: NodeId, when?: string): Delta & { unblocked: string[] } {
     const node = this.state.nodes[id];
     if (!node) throw notFound('node', id);
     if (isContainerKind(node.kind)) {
@@ -539,7 +611,14 @@ export class App {
         `A ${node.kind} completes when everything inside it does — tick its tasks instead.`,
       );
     }
-    if (node.status === 'done') throw conflict(`"${node.name}" is already done.`);
+    if (node.status === 'done' && !when) throw conflict(`"${node.name}" is already done.`);
+
+    const period = when === undefined ? null : parsePeriod(when, this.today);
+    if (when !== undefined && !period) {
+      throw invalid(
+        `Cannot read "${when}" as a time. Try a date, a month, a quarter or a year — 2026-08-14, Aug 2026, Q3 2026, 2026.`,
+      );
+    }
 
     const before = new Set(readyView(this.index, this.today).map((r) => r.id));
     const now = this.now;
@@ -548,7 +627,8 @@ export class App {
     return this.mutate(`Complete "${node.name}"`, (draft) => {
       const target = draft.nodes[id]!;
       target.status = 'done';
-      target.doneAt = now;
+      target.doneAt = period ? `${period.at}T12:00` : now;
+      target.donePrecision = period && period.precision !== 'day' ? period.precision : undefined;
       if (target.health === 'not_begun') target.health = 'on_track';
       for (const step of target.steps) step.done = true;
 
@@ -1349,7 +1429,12 @@ export class App {
             if (row.health !== 'not_begun') node.health = row.health;
             if (row.done) {
               node.status = 'done';
-              node.doneAt = now;
+              // A Completed column carries the period it was actually finished
+              // in; without one, all we know is that it is done.
+              const period = row.completedText ? parsePeriod(row.completedText, this.today) : null;
+              node.doneAt = period ? `${period.at}T12:00` : now;
+              node.donePrecision =
+                period && period.precision !== 'day' ? period.precision : undefined;
             }
           }
         }

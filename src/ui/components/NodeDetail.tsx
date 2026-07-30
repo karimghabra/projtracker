@@ -7,7 +7,7 @@
  * looking at the thing, not while looking at the whole board.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { HEALTH_STATES } from '../../core/model.ts';
 import type { Health } from '../../core/model.ts';
 import { addDays, formatDayMonth } from '../../core/dates.ts';
@@ -102,6 +102,8 @@ export function NodeDetail({
             )}
           </div>
         )}
+
+        {isLeaf && node.derived === 'done' && <CompletedSection node={node} />}
 
         {/* ------------------------------------------------------ when */}
         {isLeaf && (
@@ -269,6 +271,84 @@ export function NodeDetail({
       </div>
     </div>
   );
+}
+
+/**
+ * When it was finished, at whatever precision is honest.
+ *
+ * Shown only once something is done, because until then the question does not
+ * arise. The free-text field takes "Q3 2026" as readily as a date — back-filled
+ * work is remembered by quarter, and demanding a day produces fiction.
+ */
+function CompletedSection({ node }: { node: NodeView }) {
+  const { app, run } = useApp();
+  const [text, setText] = useState(node.doneValue ?? '');
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setText(node.doneValue ?? '');
+    setError(null);
+  }, [node.doneValue]);
+
+  const apply = (value: string) => {
+    setText(value);
+    const delta = run((a) => a.setCompletion(node.id, value), { silent: true });
+    setError(delta ? null : 'Try a date, a month, a quarter or a year.');
+  };
+
+  const thisQuarter = `${app.today.slice(0, 4)}-Q${Math.floor((Number(app.today.slice(5, 7)) - 1) / 3) + 1}`;
+
+  return (
+    <div className="field">
+      <label htmlFor="d-completed">Completed</label>
+      <div className="inline">
+        <input
+          id="d-completed"
+          className="input"
+          value={text}
+          placeholder="Q3 2026"
+          data-testid="detail-completed"
+          onChange={(event) => setText(event.target.value)}
+          onBlur={(event) => apply(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') apply((event.target as HTMLInputElement).value);
+          }}
+        />
+        <span className="chip nowrap">{node.doneLabel}</span>
+      </div>
+      <div className="inline wrap" style={{ marginTop: 6 }}>
+        {[
+          ['Today', 'today'],
+          ['This quarter', thisQuarter],
+          ['Last quarter', lastQuarter(app.today)],
+          ['This year', app.today.slice(0, 4)],
+        ].map(([label, value]) => (
+          <button
+            key={label}
+            className="btn sm"
+            onClick={() => apply(value!)}
+            data-testid={`done-${label!.toLowerCase().replace(/ /g, '-')}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {error ? (
+        <span className="hint" style={{ color: 'var(--danger)' }}>{error}</span>
+      ) : (
+        <span className="hint">
+          A date, a month, a quarter or a year. It shows as what you typed, not as a
+          date it invented.
+        </span>
+      )}
+    </div>
+  );
+}
+
+function lastQuarter(today: string): string {
+  const year = Number(today.slice(0, 4));
+  const q = Math.floor((Number(today.slice(5, 7)) - 1) / 3) + 1;
+  return q === 1 ? `${year - 1}-Q4` : `${year}-Q${q - 1}`;
 }
 
 function WaitingSection({ node }: { node: NodeView }) {

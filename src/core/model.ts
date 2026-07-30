@@ -7,6 +7,7 @@
  */
 
 import type { DateOnly, Stamp } from './dates.ts';
+import type { Precision } from './periods.ts';
 
 export type NodeId = string;
 
@@ -139,6 +140,15 @@ export interface Node {
   createdAt: Stamp;
   startedAt?: Stamp;
   doneAt?: Stamp;
+  /**
+   * How precisely `doneAt` is known. Absent means to the day, which is what
+   * every completion recorded before this existed was.
+   *
+   * Back-filled work is usually remembered as "some time in Q3", and a tracker
+   * that insists on a date gets a wall of dishonest ones. The date stays real
+   * and sortable; this says how much of it to believe.
+   */
+  donePrecision?: Precision;
 
   /** The user's intent to work on this on a given day. */
   plannedFor?: DateOnly;

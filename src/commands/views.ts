@@ -26,6 +26,8 @@ import type {
   WaitingOn,
 } from '../core/model.ts';
 import { isContainerKind, pathNameOf, refOf } from '../core/model.ts';
+import type { Precision } from '../core/periods.ts';
+import { encodePeriod, formatPeriod } from '../core/periods.ts';
 import type { GraphIndex } from '../core/graph.ts';
 import {
   blockersOf,
@@ -90,6 +92,11 @@ export interface NodeView {
   createdAt: string;
   startedAt?: string;
   doneAt?: string;
+  donePrecision?: Precision;
+  /** How the completion should read: "Q3 2026", not a false 30 September. */
+  doneLabel?: string;
+  /** The same thing in a form a spreadsheet cell round-trips exactly. */
+  doneValue?: string;
   experiment?: ExperimentView;
 }
 
@@ -131,6 +138,13 @@ export function nodeView(index: GraphIndex, id: NodeId, today: DateOnly): NodeVi
     createdAt: node.createdAt,
     startedAt: node.startedAt,
     doneAt: node.doneAt,
+    donePrecision: node.donePrecision,
+    doneLabel: node.doneAt
+      ? formatPeriod(node.doneAt.slice(0, 10), node.donePrecision ?? 'day', today)
+      : undefined,
+    doneValue: node.doneAt
+      ? encodePeriod(node.doneAt.slice(0, 10), node.donePrecision ?? 'day')
+      : undefined,
   };
 
   if (node.experiment) {
@@ -725,6 +739,9 @@ export interface SheetRow {
   status: StoredStatus;
   derived: DerivedStatus;
   health: Health;
+  /** Editable as free text: a date, a month, a quarter or a year. */
+  completed: string;
+  completedValue: string;
   plannedFor?: DateOnly;
   tags: string;
   notes: string;
@@ -763,6 +780,12 @@ export function sheetView(index: GraphIndex, today: DateOnly): SheetRow[] {
       status: node.status,
       derived: derivedStatus(index, id, today),
       health: node.health,
+      completed: node.doneAt
+        ? formatPeriod(node.doneAt.slice(0, 10), node.donePrecision ?? 'day', today)
+        : '',
+      completedValue: node.doneAt
+        ? encodePeriod(node.doneAt.slice(0, 10), node.donePrecision ?? 'day')
+        : '',
       plannedFor: node.plannedFor,
       tags: node.tags.join(', '),
       notes: node.notes ?? '',

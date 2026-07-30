@@ -39,6 +39,7 @@ usage: pt [--vault DIR] [--json] <command> [args]
     rename <ref> <name>
     seq <ref> <n>             set the order number (a statement, not a guess)
     start|pause|done|drop|reopen <ref>
+    done <ref> [--in PERIOD]  back-fill: --in Q3, --in "Aug 2026", --in 2025
     plan <ref> <YYYY-MM-DD|none>
     wait <ref> <reason> [--until DATE]
     arrived <ref>
@@ -224,6 +225,7 @@ async function run(
       if (json) return out(view), 0;
       out(`${view.name}   ${dim(view.ref)}`);
       out(`  ${view.kind} · ${view.derived}${view.health !== 'not_begun' ? ` · ${view.health}` : ''}`);
+      if (view.doneLabel) out(`  completed ${view.doneLabel}`);
       if (view.plannedFor) out(`  planned for ${view.plannedFor}`);
       if (view.waitingOn) out(`  waiting on: ${view.waitingOn.reason}`);
       if (view.blockers.length) out(`  after: ${view.blockers.map((b) => b.name).join(', ')}`);
@@ -281,8 +283,10 @@ async function run(
       return say(app.start(ref(rest[0]))), 0;
     case 'pause':
       return say(app.pause(ref(rest[0]))), 0;
-    case 'done':
-      return say(app.complete(ref(rest[0]))), 0;
+    case 'done': {
+      const when = typeof flags['in'] === 'string' ? flags['in'] : undefined;
+      return say(app.complete(ref(rest[0]), when)), 0;
+    }
     case 'drop':
       return say(app.drop(ref(rest[0]))), 0;
     case 'reopen':

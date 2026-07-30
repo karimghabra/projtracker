@@ -84,6 +84,7 @@ editable afterwards. Ranks are the implicit dependency mechanism (§2.3).
 | `ordering` | Containers only: `sequential` \| `parallel`. Controls whether ranks generate edges. |
 | `status` | Stored: `active` \| `in_progress` \| `done` \| `dropped`. |
 | `health` | Independent axis: `not_begun` \| `on_track` \| `at_risk` \| `off_track`. A task can be done *and* off track. |
+| `doneAt`, `donePrecision` | When it was finished, and how precisely that is known — see 2.5. |
 | `plannedFor` | Optional date. The user's intent to do this on that day. |
 | `waitingOn` | Optional `{ reason, until }` for an external hold. |
 | `tags`, `links`, `steps` | Light annotations. Steps are a checklist, not child tasks. |
@@ -127,6 +128,43 @@ Nothing below is stored; all of it is computed by the pure core.
 
 `ready` is complete and derived. It is never filtered, capped, or reordered by
 the storage layer; presentation may narrow it, but the pool itself stays whole.
+
+### 2.5 How precisely a completion is known
+
+Most of what goes into a tracker on its first day was finished before the
+tracker existed, and nobody remembers the date. Demanding one produces a wall
+of dishonest dates — every one of them today's, or every one of them the first
+of the month — and a record that says something false is worse than one that
+admits it does not know.
+
+So a completion carries its own precision. `doneAt` is a real instant, always,
+so everything that sorts or filters by date keeps working untouched;
+`donePrecision` says how much of it to believe:
+
+| Precision | Written as | Stored instant |
+|---|---|---|
+| `day` (default, and absent from the file) | `2 Jul` | the actual time, to the minute |
+| `month` | `Aug 2025` | noon on the last day of the month |
+| `quarter` | `Q1 2026` | noon on the last day of the quarter |
+| `year` | `2024` | noon on 31 December |
+
+Three rules follow from that:
+
+1. **A period never resolves into the future.** Completing something "in Q3"
+   while Q3 is still running records today, not 30 September, because it
+   plainly did not happen after today.
+2. **The display never invents what it was not told.** A quarter reads "Q1
+   2026" everywhere — sheet, detail pane, workbook, CLI — and never as a date.
+   A quarter always keeps its year, since a bare "Q3" is the one genuinely
+   ambiguous form; a day or month in the current year drops it.
+3. **`day` is written to disk as nothing at all.** A vault from before this
+   existed is byte-identical to one written after it, which is what makes the
+   upgrade safe for a vault already in use.
+
+Input is deliberately generous — `2026-08-14`, `14 Jul 2026`, `today`,
+`yesterday`, `Q2 2026`, `2026-Q2`, `q2`, `2026-06`, `Jun 2026`, `june`, `2025`
+— and it refuses rather than guesses when it cannot read the text. A bare
+quarter or month means the most recent one that has *begun*.
 
 ---
 
