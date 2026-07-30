@@ -86,6 +86,12 @@ test.describe('crosslinking', () => {
 
     await page.getByTestId('start-crosslink').click();
     await expect(page.getByText('You will be reminded to:')).toBeVisible();
+
+    // Pin the start time. Otherwise this depends on the wall clock: the +6.5 h
+    // wash only lands on *today* if the run began early enough, so the test
+    // passes in one timezone and fails in another.
+    const today = await h.today();
+    await page.locator('#r-start').fill(`${today}T06:00`);
     await page.getByTestId('confirm-start-run').click();
 
     await expect(page.locator('.toast').last()).toContainText('8 steps are now in your to-do list');

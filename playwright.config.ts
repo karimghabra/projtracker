@@ -20,6 +20,9 @@ export default defineConfig({
   expect: { timeout: 10_000 },
   use: {
     baseURL: 'http://127.0.0.1:5178',
+    // Pinned so a date-dependent test cannot pass on one machine and fail on
+    // another. CI found one that did exactly that.
+    timezoneId: 'UTC',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
