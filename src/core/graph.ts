@@ -272,10 +272,6 @@ class Reachability {
   }
 }
 
-function reachabilityOf(index: GraphIndex): Reachability {
-  return new Reachability(index, index.edges.filter((e) => !e.suppressed));
-}
-
 /**
  * Reachability over *statements* only — explicit edges and ranks the user set.
  *
@@ -526,7 +522,9 @@ export interface ProjectProgress {
  */
 export function projectProgress(index: GraphIndex, today: DateOnly, staleAfterDays = 14): ProjectProgress[] {
   const out: ProjectProgress[] = [];
-  for (const project of index.children.get(null) ?? []) {
+  // Roots are not all projects: a standalone planner task is parented to null
+  // too, and must not be reported as a project with nothing in it.
+  for (const project of rootProjects(index)) {
     const leaves = leavesOf(index, project.id).filter((n) => n.status !== 'dropped');
     const done = leaves.filter((n) => n.status === 'done').length;
 
@@ -629,4 +627,20 @@ export function transitiveReduction(edges: EffectiveEdge[]): EffectiveEdge[] {
 
 export function childrenIn(index: GraphIndex, parent: NodeId | null): Node[] {
   return index.children.get(parent) ?? childrenOf(index.state, parent);
+}
+
+/**
+ * The actual projects.
+ *
+ * A quick-added task belongs to no project, so it sits at the root next to
+ * them. Anything that means "for each project" has to say so, or an errand
+ * typed into Today shows up as an empty project on the board.
+ */
+export function rootProjects(index: GraphIndex): Node[] {
+  return (index.children.get(null) ?? []).filter((n) => n.kind === 'project');
+}
+
+/** Root nodes that are not projects: standalone planner tasks. */
+export function unfiledNodes(index: GraphIndex): Node[] {
+  return (index.children.get(null) ?? []).filter((n) => n.kind !== 'project');
 }

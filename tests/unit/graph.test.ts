@@ -138,6 +138,7 @@ describe('explicit edges outrank guesses', () => {
     const t2 = h.app.addNode(g, 'Second').id;
 
     expect(derivedStatus(buildIndex(h.app.state), t2, TODAY)).toBe('blocked');
+    expect(derivedStatus(buildIndex(h.app.state), t1, TODAY)).toBe('ready');
 
     const other = h.app.addProject('Other').id;
     const om = h.app.addNode(other, 'OM', { seq: 1 }).id;
@@ -156,7 +157,7 @@ describe('explicit edges outrank guesses', () => {
     const project = h.app.addProject('P').id;
     const m = h.app.addNode(project, 'M', { seq: 1 }).id;
     const g = h.app.addNode(m, 'G', { seq: 1 }).id;
-    const t1 = h.app.addNode(g, 'First', { seq: 1 }).id;
+    h.app.addNode(g, 'First', { seq: 1 });
     const t2 = h.app.addNode(g, 'Second', { seq: 2 }).id;
 
     const other = h.app.addProject('Other').id;

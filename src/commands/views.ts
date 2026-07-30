@@ -33,6 +33,7 @@ import {
   isDone,
   layeredLayout,
   progressOf,
+  rootProjects,
   projectProgress,
   readyLeaves,
   transitiveReduction,
@@ -162,7 +163,9 @@ export interface TreeNode extends NodeView {
 
 export function treeView(index: GraphIndex, today: DateOnly, rootId: NodeId | null = null): TreeNode[] {
   const build = (parent: NodeId | null, depth: number): TreeNode[] =>
-    (index.children.get(parent) ?? []).map((node) => ({
+    // At the root, only projects: standalone planner tasks live on Today, not
+    // in the project tree.
+    (parent === null && rootId === null ? rootProjects(index) : (index.children.get(parent) ?? [])).map((node) => ({
       ...nodeView(index, node.id, today),
       depth,
       children: build(node.id, depth + 1),
@@ -384,10 +387,11 @@ export function graphView(index: GraphIndex, today: DateOnly, options: { showGue
     const node = state.nodes[id]!;
     return node.kind === 'project' || node.kind === 'milestone' || node.kind === 'goal';
   });
+  void state;
   const visibleSet = new Set(visible);
 
   const bands: GraphBand[] = [];
-  for (const project of index.children.get(null) ?? []) {
+  for (const project of rootProjects(index)) {
     const members = [project.id, ...(index.descendants.get(project.id) ?? [])].filter((id) =>
       visibleSet.has(id),
     );
@@ -483,10 +487,11 @@ export function sheetView(index: GraphIndex, today: DateOnly): SheetRow[] {
     const goal = node.kind === 'goal' ? node : chain[2];
     const leaf = isContainerKind(node.kind) ? undefined : node;
 
+    const unfiled = node.parent === null && node.kind !== 'project';
     rows.push({
       id,
       kind: node.kind,
-      project: project?.name ?? '',
+      project: project?.name ?? (unfiled ? '(unfiled)' : ''),
       milestone: milestone?.name ?? '',
       goal: goal?.name ?? '',
       task: leaf?.name ?? '',
