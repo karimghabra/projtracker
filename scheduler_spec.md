@@ -1,7 +1,7 @@
 # Personal project scheduler — software specification
 
-**Version:** 0.3
-**Last revised:** 2026-07-29
+**Version:** 0.4
+**Last revised:** 2026-07-30
 **Status:** Living document
 
 ---
@@ -656,7 +656,158 @@ P1 is small and corrective — it should land before anything else builds on
 ranks. P2 and P3 are independent of each other; P4 consumes all three and
 should land last.
 
+## 12. The attention layer — a ready pool is not a to-do list
+
+This section came out of the first session with the full board loaded (2026-07-30):
+seven projects, 210 open tasks, **42 ready**. Every number was correct and the
+experience was still wrong. The graph answers "what *can* be worked?" — and on a
+healthy multi-project board that answer is legitimately huge. The person asks
+"what should I do *next*?" — a question with at most a handful of good answers.
+Rendering the first answer under the second question's heading ("To do") turns
+graph truth into a wall of implied obligation. Microsoft To Do never has this
+problem because it never aggregates: you only see the list you opened, and My
+Day starts empty. A board that *does* aggregate — the whole point of this tool —
+therefore needs an explicit attention model on top of readiness.
+
+**The governing rule: attention is a lens, never a mutation.** Readiness,
+blockers, and impact stay exactly as §3–§5 and §11 define them — complete,
+derived, honest. The attention layer only decides what is *presented*, and
+every narrowing it applies is either a visible user statement or a visible
+cap with the full count printed beside it. No task ever becomes invisible
+without the user having said something; nothing here feeds back into the
+graph.
+
+A big ready pool has two distinct causes, and only one belongs to this
+section: (a) *unauthored structure* — a fresh import has no edges, so
+everything is "ready" (HANDOFF pending 1; the fix is authoring ranks and
+edges, and the graph editor §11.5 now exists for exactly that); (b)
+*genuinely parallel work across many projects* — real, permanent, and what
+the rest of this section is for.
+
+### 12.1 Fronts and the shelf (project-level attention)
+
+**Problem.** All seven projects compete for the same eyes forever. A person
+runs two or three fronts in any given month; the tool has no way to say
+"not this month" about the rest, so their ready tasks pad the pool and
+their staleness nags unfairly — the radar judging a choice as if it were
+neglect.
+
+**Mechanism.** Every project is either a **front** (default — nothing
+changes for existing boards) or **shelved**, optionally with a return date.
+Shelving is the project-level sibling of §11.2's task wait, with the same
+verb discipline:
+
+- `shelve <project> [--until DATE]` / `resume <project>`. State delta lists
+  every ready task that left or re-entered the presented pool.
+- A shelved project's tasks keep their true derived states. They leave
+  `next` (§12.2) and the suggestion pane; the stale-project nudge **never
+  fires for a shelved project** — shelving *is* the acknowledgment the
+  nudge exists to extract.
+- Commitments survive the shelf: reminders still land on Today, waits
+  still appear in `upcoming`. Shelving mutes ambition, not obligations.
+- `progress` grows a "shelf" section: shelved projects with their return
+  dates, visibly resting-by-choice rather than silently rotting. On the
+  return date the project resumes by itself and the suggestion pane says
+  so ("back from the shelf — pick its first task?"). An undated shelve
+  rests until resumed, listed but quiet.
+
+Storage: `shelved_until` (DATE, nullable) and `shelved` (flag) on project
+nodes; attention fields, deliberately not `earliest_start` — they must never
+enter readiness computation.
+
+### 12.2 `next` — the narrowing policy
+
+**Problem.** The dashboard's main list renders the entire ready pool. 42
+rows ranked by impact is better than 42 rows unranked, but it is still 42
+claims on attention where ~5 belong.
+
+**Mechanism.** A read verb `next`, pure derivation over the existing
+ordering (§ "ready --impact": priority groups, then impact, then soonest
+effective deadline):
+
+1. start from the ready pool, front projects only, snoozed tasks (§12.3)
+   excluded;
+2. take at most **K per project** (default 2) — breadth across fronts is
+   the product's founding complaint (over-focus on one project);
+3. cap the list at **N total** (default 7).
+
+The verb returns the list *plus the honest denominators* (`ready_total`,
+`shown`), and every client renders them together — "Next up · 7 of 42
+ready". The pool itself remains one gesture away (the panel expands to the
+full impact-ranked list, grouped by project); `ready --impact` is unchanged
+for CLI users and scripts. K and N are settings, not magic.
+
+### 12.3 Snooze (task-level attention)
+
+**Problem.** Individual ready tasks that are real but not-now ("reorganize
+the parts drawer") relitigate their case at every glance. §11.2's `wait` is
+wrong for this — it asserts the *world* isn't ready, gets an external
+blocker chip, and lands review reminders. The missing statement is "*I'm*
+not taking this yet."
+
+**Mechanism.** `snooze <id> [--until DATE]` / `snooze <id> --off`. Snoozed
+tasks leave `next` and suggestions (until the date, if given; indefinitely
+otherwise), stay fully visible in the expanded pool wearing a "snoozed"
+chip, and change nothing about readiness, blockers, or the impact numbers
+of other tasks. Snoozing a task that later becomes the sole gate of a
+front project is *not* auto-woken — the graph never overrides a statement —
+but the suggestion pane may say "snoozed task X now gates 6 others," which
+is information, not an alarm. Attention fields: `snoozed_until` /
+`snoozed` on tasks, same discipline as §12.1.
+
+### 12.4 The desk has a size
+
+Today (§ Today list) and `in_progress` (§11 start/pause) already model "on
+my desk"; what is missing is any sense of *full*. Two soft caps, tone not
+gate: a Today target (default 5) and an in-progress limit (default 3).
+Exceeding either recolors the count chip and appends one word ("heavy") —
+never a blocking dialog, never a red alarm, per the soft-deadline governing
+note. The suggestion pane stops offering additions while Today is at or
+over target; it does not remove anything.
+
+### 12.5 Surface consequences, wiring, round trip
+
+The dashboard's "To do" panel is retitled **Next up** and renders the
+`next` verb: a short list with honest denominators, in-progress strip on
+top, the full pool behind an expander. The graph panel gains a
+front/shelved band treatment (shelved bands collapsed by default). The
+suggestion pane (OQ14) draws only from fronts and adds the two new
+suggestion types (shelf returns, gate-forming snoozed tasks).
+
+Wiring follows §8.1 as always: fields in `model.py`/`storage.py`; `shelve`,
+`resume`, `snooze`, `next` in `commands.py` with state deltas; CLI
+subcommands; the UI renders verb output and computes nothing — the K/N
+narrowing happens in the command layer precisely so every client (CLI,
+dashboard, export tooling) sees the same "next".
+
+Round trip (§11.6, binding): `Snoozed` column on task rows; `Shelved
+(until)` in the project sheet preamble. Blank never clears; invalid dates
+kept as extras and surfaced.
+
+**Phasing: P5.** Small and additive; nothing else depends on it, and it
+should land before any further list features — every list feature gets
+cheaper to judge once the board renders attention honestly. *Exit test:
+the real board (7 projects, 42 ready) opens with ≤7 items under Next up,
+the full pool reachable in one gesture, every hidden task wearing a
+user-authored reason (shelved / snoozed / over-cap with denominator), and
+`ready --impact` byte-identical to before the phase.*
+
+New open questions: **15.** K/N defaults (2 per project, 7 total?) and
+whether K should flex when fewer fronts exist. **16.** Should a shelf
+return date auto-`resume`, or only suggest resuming? (Drafted: auto-resume,
+because the date was a user statement — but a gentler "suggest only" is
+defensible.) **17.** Do the desk caps deserve settings UI, or are constants
+fine until proven wrong?
+
 ## Revision history
+
+**0.4 — 2026-07-30.** The attention layer (§12), from the first session
+with the full board loaded: ready-as-truth versus next-as-attention
+separated; fronts and the shelf (`shelve`/`resume`, project-level),
+`snooze` (task-level), the `next` verb with per-project and total caps and
+honest denominators, soft desk caps, suggestion-pane sourcing narrowed to
+fronts. Governing rule recorded: attention is a lens, never a mutation —
+readiness stays complete and derived. Phasing P5; open questions 15–17.
 
 **0.3 — 2026-07-29.** Planner v2 section (§11) added from a simulated
 three-week field test and a Microsoft To Do parity audit. Sequence-rank

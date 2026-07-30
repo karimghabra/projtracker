@@ -128,9 +128,17 @@ Fixtures live in `tests/fixtures/` and are synthetic (a coffee shop).
 
 ## Pending / open
 
-0. **The forward plan is spec §11 (Planner v2); P1–P4 landed 2026-07-29.**
-   Deadlines are soft by decision: no overdue alarms anywhere (spec §11
-   governing note).
+0. **The forward plan is spec §11 (P1–P4 landed 2026-07-29) + §12 (P5,
+   specified 2026-07-30, not yet built).** Deadlines are soft by decision:
+   no overdue alarms anywhere (spec §11 governing note).
+
+   P5 is the attention layer (spec §12), written after the first session
+   with the real board: 42 ready tasks rendered as "To do" is a wall, not
+   a list. Governing rule: attention is a lens, never a mutation —
+   `shelve`/`resume` (projects), `snooze` (tasks), a `next` verb capped
+   per-project and in total with honest denominators, soft desk caps.
+   `ready --impact` must remain byte-identical. Open questions 15–17
+   (defaults, auto-resume, settings UI) await the user.
 
    P4 as built (§11.5): `GraphPanel.tsx` renders `graph-data` natively —
    layered longest-path layout per project band (presentation only; the
