@@ -18,6 +18,9 @@ Invariants, in the order they matter:
    roll forward and say how late they are.
 6. **There is no scheduler.** Preset reminders compute dates from offsets the
    user gave. Nothing ranks or assigns work.
+7. **The backup restores bytes, not a reading of them.** Anything that changes
+   what is written to disk must keep `tests/unit/compatibility.test.ts` green —
+   it holds a frozen 1.3.2 vault, and the user has live data in that format.
 
 Testing: unit tests for behaviour, Playwright for the real UI against the real
 command layer, and `tests/unit/fieldtest.test.ts` — sixty simulated days that

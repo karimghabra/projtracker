@@ -105,6 +105,27 @@ test.describe('the packaged application', () => {
     }
   });
 
+  test('has the Google Sheets bridge, and it answers before anything is set up', async () => {
+    const app = await launch();
+
+    try {
+      const ui = await app.firstWindow();
+      await ui.waitForSelector('.shell', { timeout: 45_000 });
+
+      // The renderer decides whether to offer the backup at all by looking for
+      // this, so a build where the handler failed to register would silently
+      // show the browser's "desktop app only" message inside the desktop app.
+      expect(await ui.evaluate(() => typeof window.protracker?.sheets?.status)).toBe('function');
+
+      const status = await ui.evaluate(() => window.protracker!.sheets!.status());
+      expect(status.configured).toBe(false);
+      // And it tells the renderer nothing it should not have.
+      expect(JSON.stringify(status)).not.toContain('PRIVATE KEY');
+    } finally {
+      await app.close();
+    }
+  });
+
   test('reports no uncaught exception and no console error', async () => {
     const app = await launch();
     const problems: string[] = [];

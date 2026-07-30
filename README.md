@@ -107,6 +107,30 @@ There is no database. Open the files in any editor, put them in git, sync them
 however you like. Serialization is canonical — the same state always produces
 the same bytes — so diffs mean something.
 
+## Backing it up
+
+Plain text on one disk is not a backup. **Settings → Back up or restore** gives
+you two ways to keep a copy somewhere else, and both restore the vault *exactly*
+— dependencies, journal, protocol runs, node ids and all.
+
+- **A backup file.** A spreadsheet with the readable sheets on top and the whole
+  vault hidden inside it. Nothing to set up, works offline.
+- **A Google spreadsheet.** The same content somewhere that is not this laptop,
+  with a readable tab per project you can share with whoever you like.
+
+An ordinary **Export** is not a backup and does not pretend to be: it is a
+report, and it has no columns for half of what the vault holds.
+
+Every file in the backup carries a checksum. A cell that has been edited fails
+it and is refused by name rather than quietly restored, and a restore replaces
+everything — including deleting what the backup does not have — so you never end
+up with a hybrid of two points in time.
+
+Google Sheets needs a one-time setup, spelled out in the dialog: a service
+account key you download from Google, and a spreadsheet shared with that
+account's address. The key stays on your machine and never goes in the vault —
+the vault is the thing you share.
+
 ## The command line
 
 `pt` works against the same folder as the app; neither needs to know the other
@@ -116,6 +140,7 @@ exists.
 pt today                      # the day's list
 pt ready                      # everything unblocked right now
 pt done "Draft geometry"      # complete it, and hear what it freed
+pt done "Electrospin" --in Q3 # finished some time in Q3; no invented date
 pt progress                   # which projects have gone quiet
 pt crosslink edc-nhs b12      # start a run; its steps land in the to-do list
 pt remind "Order collagen" --on 2026-08-14 --span 3
@@ -138,6 +163,10 @@ Export writes the same layout back out, for a supervisor, a collaborator or a
 report. It round-trips: cell culture definitions travel in one readable cell
 (`samples=24; seed=2026-08-03; days=21; phases=Proliferation@0,Differentiation@7`)
 and come back as experiments with their timelines intact.
+
+A **Completed** column carries when something was finished at whatever precision
+is honest — `2026-08-14`, `2026-08`, `2026-Q3`, `2026`. Typing a period into it
+is itself a statement that the row is done.
 
 ## Building it
 

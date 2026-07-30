@@ -291,13 +291,52 @@ Rules that make it safe:
 - Unknown fields are **preserved**, not dropped, so a newer file opened by an
   older build loses nothing.
 
+### 7.1 Backups
+
+The vault is text on one disk, which is not a backup. Two things can carry it
+somewhere else, and both restore it byte for byte:
+
+- an **.xlsx backup file** — the readable workbook with a hidden `Vault` sheet;
+- a **Google spreadsheet** — readable tabs plus the same `Vault` tab.
+
+The readable half is explicitly *not* the backup. It has no dependency edges, no
+journal, no protocol runs and no node ids, so restoring from it would invent a
+board that merely resembles the old one. The `Vault` sheet carries the `.pt`
+files themselves, split across cells at 30,000 characters (under Excel's 32,767
+and Google's 50,000), one FNV-1a checksum per file.
+
+Every content cell is wrapped in `|`. Without it a file starting with `=` becomes
+a formula, one starting with `-` becomes a number, and leading or trailing
+whitespace is at the mercy of whatever pasted it; with it, the outer characters
+of the cell are always the fence and the payload is untouched. The Google
+transport writes `RAW` and reads `UNFORMATTED_VALUE`, which is the pair that
+parses nothing in either direction.
+
+Rules:
+
+- A restore **replaces**, including deleting files the backup does not have.
+  Merging would leave a hybrid of two points in time, which is the failure that
+  makes people distrust backups.
+- A restore **clears the undo stack**, because snapshots of some other state are
+  worse than none.
+- A file that fails its checksum is **refused by name**, not restored.
+- `.history/` is excluded: the store already calls it a cache, not truth.
+- Google credentials live beside the app, never in the vault — the vault is what
+  gets shared.
+
+Authentication is a service account: no client secret inside a binary anyone can
+unzip, no unverified-app warning, no browser round trip, and credentials the user
+owns and can revoke. The transport is `fetch` plus `node:crypto`, not a client
+library.
+
 ---
 
 ## 8. Architecture
 
 ```
-src/core/       pure domain — model, graph, dates, protocols, experiments
-src/store/      text format, vault I/O, snapshot stack
+src/core/       pure domain — model, graph, dates, periods, protocols, experiments
+src/store/      text format, vault I/O, snapshot stack, backup grid
+src/sync/       Google Sheets transport and the push/pull it drives
 src/commands/   the command layer: the only writer
 src/cli/        thin argv client
 src/ui/         React app
