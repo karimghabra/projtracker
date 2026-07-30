@@ -18,7 +18,7 @@ export function ExportButton() {
     setWorking(true);
     try {
       const { exportWorkbook, exportFilename } = await import('../../store/excelExport.ts');
-      const bytes = await exportWorkbook(app.state);
+      const bytes = await exportWorkbook(app.state, app.today);
       const blob = new Blob([bytes as unknown as BlobPart], {
         type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       });

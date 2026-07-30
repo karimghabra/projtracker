@@ -414,7 +414,7 @@ async function run(
     case 'export': {
       const file = rest[0];
       if (!file) throw new Error('Where to? pt export board.xlsx');
-      const bytes = await exportWorkbook(app.state);
+      const bytes = await exportWorkbook(app.state, app.today);
       writeFileSync(file, bytes);
       const delta = { ok: true as const, message: `Wrote ${bytes.length} bytes to ${file}.` };
       return say(delta), 0;

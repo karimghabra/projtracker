@@ -1,20 +1,29 @@
 /**
  * Excel export.
  *
- * The other half of the interchange path: a workbook in the same layout the
- * importer reads, so a board can go out to a collaborator, a supervisor or a
- * backup and come back without losing its shape.
+ * Two audiences, which want different things from the same board.
  *
- * Round-tripping is the actual requirement. Whatever this writes, `readWorkbook`
- * must read back into the same hierarchy, the same order, and the same
- * completion — which is why strikethrough is written for done and fill colour
- * for health, matching how they are read.
+ * A **person** — a supervisor, a collaborator, a progress meeting — wants to
+ * know what is done, what is late and what is next, without reading four
+ * hundred rows. They get a Summary sheet first, and detail sheets whose
+ * hierarchy columns are filled down so sorting or filtering in Excel does not
+ * strand a row with no context.
+ *
+ * The **importer** wants to read it back without losing anything. That is why
+ * completion is strikethrough and health is fill colour, matching exactly how
+ * they are read, and why the machine-oriented columns (Kind, Culture) exist at
+ * all — they sit at the far right, out of the way of anyone reading.
+ *
+ * Filling down is safe for the round trip: the importer emits a level only when
+ * the name *changes*, so a repeated value is understood as continuation rather
+ * than a second milestone of the same name.
  */
 
-import type { ExperimentDef, Health, State } from '../core/model.ts';
+import type { ExperimentDef, Health, Node, State } from '../core/model.ts';
 import { childrenOf, isContainerKind } from '../core/model.ts';
-import { rootProjects } from '../core/graph.ts';
-import { buildIndex } from '../core/graph.ts';
+import { buildIndex, derivedStatus, isDone, progressOf, rootProjects } from '../core/graph.ts';
+import type { GraphIndex } from '../core/graph.ts';
+import { dateOf } from '../core/dates.ts';
 
 const HEALTH_FILL: Record<Health, string | undefined> = {
   not_begun: undefined,
@@ -23,18 +32,37 @@ const HEALTH_FILL: Record<Health, string | undefined> = {
   off_track: 'FFFF6B6B',
 };
 
+const HEADER_FILL = 'FFEFEFF3';
+const RULE_FILL = 'FFF7F7F9';
+
+/** Marks the generated sheet, so re-importing knows not to look for work in it. */
+export const SUMMARY_MARKER = 'Protracker summary';
+
 export const EXPORT_HEADERS = [
   'Seq',
   'Milestone',
   'Goal',
   'Task',
-  'Kind',
   'Status',
+  'Progress',
   'Health',
   'Planned',
   'Tags',
-  'Culture',
   'Notes',
+  'Kind',
+  'Culture',
+] as const;
+
+const SUMMARY_HEADERS = [
+  'Project / Milestone',
+  'Level',
+  'Done',
+  'Total',
+  'Complete',
+  'Status',
+  'Health',
+  'Next up',
+  'Dates',
 ] as const;
 
 interface Cellish {
@@ -42,6 +70,7 @@ interface Cellish {
   font?: unknown;
   fill?: unknown;
   alignment?: unknown;
+  numFmt?: unknown;
 }
 interface Rowish {
   getCell(index: number): Cellish;
@@ -51,6 +80,7 @@ interface Sheetish {
   addRow(values: unknown[]): Rowish;
   columns: unknown;
   views: unknown;
+  autoFilter: unknown;
   getRow(index: number): Rowish;
 }
 interface Bookish {
@@ -67,58 +97,159 @@ function sheetName(name: string, taken: Set<string>): string {
   return candidate;
 }
 
-export function writeWorkbook(book: Bookish, state: State): void {
+function headerRow(sheet: Sheetish, headers: readonly string[]): Rowish {
+  const row = sheet.addRow([...headers]);
+  headers.forEach((_, i) => {
+    row.getCell(i + 1).font = { bold: true };
+    row.getCell(i + 1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_FILL } };
+  });
+  return row;
+}
+
+/** The first thing that could actually be worked on under a node. */
+function nextUp(index: GraphIndex, id: string, today: string): string {
+  for (const descendant of index.descendants.get(id) ?? []) {
+    const node = index.state.nodes[descendant];
+    if (!node || isContainerKind(node.kind)) continue;
+    if (derivedStatus(index, descendant, today) === 'ready') return node.name;
+  }
+  return '';
+}
+
+/** Any dates worth a manager's attention: a planned date or a culture endpoint. */
+function datesOf(index: GraphIndex, id: string): string {
+  const parts: string[] = [];
+  for (const descendant of [id, ...(index.descendants.get(id) ?? [])]) {
+    const node = index.state.nodes[descendant];
+    if (!node) continue;
+    if (node.experiment?.seedingDate) {
+      parts.push(`${node.name}: seeded ${node.experiment.seedingDate}`);
+    }
+  }
+  return parts.slice(0, 2).join('; ');
+}
+
+function statusWord(index: GraphIndex, node: Node, today: string): string {
+  if (isDone(index, node.id)) return 'Complete';
+  const progress = progressOf(index, node.id);
+  if (!progress || progress.total === 0) return 'Empty';
+  if (progress.done > 0) return 'In progress';
+  return derivedStatus(index, node.id, today) === 'blocked' ? 'Blocked' : 'Not started';
+}
+
+/**
+ * A one-page answer to "how is it going", for someone who is not going to open
+ * the detail sheets.
+ */
+function writeSummary(book: Bookish, index: GraphIndex, today: string): void {
+  const sheet = book.addWorksheet('Summary');
+  const title = sheet.addRow([`${SUMMARY_MARKER} — generated ${today}`]);
+  title.getCell(1).font = { bold: true, size: 13 };
+  sheet.addRow([]);
+  headerRow(sheet, SUMMARY_HEADERS);
+
+  for (const project of rootProjects(index)) {
+    const write = (node: Node, level: string, indent: number) => {
+      const progress = progressOf(index, node.id) ?? { done: 0, total: 0 };
+      const row = sheet.addRow([
+        `${'    '.repeat(indent)}${node.name}`,
+        level,
+        progress.done,
+        progress.total,
+        progress.total ? progress.done / progress.total : 0,
+        statusWord(index, node, today),
+        node.health === 'not_begun' ? '' : node.health.replace('_', ' '),
+        nextUp(index, node.id, today),
+        datesOf(index, node.id),
+      ]);
+      row.getCell(5).numFmt = '0%';
+
+      if (indent === 0) {
+        for (let i = 1; i <= SUMMARY_HEADERS.length; i++) {
+          row.getCell(i).font = { bold: true };
+          row.getCell(i).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: RULE_FILL } };
+        }
+      }
+      const fill = HEALTH_FILL[node.health];
+      if (fill) row.getCell(7).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill } };
+    };
+
+    write(project, 'Project', 0);
+    for (const milestone of childrenOf(index.state, project.id)) write(milestone, 'Milestone', 1);
+    sheet.addRow([]);
+  }
+
+  sheet.columns = [
+    { width: 42 },
+    { width: 11 },
+    { width: 7 },
+    { width: 7 },
+    { width: 10 },
+    { width: 13 },
+    { width: 11 },
+    { width: 30 },
+    { width: 34 },
+  ];
+  sheet.views = [{ state: 'frozen', ySplit: 3 }];
+}
+
+export function writeWorkbook(book: Bookish, state: State, today: string): void {
   const index = buildIndex(state);
-  const taken = new Set<string>();
+  const taken = new Set<string>(['summary']);
+
+  writeSummary(book, index, today);
 
   for (const project of rootProjects(index)) {
     const sheet = book.addWorksheet(sheetName(project.name, taken));
 
-    // A preamble the importer reads back, so a renamed tab does not rename the
-    // project on the way home.
+    // A preamble the importer reads back, so a truncated tab name does not
+    // rename the project on the way home.
     const title = sheet.addRow(['Project name', project.name]);
     title.getCell(1).font = { bold: true };
     sheet.addRow([]);
+    headerRow(sheet, EXPORT_HEADERS);
 
-    const header = sheet.addRow([...EXPORT_HEADERS]);
-    for (let i = 1; i <= EXPORT_HEADERS.length; i++) {
-      header.getCell(i).font = { bold: true };
-      header.getCell(i).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEEEEEE' } };
-    }
-
+    // Hierarchy is filled down rather than left as a staircase: a manager who
+    // sorts or filters in Excel should not end up with a row that says
+    // "Peer review" and nothing about which project it belongs to.
     const write = (nodeId: string, milestone: string, goal: string) => {
       for (const child of childrenOf(state, nodeId)) {
         const isMilestone = child.kind === 'milestone';
         const isGoal = child.kind === 'goal';
+        const milestoneName = isMilestone ? child.name : milestone;
+        const goalName = isGoal ? child.name : isMilestone ? '' : goal;
+        const progress = isContainerKind(child.kind) ? progressOf(index, child.id) : null;
 
         const row = sheet.addRow([
           child.seq,
-          isMilestone ? child.name : '',
-          isGoal ? child.name : '',
+          milestoneName,
+          goalName,
           isContainerKind(child.kind) ? '' : child.name,
-          child.kind === 'experiment' ? 'experiment' : '',
           child.status === 'done' ? 'Done' : child.status === 'dropped' ? 'Dropped' : '',
+          progress ? `${progress.done}/${progress.total}` : '',
           child.health === 'not_begun' ? '' : child.health.replace('_', ' '),
           child.plannedFor ?? '',
           child.tags.join(', '),
-          child.experiment ? encodeCulture(child.experiment) : '',
           child.notes ?? '',
+          child.kind === 'experiment' ? 'experiment' : '',
+          child.experiment ? encodeCulture(child.experiment) : '',
         ]);
 
-        // The column this node's own name is in — that is where done and health
-        // are marked, matching exactly where the importer looks for them.
+        // The column this node's own name is in — where done and health are
+        // marked, matching exactly where the importer looks for them.
         const own = isMilestone ? 2 : isGoal ? 3 : 4;
         if (child.status === 'done') row.getCell(own).font = { strike: true };
         const fill = HEALTH_FILL[child.health];
         if (fill) {
           row.getCell(own).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill } };
         }
+        if (isMilestone) {
+          for (let i = 1; i <= EXPORT_HEADERS.length; i++) {
+            row.getCell(i).fill ??= { type: 'pattern', pattern: 'solid', fgColor: { argb: RULE_FILL } };
+          }
+        }
 
-        write(
-          child.id,
-          isMilestone ? child.name : milestone,
-          isGoal ? child.name : goal,
-        );
+        write(child.id, milestoneName, goalName);
       }
     };
 
@@ -129,25 +260,28 @@ export function writeWorkbook(book: Bookish, state: State): void {
       { width: 26 },
       { width: 26 },
       { width: 34 },
-      { width: 11 },
       { width: 10 },
-      { width: 12 },
+      { width: 10 },
+      { width: 11 },
       { width: 12 },
       { width: 18 },
-      { width: 40 },
       { width: 44 },
+      { width: 11 },
+      { width: 40 },
     ];
-    // Freeze the header so a long project stays navigable.
     sheet.views = [{ state: 'frozen', ySplit: 3 }];
+    // Filter handles on the header, because the first thing anyone does with a
+    // spreadsheet is filter it.
+    sheet.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: EXPORT_HEADERS.length } };
   }
 }
 
-export async function exportWorkbook(state: State): Promise<Uint8Array> {
+export async function exportWorkbook(state: State, today = dateOf(new Date().toISOString())): Promise<Uint8Array> {
   const ExcelJS = await import('exceljs');
   const book = new ExcelJS.default.Workbook();
   book.creator = 'Protracker';
   book.created = new Date();
-  writeWorkbook(book as unknown as Bookish, state);
+  writeWorkbook(book as unknown as Bookish, state, today);
   return new Uint8Array((await book.xlsx.writeBuffer()) as ArrayBuffer);
 }
 

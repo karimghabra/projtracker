@@ -298,6 +298,13 @@ export function readWorkbook(workbook: Workbookish): ImportPlan {
   const namesSeen = new Map<string, number>();
 
   for (const sheet of workbook.worksheets) {
+    // Our own summary sheet is generated from the others; reading it back would
+    // be reading our own arithmetic as if it were data.
+    if (cellText(sheet.getRow(1).getCell(1)).startsWith('Protracker summary')) {
+      plan.skipped.push({ sheet: sheet.name, reason: 'generated summary — nothing to import' });
+      continue;
+    }
+
     const header = findHeader(sheet);
     if (!header) {
       plan.skipped.push({ sheet: sheet.name, reason: 'no recognisable header row' });

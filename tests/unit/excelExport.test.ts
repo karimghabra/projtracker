@@ -14,8 +14,13 @@ import type { ImportPlan } from '@store/excel.ts';
 import { harness, sampleBoard } from './helpers.ts';
 import type { Harness } from './helpers.ts';
 
+/** The project sheets, i.e. everything but the generated summary. */
+function projectSheets(book: ExcelJS.Workbook) {
+  return book.worksheets.filter((s) => s.name !== 'Summary');
+}
+
 async function roundTrip(h: Harness): Promise<{ plan: ImportPlan; fresh: Harness }> {
-  const bytes = await exportWorkbook(h.app.state);
+  const bytes = await exportWorkbook(h.app.state, '2026-07-30');
   const book = new ExcelJS.Workbook();
   await book.xlsx.load(bytes.buffer as ArrayBuffer);
   const plan = readWorkbook(book as never);
@@ -36,25 +41,117 @@ function shape(h: Harness): string[] {
 }
 
 describe('writing a workbook', () => {
-  it('makes one sheet per project with a readable header', async () => {
+  it('leads with a summary, then one sheet per project', async () => {
     const h = harness();
     h.app.addProject('Tendon scaffold study');
     h.app.addProject('Osteogenic differentiation');
 
     const book = new ExcelJS.Workbook();
-    await book.xlsx.load((await exportWorkbook(h.app.state)).buffer as ArrayBuffer);
+    await book.xlsx.load((await exportWorkbook(h.app.state, '2026-07-30')).buffer as ArrayBuffer);
 
     const names = book.worksheets.map((s) => s.name);
-    expect(names[0]).toBe('Tendon scaffold study');
+    // Whoever opens this lands on the answer, not on row 400 of a data dump.
+    expect(names[0]).toBe('Summary');
+    expect(names[1]).toBe('Tendon scaffold study');
     // Truncated to fit Excel's limit, but still recognisable.
-    expect(names[1]!.startsWith('Osteogenic differentia')).toBe(true);
-    expect(names[1]!.length).toBeLessThanOrEqual(31);
+    expect(names[2]!.startsWith('Osteogenic differentia')).toBe(true);
+    expect(names[2]!.length).toBeLessThanOrEqual(31);
 
-    const sheet = book.worksheets[0]!;
+    const sheet = book.worksheets[1]!;
     expect(sheet.getRow(1).getCell(1).value).toBe('Project name');
     expect(sheet.getRow(1).getCell(2).value).toBe('Tendon scaffold study');
     expect(sheet.getRow(3).getCell(2).value).toBe('Milestone');
     expect(sheet.getRow(3).getCell(4).value).toBe('Task');
+  });
+
+  it('the summary answers "how is it going" without opening anything else', async () => {
+    const h = harness();
+    const b = sampleBoard(h);
+    h.app.complete(b.draft);
+    h.app.complete(b.review);
+
+    const book = new ExcelJS.Workbook();
+    await book.xlsx.load((await exportWorkbook(h.app.state, '2026-07-30')).buffer as ArrayBuffer);
+    const summary = book.worksheets[0]!;
+
+    expect(String(summary.getRow(1).getCell(1).value)).toContain('generated 2026-07-30');
+    expect(summary.getRow(3).getCell(1).value).toBe('Project / Milestone');
+    expect(summary.getRow(3).getCell(5).value).toBe('Complete');
+
+    const rows: string[][] = [];
+    summary.eachRow((row, n) => {
+      if (n < 4) return;
+      rows.push([1, 2, 3, 4, 5, 6, 8].map((i) => String(row.getCell(i).value ?? '')));
+    });
+
+    const project = rows.find((r) => r[0]!.trim() === 'Tendon Study')!;
+    expect(project[1]).toBe('Project');
+    expect(project[2]).toBe('2'); // done
+    expect(project[3]).toBe('8'); // total
+    expect(project[5]).toBe('In progress');
+    // And what to pick up next, so the reader does not have to work it out.
+    expect(project[6]).toBe('Export STL');
+
+    // Milestones are indented under their project.
+    const milestone = rows.find((r) => r[0]!.trim() === 'Fabrication')!;
+    expect(milestone[1]).toBe('Milestone');
+    expect(milestone[0]!.startsWith('    ')).toBe(true);
+  });
+
+  it('shows completion as a percentage, not a fraction to work out', async () => {
+    const h = harness();
+    const b = sampleBoard(h);
+    h.app.complete(b.draft);
+
+    const book = new ExcelJS.Workbook();
+    await book.xlsx.load((await exportWorkbook(h.app.state, '2026-07-30')).buffer as ArrayBuffer);
+    const summary = book.worksheets[0]!;
+
+    let found = false;
+    summary.eachRow((row, n) => {
+      if (n < 4) return;
+      if (String(row.getCell(1).value ?? '').trim() !== 'Tendon Study') return;
+      found = true;
+      expect(row.getCell(5).value).toBeCloseTo(1 / 8);
+      expect(row.getCell(5).numFmt).toBe('0%');
+    });
+    expect(found).toBe(true);
+  });
+
+  it('fills the hierarchy down so a filtered row still says where it belongs', async () => {
+    const h = harness();
+    sampleBoard(h);
+
+    const book = new ExcelJS.Workbook();
+    await book.xlsx.load((await exportWorkbook(h.app.state, '2026-07-30')).buffer as ArrayBuffer);
+    const sheet = projectSheets(book)[0]!;
+
+    // The first thing anyone does with a spreadsheet is sort or filter it, and
+    // a staircase layout strands every row that is not a heading.
+    let checked = false;
+    sheet.eachRow((row, n) => {
+      if (n < 4) return;
+      if (String(row.getCell(4).value ?? '') !== 'Peer review') return;
+      checked = true;
+      expect(row.getCell(2).value).toBe('Fabrication');
+      expect(row.getCell(3).value).toBe('CAD design');
+    });
+    expect(checked).toBe(true);
+    expect(sheet.autoFilter).toBeTruthy();
+  });
+
+  it('puts the machine columns out of the way at the right', async () => {
+    const h = harness();
+    h.app.addProject('P');
+    const book = new ExcelJS.Workbook();
+    await book.xlsx.load((await exportWorkbook(h.app.state, '2026-07-30')).buffer as ArrayBuffer);
+    const header = projectSheets(book)[0]!.getRow(3);
+
+    expect(header.getCell(5).value).toBe('Status');
+    expect(header.getCell(6).value).toBe('Progress');
+    // Kind and Culture are for the importer, not for a reader.
+    expect(header.getCell(11).value).toBe('Kind');
+    expect(header.getCell(12).value).toBe('Culture');
   });
 
   it('names sheets Excel will accept', async () => {
@@ -62,8 +159,8 @@ describe('writing a workbook', () => {
     h.app.addProject('A/B: testing [phase 1]?');
 
     const book = new ExcelJS.Workbook();
-    await book.xlsx.load((await exportWorkbook(h.app.state)).buffer as ArrayBuffer);
-    const name = book.worksheets[0]!.name;
+    await book.xlsx.load((await exportWorkbook(h.app.state, '2026-07-30')).buffer as ArrayBuffer);
+    const name = projectSheets(book)[0]!.name;
 
     expect(name).not.toMatch(/[\\/?*[\]:]/);
     expect(name.length).toBeLessThanOrEqual(31);
@@ -75,8 +172,8 @@ describe('writing a workbook', () => {
     h.app.addProject('Assays');
 
     const book = new ExcelJS.Workbook();
-    await book.xlsx.load((await exportWorkbook(h.app.state)).buffer as ArrayBuffer);
-    const names = book.worksheets.map((s) => s.name);
+    await book.xlsx.load((await exportWorkbook(h.app.state, '2026-07-30')).buffer as ArrayBuffer);
+    const names = projectSheets(book).map((s) => s.name);
     expect(new Set(names).size).toBe(2);
   });
 
@@ -87,8 +184,8 @@ describe('writing a workbook', () => {
     h.app.updateNode(b.review, { health: 'at_risk' });
 
     const book = new ExcelJS.Workbook();
-    await book.xlsx.load((await exportWorkbook(h.app.state)).buffer as ArrayBuffer);
-    const sheet = book.worksheets[0]!;
+    await book.xlsx.load((await exportWorkbook(h.app.state, '2026-07-30')).buffer as ArrayBuffer);
+    const sheet = projectSheets(book)[0]!;
 
     const byName = new Map<string, { strike: boolean; fill?: string }>();
     sheet.eachRow((row, n) => {
@@ -229,19 +326,31 @@ describe('the round trip', () => {
 
   it('exports a board with nothing in it without falling over', async () => {
     const h = harness();
-    const bytes = await exportWorkbook(h.app.state);
+    const bytes = await exportWorkbook(h.app.state, '2026-07-30');
     expect(bytes.length).toBeGreaterThan(0);
 
     const book = new ExcelJS.Workbook();
     await book.xlsx.load(bytes.buffer as ArrayBuffer);
-    expect(book.worksheets).toHaveLength(0);
+    // The summary, saying there is nothing to summarise.
+    expect(projectSheets(book)).toHaveLength(0);
+    expect(book.worksheets.map((s) => s.name)).toEqual(['Summary']);
+  });
+
+  it('does not try to re-import its own summary', async () => {
+    const h = harness();
+    sampleBoard(h);
+    const { plan, fresh } = await roundTrip(h);
+
+    expect(plan.skipped.map((s) => s.reason)).toContain('generated summary — nothing to import');
+    // And it did not become a project.
+    expect(fresh.app.tree().map((p) => p.name)).toEqual(['Tendon Study']);
   });
 
   it('leaves the board it exported completely untouched', async () => {
     const h = harness();
     sampleBoard(h);
     const before = structuredClone(h.app.state);
-    await exportWorkbook(h.app.state);
+    await exportWorkbook(h.app.state, '2026-07-30');
     expect(h.app.state).toEqual(before);
   });
 
