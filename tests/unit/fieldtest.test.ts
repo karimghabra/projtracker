@@ -17,6 +17,8 @@ import { addDays, dateOf, diffDays } from '@core/dates.ts';
 import { buildIndex, isDone, wouldCreateCycle } from '@core/graph.ts';
 import { loadState } from '@store/store.ts';
 import { serializeAll } from '@store/serialize.ts';
+import { backupGrid, readBackupGrid, restoreVault, snapshotVault } from '@store/backup.ts';
+import { MemoryVault } from '@store/vault.ts';
 import type { App } from '@commands/app.ts';
 import { harness } from './helpers.ts';
 import type { Harness } from './helpers.ts';
@@ -279,6 +281,17 @@ describe('sixty days of use', () => {
         if (batch.runId) expect(app.state.runs.some((r) => r.id === batch.runId)).toBe(true);
       }
 
+      // 9. Today's board is still recoverable from a backup taken today.
+      // Checked every day rather than at the end, because the interesting
+      // failure is a field that only appears once some particular thing has
+      // happened — a run mid-flight, an experiment part-way through its
+      // timeline — and then does not survive a cell.
+      const backup = readBackupGrid(
+        backupGrid(snapshotVault(h.vault), { generatedAt: app.now, version: 'test' }),
+      );
+      expect(backup.problems, `day ${day} backup`).toEqual([]);
+      expect(backup.files).toEqual(snapshotVault(h.vault));
+
       log.push({ day, date, did });
       clock.advanceDays(1);
     }
@@ -310,6 +323,19 @@ describe('sixty days of use', () => {
     const experiment = app.node(board.experiment);
     expect(experiment.experiment!.stages.length).toBeGreaterThan(10);
     expect(experiment.experiment!.endsOn).toBeDefined();
+
+    // Two months of accumulated state restores into an empty vault and gives
+    // back an app that agrees with this one on every surface.
+    const restored = new MemoryVault();
+    restoreVault(restored, snapshotVault(h.vault));
+    const twin = new (app.constructor as typeof App)(restored, clock);
+    expect(twin.sheet()).toEqual(app.sheet());
+    expect(twin.todayList().items.map((i) => i.key)).toEqual(
+      app.todayList().items.map((i) => i.key),
+    );
+    expect(twin.upcoming()).toEqual(app.upcoming());
+    expect(twin.progress()).toEqual(app.progress());
+    expect(snapshotVault(restored)).toEqual(snapshotVault(h.vault));
 
     // Undo still works after two months of history.
     const beforeUndo = app.tree().length;
