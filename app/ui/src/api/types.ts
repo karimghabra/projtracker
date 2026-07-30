@@ -125,6 +125,39 @@ export interface UpcomingRow extends NodeRec {
   until: string | null;
 }
 
+/** graph_data: nodes carry project + blockers + wait + impact; edges are
+ * typed by provenance ('dep' | 'seq-user' | 'seq-assumed' | 'seq-suppressed').
+ * The editor draws and mutates but never reasons. */
+export interface GraphNode extends NodeRec {
+  project_id: number | null;
+  blockers?: Blocker[];
+  wait?: { until: string | null; reason: string | null };
+  unlocks_now?: number;
+  gates_total?: number;
+}
+
+export interface GraphEdge {
+  from_id: number;
+  to_id: number;
+  kind: "dep" | "seq-user" | "seq-assumed" | "seq-suppressed";
+  note: string | null;
+}
+
+export interface GraphData {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+}
+
+export interface StartResult {
+  started: NodeRec;
+  status_changes: StatusChange[];
+}
+
+export interface PauseResult {
+  paused: NodeRec;
+  status_changes: StatusChange[];
+}
+
 export interface NoteRec {
   id: number;
   date: string;

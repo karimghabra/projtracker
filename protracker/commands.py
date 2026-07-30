@@ -559,6 +559,22 @@ class Commands:
             "status_changes": self._diff(pre, post),
         }
 
+    def pause_task(self, node_id: int) -> dict:
+        """Undo start: the task returns to whatever the graph derives
+        (ready, blocked, waiting) — pause never invents a state."""
+        n = self._require(node_id, kind="task")
+        if n.status != "in_progress":
+            raise CommandError(
+                "invalid_state", f"task {node_id} is {n.status}, not in progress"
+            )
+        pre = self._graph()
+        updated = self.repo.update_node(node_id, status="active")
+        post = self._graph()
+        return {
+            "paused": self._node_dict(updated, post),
+            "status_changes": self._diff(pre, post),
+        }
+
     def _finish_task(self, node_id: int, new_status: str, extra_fields: dict) -> dict:
         n = self._require(node_id, kind="task")
         if n.status not in ("active", "in_progress"):

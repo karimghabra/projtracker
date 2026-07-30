@@ -16,7 +16,7 @@ function prevDay(iso: string): string {
 }
 
 /** The thought-vomit home: capture at the top, day-by-day history below. */
-export function JournalScreen({ board }: { board: Board }) {
+export function JournalPanel({ board }: { board: Board }) {
   const [text, setText] = useState("");
   const [attach, setAttach] = useState("");
   const [busy, setBusy] = useState(false);
@@ -96,12 +96,10 @@ export function JournalScreen({ board }: { board: Board }) {
   const anyHistory = days.some((d) => d.completed.length || d.notes.length);
 
   return (
-    <div className="screen narrow" data-testid="journal-screen">
-      <div className="screen-head">
-        <h1>Journal</h1>
-      </div>
-
-      <section className="capture-box">
+    <section className="panel p-journal" data-testid="journal-screen">
+      <h2>Journal</h2>
+      <div className="panel-body">
+      <div className="capture-box">
         <textarea
           data-testid="capture-input"
           rows={3}
@@ -142,7 +140,7 @@ export function JournalScreen({ board }: { board: Board }) {
             Capture
           </button>
         </div>
-      </section>
+      </div>
 
       <div className="quick-row">
         <span className="search-wrap">
@@ -177,11 +175,11 @@ export function JournalScreen({ board }: { board: Board }) {
       </div>
 
       {results !== null ? (
-        <section>
-          <h2>
+        <>
+          <h3 className="sub">
             Search results <span className="spacer" />
-            <span className="chip">{results.length}</span>
-          </h2>
+            <span className="chip mini">{results.length}</span>
+          </h3>
           {results.length ? (
             <div className="rows" data-testid="journal-results">
               {results.map((n) => (
@@ -208,10 +206,10 @@ export function JournalScreen({ board }: { board: Board }) {
           ) : (
             <EmptyState text={`No notes match “${query.trim()}”.`} />
           )}
-        </section>
+        </>
       ) : (
-        <section>
-          <h2>History</h2>
+        <>
+          <h3 className="sub">History</h3>
           {anyHistory || days.length ? (
             <div className="rows" data-testid="journal-days">
               {days
@@ -284,8 +282,9 @@ export function JournalScreen({ board }: { board: Board }) {
               text="No history yet — completions and captured notes will collect here, day by day."
             />
           )}
-        </section>
+        </>
       )}
-    </div>
+      </div>
+    </section>
   );
 }

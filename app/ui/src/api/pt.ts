@@ -12,6 +12,7 @@ import type {
   CaptureResult,
   CreatedResult,
   DoneResult,
+  GraphData,
   ImportPreview,
   ImportResult,
   JournalDay,
@@ -21,9 +22,11 @@ import type {
   LinkRec,
   ProgressRow,
   ReadyTask,
+  PauseResult,
   RemindResult,
   RmResult,
   ShowResult,
+  StartResult,
   StepsDelta,
   Suggestion,
   TodayAddResult,
@@ -239,6 +242,11 @@ export const verbs = {
     pt<{ links: LinkRec[] }>("link", "rm", String(taskId), href),
   find: (query: string) => pt<FindResult>("find", query),
   suggest: () => pt<Suggestion[]>("suggest"),
+  start: (id: number) => pt<StartResult>("start", String(id)),
+  pause: (id: number) => pt<PauseResult>("pause", String(id)),
+  graphData: () => pt<GraphData>("graph-data"),
+  seqSet: (ids: number[], rank: number) =>
+    pt("seq", "set", ...ids.map(String), "--rank", String(rank)),
   importPreview: (path: string) =>
     ptRaw<ImportPreview>("import", path, "--preview"),
   importApply: (path: string, asNew: string[], into: [string, number][]) => {

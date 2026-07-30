@@ -146,6 +146,18 @@ export const IconBoard = (p: P) => (
   </svg>
 );
 
+export const IconPlay = (p: P) => (
+  <svg {...base(p)}>
+    <path d="M5 3.2v9.6L12.4 8Z" />
+  </svg>
+);
+
+export const IconPause = (p: P) => (
+  <svg {...base(p)}>
+    <path d="M5.4 3.2v9.6M10.6 3.2v9.6" strokeWidth={2} />
+  </svg>
+);
+
 export const IconArrowUp = (p: P) => (
   <svg {...base(p)}>
     <path d="M8 13V3M4.2 6.8 8 3l3.8 3.8" />

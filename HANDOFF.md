@@ -4,8 +4,8 @@ Orientation for anyone (human or agent) picking this up. The specification is
 `scheduler_spec.md`; `README.md` covers usage. This file records the decisions
 and invariants that the code alone does not explain.
 
-**State:** import → dashboard toolchain working end to end. **256 tests
-passing** (`python -m pytest -q`): 218 unit + 38 dashboard e2e. Requires
+**State:** import → dashboard toolchain working end to end. **336 tests
+passing** (`python -m pytest -q`): 285 unit + 51 dashboard e2e. Requires
 `openpyxl` and `pytest`; the e2e portion additionally needs `playwright`
 (any recent version + `playwright install chromium`) and a built frontend
 (`npm --prefix app/ui run build`), and skips with a clear message otherwise.
@@ -44,7 +44,7 @@ passing** (`python -m pytest -q`): 218 unit + 38 dashboard e2e. Requires
 | `protracker/augment.py` | Offline LLM pipeline. `--emit-prompt` / `--proposals` / `--dry-run`. No network path exists |
 | `protracker/graphview.py` + `graph_template.html` | Self-contained interactive HTML view |
 | `app/src-tauri/` | Tauri shell. One Rust command: run the CLI with `--json`, return parsed JSON. Argv list, never a shell string. **Sidecar footgun:** the PyInstaller onefile CLI only contains data files passed via `--add-data` — `graph_template.html` broke silently once. The release workflow bundles it and smoke-tests the built sidecar (including `graph`) before publishing; keep that step in sync with any new data file read via `__file__`. Local dev: `tauri-build` refuses to compile until the sidecar exe exists in `binaries/` and `app/dist` is built — run the PyInstaller line from `release.yml` plus `npm --prefix app/ui run build` once before `cargo check` |
-| `app/ui/` | Dashboard source: React + TypeScript + Vite, builds into `app/dist` (gitignored). Talks only through `window.__TAURI__.core.invoke`; a dev-only Vite middleware stands in for the shell so `npm run dev` works in a plain browser |
+| `app/ui/` | Dashboard source: React + TypeScript + Vite, builds into `app/dist` (gitignored). Talks only through `window.__TAURI__.core.invoke`; a dev-only Vite middleware stands in for the shell so `npm run dev` works in a plain browser. **One page** (2026-07-29): no sidebar/views — Today, To do (in-progress strip + ready), Projects, Graph, Journal, Upcoming are all panels on a single scrollable page (`.dash-grid` areas). The graph is native React SVG (`components/GraphPanel.tsx`) fed by `graph-data`; `graphview.py`'s standalone HTML stays for the CLI but the app no longer embeds it |
 
 Fixtures live in `tests/fixtures/` and are synthetic (a coffee shop).
 `ANSWER_KEY_EDGES` in `test_importer.py` is the enrichment answer key.
@@ -128,9 +128,32 @@ Fixtures live in `tests/fixtures/` and are synthetic (a coffee shop).
 
 ## Pending / open
 
-0. **The forward plan is spec §11 (Planner v2); P1–P3 landed 2026-07-29.**
-   Next: P4 (graph editor §11.5). Deadlines are soft by decision: no
-   overdue alarms anywhere (spec §11 governing note).
+0. **The forward plan is spec §11 (Planner v2); P1–P4 landed 2026-07-29.**
+   Deadlines are soft by decision: no overdue alarms anywhere (spec §11
+   governing note).
+
+   P4 as built (§11.5): `GraphPanel.tsx` renders `graph-data` natively —
+   layered longest-path layout per project band (presentation only; the
+   panel never reasons about blocking), provenance as line style
+   (dep solid accent + arrow, seq-user solid grey, seq-assumed dashed,
+   seq-suppressed dotted at 40% — the overruled guess stays visible),
+   with a display-only transitive reduction so rank closures don't
+   clutter. Wait badges (⏳ date · reason), ↻, impact on ready cards,
+   state bars + words. Interactions, all command verbs: click →
+   toolbar (Start/Pause/Done/Edit, rank −/+ via `seq set` — mouse-only
+   rank authoring turns a guess into user provenance), drag the ○ port
+   → `dep add` (cycle rejection toasts the path), click a dep edge →
+   Remove. Toggles: guessed order, done. Pan (drag) / zoom (wheel) /
+   Fit go through `getScreenCTM()` — dividing by the bounding rect is
+   subtly wrong under preserveAspectRatio letterboxing. Playwright
+   note: horizontal SVG edges have zero-height boxes — assert
+   `to_be_attached`, click edges via a computed midpoint.
+
+   Also 2026-07-29: **`pause`** (in_progress → stored `active`; the
+   task returns to whatever the graph derives — pause never invents a
+   state) closes the start/pause/done loop; ▶/⏸ on ready rows, today
+   rows, the graph toolbar, and an "In progress" strip atop the To do
+   panel (a straight filter of stored status — no derivation).
 
    P3 as built (§11.4 table has no "Missing" left): **steps** — a `steps`
    table (not child tasks: no estimate, no edges, no board presence),

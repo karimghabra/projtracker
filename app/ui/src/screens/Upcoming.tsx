@@ -16,7 +16,7 @@ function daysUntil(until: string | null, todayDate: string | undefined): number 
 }
 
 /** What is waiting on a date, soonest first, plus "plan a reminder". */
-export function UpcomingScreen({ board }: { board: Board }) {
+export function UpcomingPanel({ board }: { board: Board }) {
   const [mode, setMode] = useState<"task" | "new">("new");
   const [taskId, setTaskId] = useState("");
   const [name, setName] = useState("");
@@ -85,14 +85,13 @@ export function UpcomingScreen({ board }: { board: Board }) {
   };
 
   return (
-    <div className="screen narrow" data-testid="upcoming-screen">
-      <div className="screen-head">
-        <h1>Upcoming</h1>
+    <section className="panel p-upcoming" data-testid="upcoming-screen">
+      <h2>
+        Upcoming <span className="spacer" />
         <span className="chip">{board.upcoming.length} waiting</span>
-      </div>
-
-      <section>
-        <h2>Plan a reminder</h2>
+      </h2>
+      <div className="panel-body">
+        <h3 className="sub">Plan a reminder</h3>
         <form
           className="remind-form"
           data-testid="remind-form"
@@ -204,10 +203,8 @@ export function UpcomingScreen({ board }: { board: Board }) {
             </button>
           </div>
         </form>
-      </section>
 
-      <section>
-        <h2>Waiting on a date</h2>
+        <h3 className="sub">Waiting on a date</h3>
         {groups.length ? (
           <div className="rows" data-testid="upcoming-list">
             {groups.map(([date, rows]) => {
@@ -289,7 +286,7 @@ export function UpcomingScreen({ board }: { board: Board }) {
             text="Nothing is waiting on a date. Plan a reminder above and it will land on Today when its day arrives."
           />
         )}
-      </section>
-    </div>
+      </div>
+    </section>
   );
 }

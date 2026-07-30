@@ -9,6 +9,8 @@ import {
   IconBell,
   IconCalendar,
   IconCheck,
+  IconPause,
+  IconPlay,
   IconPlus,
   IconX,
 } from "../components/icons";
@@ -16,7 +18,7 @@ import type { Board } from "../state/useBoard";
 import { toast } from "../state/toasts";
 
 /** The daily driver: what the `today` verb says, in its order. */
-export function TodayScreen({ board }: { board: Board }) {
+export function TodayPanel({ board }: { board: Board }) {
   const [quick, setQuick] = useState("");
   const [busy, setBusy] = useState(false);
   const [showPool, setShowPool] = useState(false);
@@ -75,41 +77,40 @@ export function TodayScreen({ board }: { board: Board }) {
   };
 
   return (
-    <div className="screen narrow" data-testid="today-screen">
-      <div className="screen-head">
-        <h1>Today</h1>
+    <section className="panel p-today" data-testid="today-screen">
+      <h2>
+        Today <span className="spacer" />
         <span className="chip" data-testid="today-date">
           {today?.date ?? ""}
         </span>
-      </div>
+      </h2>
+      <div className="panel-body">
+        <div className="quick-row">
+          <input
+            data-testid="today-quick-add"
+            placeholder="Quick add — lands on today's list…"
+            value={quick}
+            disabled={busy}
+            onChange={(e) => setQuick(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void quickAdd();
+            }}
+          />
+          <button
+            type="button"
+            className="primary"
+            data-testid="today-quick-add-ok"
+            disabled={busy}
+            onClick={() => void quickAdd()}
+          >
+            Add
+          </button>
+        </div>
 
-      <div className="quick-row">
-        <input
-          data-testid="today-quick-add"
-          placeholder="Quick add — lands on today's list…"
-          value={quick}
-          disabled={busy}
-          onChange={(e) => setQuick(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") void quickAdd();
-          }}
-        />
-        <button
-          type="button"
-          className="primary"
-          data-testid="today-quick-add-ok"
-          disabled={busy}
-          onClick={() => void quickAdd()}
-        >
-          Add
-        </button>
-      </div>
-
-      <section>
-        <h2>
+        <h3 className="sub">
           Planned <span className="spacer" />
-          <span className="chip">{items.length}</span>
-        </h2>
+          <span className="chip mini">{items.length}</span>
+        </h3>
         {items.length ? (
           <div className="rows" data-testid="today-list">
             {items.map((t, idx) => (
@@ -142,6 +143,14 @@ export function TodayScreen({ board }: { board: Board }) {
                     <span className="chip mini">
                       {t.project_name || "planner"}
                     </span>
+                    {t.status === "in_progress" && (
+                      <span
+                        className="chip mini badge-inprogress"
+                        data-testid="badge-in-progress"
+                      >
+                        in progress
+                      </span>
+                    )}
                     {t.source === "reminder" && (
                       <span className="chip mini badge-reminder">
                         <IconBell size={11} /> reminder
@@ -159,6 +168,41 @@ export function TodayScreen({ board }: { board: Board }) {
                   </div>
                 </div>
                 <span className="row-actions">
+                  {t.status === "in_progress" ? (
+                    <button
+                      type="button"
+                      className="rowbtn"
+                      data-testid="today-pause"
+                      title="Pause — un-mark in progress"
+                      aria-label={`Pause “${t.name}”`}
+                      disabled={busy}
+                      onClick={() =>
+                        void run(async () => {
+                          const r = await verbs.pause(t.id);
+                          toast(`Paused “${r.paused.name}”.`);
+                        })
+                      }
+                    >
+                      <IconPause size={13} />
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="rowbtn"
+                      data-testid="today-start"
+                      title="Start — mark in progress"
+                      aria-label={`Start “${t.name}”`}
+                      disabled={busy}
+                      onClick={() =>
+                        void run(async () => {
+                          const r = await verbs.start(t.id);
+                          toast(`Started “${r.started.name}”.`);
+                        })
+                      }
+                    >
+                      <IconPlay size={13} />
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="rowbtn"
@@ -198,55 +242,53 @@ export function TodayScreen({ board }: { board: Board }) {
           <EmptyState
             icon={<IconCalendar size={28} />}
             testid="today-empty"
-            text="Nothing planned yet. Quick-add a task above, or pull something from the ready list below."
+            text="Nothing planned yet. Quick-add a task above, or pull something from the ready list."
           />
         )}
-      </section>
 
-      {suggestions.length > 0 && (
-        <section>
-          <h2>Suggested</h2>
-          <div className="rows" data-testid="today-suggestions">
-            {suggestions.map((s) => (
-              <div
-                className="row today-row"
-                data-testid="today-suggestion"
-                data-nid={s.id}
-                key={s.id}
-              >
-                <div className="today-main">
-                  <div className="title">
-                    <span className="name">{s.name}</span>
-                    {s.priority && (
-                      <span className={`prio ${s.priority}`}>{s.priority}</span>
-                    )}
-                  </div>
-                  <div className="meta">
-                    <span className="chip mini">
-                      {s.project_name || "planner"}
-                    </span>
-                    <span className="dim">{s.why}</span>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  className="icon"
-                  data-testid="today-suggestion-add"
-                  title="Add to today"
-                  aria-label={`Add “${s.name}” to today`}
-                  disabled={busy}
-                  onClick={() => void run(() => verbs.todayAdd(s.id))}
+        {suggestions.length > 0 && (
+          <>
+            <h3 className="sub">Suggested</h3>
+            <div className="rows" data-testid="today-suggestions">
+              {suggestions.map((s) => (
+                <div
+                  className="row today-row"
+                  data-testid="today-suggestion"
+                  data-nid={s.id}
+                  key={s.id}
                 >
-                  <IconPlus size={14} />
-                </button>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
+                  <div className="today-main">
+                    <div className="title">
+                      <span className="name">{s.name}</span>
+                      {s.priority && (
+                        <span className={`prio ${s.priority}`}>{s.priority}</span>
+                      )}
+                    </div>
+                    <div className="meta">
+                      <span className="chip mini">
+                        {s.project_name || "planner"}
+                      </span>
+                      <span className="dim">{s.why}</span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="icon"
+                    data-testid="today-suggestion-add"
+                    title="Add to today"
+                    aria-label={`Add “${s.name}” to today`}
+                    disabled={busy}
+                    onClick={() => void run(() => verbs.todayAdd(s.id))}
+                  >
+                    <IconPlus size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
 
-      <section>
-        <h2>
+        <h3 className="sub">
           Pull from ready <span className="spacer" />
           <button
             type="button"
@@ -256,7 +298,7 @@ export function TodayScreen({ board }: { board: Board }) {
           >
             {showPool ? "Hide" : `Show (${pool.length})`}
           </button>
-        </h2>
+        </h3>
         {showPool &&
           (pool.length ? (
             <div className="rows" data-testid="today-pool">
@@ -300,26 +342,26 @@ export function TodayScreen({ board }: { board: Board }) {
           ) : (
             <EmptyState text="Nothing ready to pull — the board is clear." />
           ))}
-      </section>
 
-      {(today?.completed_today?.length ?? 0) > 0 && (
-        <section>
-          <h2>Completed today</h2>
-          <div className="rows" data-testid="today-completed">
-            {today!.completed_today.map((t) => (
-              <div className="row today-row is-done" key={t.id}>
-                <span className="done-mark">
-                  <IconCheck size={12} />
-                </span>
-                <span className="name">{t.name}</span>
-                <span className="when dim">
-                  {(t.completed_at || "").slice(11, 16)}
-                </span>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-    </div>
+        {(today?.completed_today?.length ?? 0) > 0 && (
+          <>
+            <h3 className="sub">Completed today</h3>
+            <div className="rows" data-testid="today-completed">
+              {today!.completed_today.map((t) => (
+                <div className="row today-row is-done" key={t.id}>
+                  <span className="done-mark">
+                    <IconCheck size={12} />
+                  </span>
+                  <span className="name">{t.name}</span>
+                  <span className="when dim">
+                    {(t.completed_at || "").slice(11, 16)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </section>
   );
 }

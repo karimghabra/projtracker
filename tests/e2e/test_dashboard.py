@@ -177,7 +177,9 @@ def page(browser, app_url, board):
 
 
 def nav(page, view: str) -> None:
-    page.locator(f'[data-testid="sidebar-{view}"]').click()
+    """Everything lives on one page now; navigation is a no-op kept so the
+    tests still read as 'go work in that panel' (Playwright scrolls to
+    whatever it interacts with)."""
 
 
 def toast(page):
@@ -232,14 +234,31 @@ def import_workbook(page, path: str) -> None:
     page.locator('[data-testid="import-done"]').click()
 
 
-def open_graph(page):
-    page.locator('[data-testid="graph-open"]').click()
-    expect(page.locator('[data-testid="graph-dialog"]')).to_be_visible()
-    return page.frame_locator("#graphFrame")
+def graph_node(page, nid):
+    return page.locator(f'[data-testid="graph-node"][data-nid="{nid}"]')
 
 
-def close_graph(page):
-    page.locator('[data-testid="graph-close"]').click()
+def select_graph_node(page, nid):
+    node = graph_node(page, nid)
+    node.scroll_into_view_if_needed()
+    node.click()
+    expect(page.locator('[data-testid="graph-toolbar"]')).to_be_visible()
+
+
+def drag_dependency(page, src: int, dst: int) -> None:
+    """Draw src -> dst with the mouse: press the source card's port, release
+    over the target card."""
+    node = graph_node(page, src)
+    node.scroll_into_view_if_needed()
+    node.hover()  # the port fades in on hover
+    port = node.locator('[data-testid="graph-port"]')
+    pb = port.bounding_box()
+    tb = graph_node(page, dst).bounding_box()
+    page.mouse.move(pb["x"] + pb["width"] / 2, pb["y"] + pb["height"] / 2)
+    page.mouse.down()
+    page.mouse.move(tb["x"] + tb["width"] / 2, tb["y"] + tb["height"] / 2,
+                    steps=8)
+    page.mouse.up()
 
 
 # --- the board screen -------------------------------------------------------
@@ -496,67 +515,186 @@ def test_pinned_task_leads_the_todo_list(page, board):
         run_cli(board, ["set", tid, "--priority", "none"])
 
 
-# --- the live graph: mutations drawn directly on the viewer -----------------
+# --- the native graph editor: draw, provenance, and verbs on the canvas -----
 
 
-def test_graph_button_opens_the_viewer(page):
-    frame = open_graph(page)
-    expect(frame.locator(".pcard").first).to_be_visible()
-    close_graph(page)
+def test_graph_panel_renders_every_open_task(page, board):
+    """One card per open task, straight from graph-data; done tasks hidden
+    until the toggle asks for them."""
+    panel = page.locator('[data-testid="graph-panel"]')
+    expect(panel).to_be_visible()
+    data = run_cli(board, ["graph-data"])
+    open_tasks = [
+        n for n in data["nodes"]
+        if n["kind"] == "task"
+        and n.get("state") not in ("done", "dropped")
+    ]
+    assert open_tasks, "fixture must have open tasks"
+    for n in open_tasks:
+        expect(graph_node(page, n["id"])).to_be_visible()
+    done = [
+        n for n in data["nodes"]
+        if n["kind"] == "task" and n.get("state") == "done"
+    ]
+    for n in done:
+        expect(graph_node(page, n["id"])).to_have_count(0)
+
+
+def test_graph_provenance_is_line_style_not_colour_alone(page, board):
+    """The point of the editor: an entry-order guess renders as a different
+    edge kind than a rank the user chose, and an overruled guess is still
+    there, ghosted — plus a legend naming all of it."""
+    data = run_cli(board, ["graph-data"])
+    kinds = {e["kind"] for e in data["edges"]}
+    assert "seq-assumed" in kinds, "fixture tasks are auto-ranked guesses"
+    edges = page.locator('[data-testid="graph-edge"]')
+    assert edges.count() > 0
+    # (edges can be perfectly horizontal, giving a zero-height bounding box,
+    # so "attached" is the right assertion for them, not "visible")
+    assumed = page.locator('[data-testid="graph-edge"][data-kind="seq-assumed"]')
+    expect(assumed.first).to_be_attached()
+    legend = page.locator('[data-testid="graph-panel"] .legend')
+    for label in ("explicit dependency", "chosen order", "guessed order",
+                  "overruled guess"):
+        expect(legend).to_contain_text(label)
+    # the toggle removes guessed edges from the drawing entirely
+    page.locator('[data-testid="graph-show-guessed"]').uncheck()
+    expect(
+        page.locator('[data-testid="graph-edge"][data-kind="seq-assumed"]')
+    ).to_have_count(0)
+    page.locator('[data-testid="graph-show-guessed"]').check()
+    expect(assumed.first).to_be_attached()
 
 
 def test_graph_check_off_completes_through_the_bridge(page, board):
-    frame = open_graph(page)
-    # pick a ready task the CLI agrees is ready
     ready = run_cli(board, ["ready"])[0]
-    li = frame.locator(f'li.task[data-nid="{ready["id"]}"]')
-    li.hover()
-    li.locator(".tickb").click()
+    select_graph_node(page, ready["id"])
+    page.locator('[data-testid="graph-node-done"]').click()
     expect(toast(page)).to_contain_text("Completed")
     node = next(n for n in run_cli(board, ["ls"]) if n["id"] == ready["id"])
     assert node["status"] == "done", "the graph tick must run the done verb"
-    close_graph(page)
 
 
-def test_graph_edit_button_opens_the_app_edit_dialog(page):
-    frame = open_graph(page)
-    card = frame.locator(".gcard[data-nid]").first
-    card.hover()
-    card.locator(".editb").click()
+def test_graph_start_and_pause_from_the_toolbar(page, board):
+    ready = run_cli(board, ["ready"])[0]
+    select_graph_node(page, ready["id"])
+    page.locator('[data-testid="graph-node-start"]').click()
+    expect(toast(page)).to_contain_text("Started")
+    node = next(n for n in run_cli(board, ["ls"]) if n["id"] == ready["id"])
+    assert node["status"] == "in_progress"
+    expect(graph_node(page, ready["id"])).to_have_attribute(
+        "data-state", "in_progress"
+    )
+    select_graph_node(page, ready["id"])
+    page.locator('[data-testid="graph-node-pause"]').click()
+    expect(toast(page)).to_contain_text("Paused")
+    node = next(n for n in run_cli(board, ["ls"]) if n["id"] == ready["id"])
+    assert node["status"] == "active", "pause must return the stored status"
+
+
+def test_graph_edit_button_opens_the_app_edit_dialog(page, board):
+    ready = run_cli(board, ["ready"])[0]
+    select_graph_node(page, ready["id"])
+    page.locator('[data-testid="graph-node-edit"]').click()
     dlg = page.locator('[data-testid="edit-dialog"]')
     expect(dlg).to_be_visible()
     dlg.locator("button", has_text="Cancel").click()
-    close_graph(page)
 
 
 def test_graph_draws_a_dependency_and_rejects_cycles_gracefully(page, board):
+    """Drag the port from one ready task onto another: dep add through the
+    same pt door. The reverse drag must be rejected with the cycle path, and
+    the removal path (select the edge, Remove) restores the board."""
+    import itertools
+
+    ready = run_cli(board, ["ready"])
+    assert len(ready) >= 2, "need two ready tasks to connect"
+    existing = {(d["from_id"], d["to_id"])
+                for d in run_cli(board, ["dep", "ls"])}
+    src, dst = next(
+        (a, b)
+        for a, b in itertools.permutations([t["id"] for t in ready], 2)
+        if (a, b) not in existing and (b, a) not in existing
+    )
     before = len(run_cli(board, ["dep", "ls"]))
-    frame = open_graph(page)
-    frame.locator("#linkMode").click()
-    cards = frame.locator(".gcard[data-nid]")
-    src = cards.nth(0).get_attribute("data-nid")
-    dst = cards.nth(1).get_attribute("data-nid")
-    cards.nth(0).click()
-    cards.nth(1).click()
+
+    drag_dependency(page, src, dst)
     expect(toast(page)).to_contain_text("Dependency added")
     deps = run_cli(board, ["dep", "ls"])
     assert len(deps) == before + 1
-    assert any(d["from_id"] == int(src) and d["to_id"] == int(dst) for d in deps)
-    # drawing the reverse edge must fail with a structured cycle error, not
-    # silently corrupt the graph. The app regenerates the iframe after a
-    # successful mutation; the fresh document's stats chip shows the new link
-    # count, so poll for that instead of sleeping.
-    frame2 = page.frame_locator("#graphFrame")
-    expect(frame2.locator("#stats")).to_contain_text(f"{before + 1} links")
-    frame2.locator("#linkMode").click()
-    frame2.locator(f'.gcard[data-nid="{dst}"]').click()
-    frame2.locator(f'.gcard[data-nid="{src}"]').click()
+    assert any(d["from_id"] == src and d["to_id"] == dst for d in deps)
+    edge = page.locator(
+        f'[data-testid="graph-edge"][data-kind="dep"]'
+        f'[data-from="{src}"][data-to="{dst}"]'
+    )
+    expect(edge).to_be_attached()
+
+    # the reverse edge closes a loop: structured rejection, nothing written
+    drag_dependency(page, dst, src)
     t = err_toast(page)
     expect(t).to_be_visible()
     expect(t).to_contain_text("rejected")
     assert len(run_cli(board, ["dep", "ls"])) == before + 1
-    run_cli(board, ["dep", "rm", src, dst])  # leave the board as found
-    close_graph(page)
+
+    # remove it on the canvas: click the edge's midpoint (a zero-height
+    # horizontal path can't be clicked as an element), then Remove
+    page.locator('[data-testid="graph-panel"] svg').scroll_into_view_if_needed()
+    mid = edge.locator(".line").evaluate(
+        """(p) => {
+            const m = p.getPointAtLength(p.getTotalLength() / 2);
+            const s = new DOMPoint(m.x, m.y)
+                .matrixTransform(p.ownerSVGElement.getScreenCTM());
+            return {x: s.x, y: s.y};
+        }"""
+    )
+    page.mouse.click(mid["x"], mid["y"])
+    page.locator('[data-testid="graph-edge-rm"]').click()
+    # (earlier toasts from this same test still sit in the stack, so the
+    # proof of removal is the drawing and the database, not toast .first)
+    expect(edge).to_have_count(0)
+    assert len(run_cli(board, ["dep", "ls"])) == before
+
+
+def test_graph_rank_buttons_author_a_user_rank(page, board):
+    """Mouse-only rank authoring (spec §11.5): nudging a guessed rank turns
+    it into a chosen one, and the edge kind follows."""
+    gid = run_cli(board, ["add", "goal", "Ranking", "--parent", "2"])
+    gid = gid["created"]["id"]
+    a = run_cli(board, ["add", "task", "rank a", "--parent", str(gid)])
+    b = run_cli(board, ["add", "task", "rank b", "--parent", str(gid)])
+    a, b = a["created"]["id"], b["created"]["id"]
+    page.locator('[data-testid="refresh"]').click()
+
+    select_graph_node(page, b)
+    toolbar = page.locator('[data-testid="graph-toolbar"]')
+    expect(toolbar).to_contain_text("rank 2")
+    expect(toolbar).to_contain_text("(guessed)")
+    page.locator('[data-testid="graph-rank-down"]').click()
+    # equal ranks are parallel: the a->b guess leaves the drawing, which is
+    # also the signal that the panel refetched after the verb
+    expect(
+        page.locator(f'[data-testid="graph-edge"][data-from="{a}"][data-to="{b}"]')
+    ).to_have_count(0)
+
+    node_b = next(n for n in run_cli(board, ["ls"]) if n["id"] == b)
+    assert node_b["seq_index"] == 1
+    assert node_b["seq_source"] == "user", "a clicked rank is user provenance"
+    select_graph_node(page, b)
+    expect(page.locator('[data-testid="graph-toolbar"]')).not_to_contain_text(
+        "(guessed)"
+    )
+
+
+def test_graph_wait_badge_carries_date_and_reason(page, board):
+    tid = run_cli(board, ["add", "task", "Await castings"])["created"]["id"]
+    run_cli(board, ["wait", str(tid), "--until", "2027-02-01",
+                    "--reason", "foundry lead time"])
+    page.locator('[data-testid="refresh"]').click()
+    node = graph_node(page, tid)
+    expect(node).to_have_attribute("data-state", "waiting")
+    expect(node).to_contain_text("⏳ 2027-02-01")
+    run_cli(board, ["rm", str(tid), "--yes"])  # leave the board as found
+    page.locator('[data-testid="refresh"]').click()
 
 
 # --- first run --------------------------------------------------------------
@@ -770,98 +908,133 @@ def test_task_notes_tab_and_journal_search(page):
     expect(result.locator(".node-chip")).to_have_text("Erect falsework")
 
 
-# --- graph geometry ---------------------------------------------------------
+# --- more graph editor: bands, edge endpoints, suppression -------------------
 
 
-def _goal_edge_geometry(page, src: int, dst: int):
-    frame = page.query_selector("#graphFrame").content_frame()
-    return frame.evaluate(
-        """([a, b]) => {
-            const forest = document.getElementById('forest');
-            const cRect = forest.getBoundingClientRect();
-            const scale = forest.offsetWidth ? cRect.width / forest.offsetWidth : 1;
-            const solid = [...document.querySelectorAll('#ovsvg g path')].filter(
-              p => p.getAttribute('fill') === 'none'
-                && !p.getAttribute('stroke-dasharray'));
-            if (solid.length !== 1)
-              return {error: `expected one goal-to-goal edge, got ${solid.length}`};
-            const path = solid[0];
-            const p0 = path.getPointAtLength(0);
-            const p1 = path.getPointAtLength(path.getTotalLength());
-            const toScreen = p => ({x: p.x * scale + cRect.left,
-                                    y: p.y * scale + cRect.top});
-            const rectOf = id => {
-              const el = document.querySelector(`.gcard[data-nid="${id}"]`);
-              if (!el) return null;
-              const r = el.getBoundingClientRect();
-              return {left: r.left, right: r.right, top: r.top};
-            };
-            return {scale, start: toScreen(p0), end: toScreen(p1),
-                    src: rectOf(a), dst: rectOf(b)};
-        }""",
-        [src, dst],
+def test_graph_groups_planner_tasks_in_their_own_band(page, board):
+    """The fixture's planner task (no project) renders under a 'planner'
+    band label, projects under theirs."""
+    panel = page.locator('[data-testid="graph-panel"]')
+    expect(panel.locator(".g-band", has_text="planner")).to_be_visible()
+    expect(panel.locator(".g-band", has_text="Bridge Retrofit")).to_be_visible()
+    rig = next(n for n in run_cli(board, ["ls"])
+               if n["name"] == "Calibrate the strain rig")
+    expect(graph_node(page, rig["id"])).to_be_visible()
+
+
+def test_graph_edges_start_and_end_on_their_cards(page, board):
+    """Native SVG: every drawn edge's endpoints must sit on the borders of
+    the cards it links — the alignment bug class the old iframe had."""
+    geo = page.locator('[data-testid="graph-panel"] svg').evaluate(
+        """(svg) => {
+            const out = [];
+            for (const g of svg.querySelectorAll('[data-testid="graph-edge"]')) {
+              const line = g.querySelector('.line');
+              const p0 = line.getPointAtLength(0);
+              const p1 = line.getPointAtLength(line.getTotalLength());
+              const find = id =>
+                svg.querySelector(`[data-testid="graph-node"][data-nid="${id}"]`)
+                   ?.getAttribute('transform');
+              out.push({from: g.dataset.from, to: g.dataset.to,
+                        x0: p0.x, y0: p0.y, x1: p1.x, y1: p1.y,
+                        tFrom: find(g.dataset.from), tTo: find(g.dataset.to)});
+            }
+            return out;
+        }"""
     )
+    assert geo, "the panel must draw edges"
+    for e in geo:
+        assert e["tFrom"] and e["tTo"], f"edge {e} links a missing card"
+        fx, fy = map(float, e["tFrom"][10:-1].split())
+        tx, ty = map(float, e["tTo"][10:-1].split())
+        # starts on the source's right edge, ends on the target's left edge
+        assert abs(e["x0"] - (fx + 188)) < 1 and abs(e["x1"] - tx) < 1
+        assert fy <= e["y0"] <= fy + 56 and ty <= e["y1"] <= ty + 56
 
 
-def _set_zoom(page, value: int):
-    frame = page.query_selector("#graphFrame").content_frame()
-    frame.evaluate(
-        """(v) => {
-            const z = document.getElementById('zoom');
-            z.value = String(v);
-            z.dispatchEvent(new Event('input'));
-        }""",
-        value,
+def test_graph_ghosts_a_suppressed_guess(page, board):
+    """Draw an explicit edge into a task with a guessed rank: the guess is
+    overruled and the drawing shows it dotted-and-faint, not gone."""
+    gid = run_cli(board, ["add", "goal", "Suppression", "--parent", "2"])
+    gid = gid["created"]["id"]
+    t1 = run_cli(board, ["add", "task", "sup 1", "--parent", str(gid)])
+    t2 = run_cli(board, ["add", "task", "sup 2", "--parent", str(gid)])
+    other = run_cli(board, ["add", "task", "sup outsider"])
+    t1, t2 = t1["created"]["id"], t2["created"]["id"]
+    other = other["created"]["id"]
+    run_cli(board, ["dep", "add", str(other), str(t2)])
+    page.locator('[data-testid="refresh"]').click()
+
+    ghost = page.locator(
+        f'[data-testid="graph-edge"][data-kind="seq-suppressed"]'
+        f'[data-from="{t1}"][data-to="{t2}"]'
     )
+    expect(ghost).to_be_attached()
+    dep = page.locator(
+        f'[data-testid="graph-edge"][data-kind="dep"]'
+        f'[data-from="{other}"][data-to="{t2}"]'
+    )
+    expect(dep).to_be_attached()
 
 
-def test_graph_overview_edges_align_with_cards_across_zoom(page, board):
-    """The SVG lives inside a scale()d container: screen rects must be
-    converted through the measured scale, or every arrow misses its box.
-    Verified at two zoom levels against the cards' real screen rects."""
-    steel, optics = 3, 9  # goal -> goal, seeded just for this test
-    run_cli(board, ["dep", "add", str(steel), str(optics)])
-    try:
-        frame = open_graph(page)
-        expect(frame.locator(".gcard[data-nid]").first).to_be_visible()
-        # overview draws edges with NO node focused (allLinks is on by default)
-        assert frame.locator(".focused").count() == 0
-        paths = frame.locator("#ovsvg g path")
-        assert paths.count() >= 2, "overview must draw edges without a focus"
-        for zoom in (50, 100):
-            _set_zoom(page, zoom)
-            g = _goal_edge_geometry(page, steel, optics)
-            assert "error" not in g, f"zoom {zoom}: {g.get('error')}"
-            assert g["src"] and g["dst"], "both goal cards must exist"
-            for point, card, which in (
-                (g["start"], g["src"], "source"),
-                (g["end"], g["dst"], "target"),
-            ):
-                dy = abs(point["y"] - card["top"])
-                assert dy <= 3, (
-                    f"zoom {zoom}: {which} endpoint is {dy:.1f}px off the "
-                    f"card's top edge (scale {g['scale']:.2f})"
-                )
-                assert card["left"] - 3 <= point["x"] <= card["right"] + 3, (
-                    f"zoom {zoom}: {which} endpoint x={point['x']:.1f} is "
-                    f"outside the card [{card['left']:.1f}, {card['right']:.1f}]"
-                )
-        close_graph(page)
-    finally:
-        run_cli(board, ["dep", "rm", str(steel), str(optics)])
+# --- in progress: start and pause from the lists -----------------------------
 
 
-def test_graph_dag_shows_a_dashed_planner_card(page):
-    """A planner task carrying a dependency (seeded in the fixture) must
-    appear in the DAG view as a dashed .dcard.planner card."""
-    frame = open_graph(page)
-    frame.locator("#btnDag").click()
-    card = frame.locator(".dcard.planner")
-    expect(card.first).to_be_visible()
-    expect(card.first).to_contain_text("Calibrate the strain rig")
-    style = card.first.evaluate("e => getComputedStyle(e).borderTopStyle")
-    assert style == "dashed", f"planner card border is {style}, not dashed"
-    close_graph(page)
+def test_ready_row_start_moves_the_task_to_in_progress(page, board):
+    row = ready_rows(page).first
+    nid = row.get_attribute("data-nid")
+    name = row.locator(".title .name").inner_text()
+    row.hover()
+    row.locator('[data-testid="ready-start"]').click()
+    expect(toast(page)).to_contain_text(f"Started “{name}”")
+    # the task leaves the ready list and appears in the In progress strip
+    strip = page.locator(f'[data-testid="inprogress-row"][data-nid="{nid}"]')
+    expect(strip).to_be_visible()
+    expect(strip).to_contain_text("in progress")
+    expect(
+        page.locator(f'[data-testid="ready-row"][data-nid="{nid}"]')
+    ).to_have_count(0)
+    node = next(n for n in run_cli(board, ["ls"]) if n["id"] == int(nid))
+    assert node["status"] == "in_progress"
+
+    # pause sends it straight back
+    strip.hover()
+    strip.locator('[data-testid="inprogress-pause"]').click()
+    expect(toast(page)).to_contain_text(f"Paused “{name}”")
+    expect(
+        page.locator(f'[data-testid="ready-row"][data-nid="{nid}"]')
+    ).to_be_visible()
+    expect(
+        page.locator(f'[data-testid="inprogress-row"][data-nid="{nid}"]')
+    ).to_have_count(0)
+
+
+def test_in_progress_strip_tick_completes_the_task(page, board):
+    row = ready_rows(page).first
+    nid = row.get_attribute("data-nid")
+    row.hover()
+    row.locator('[data-testid="ready-start"]').click()
+    strip = page.locator(f'[data-testid="inprogress-row"][data-nid="{nid}"]')
+    expect(strip).to_be_visible()
+    strip.locator('[data-testid="inprogress-tick"]').click()
+    expect(toast(page)).to_contain_text("Completed")
+    node = next(n for n in run_cli(board, ["ls"]) if n["id"] == int(nid))
+    assert node["status"] == "done"
+
+
+def test_today_row_start_shows_the_badge(page, board):
+    nav(page, "today")
+    quick_add(page, "Deburr the fixture plates")
+    row = today_rows(page).filter(has_text="Deburr the fixture plates")
+    row.hover()
+    row.locator('[data-testid="today-start"]').click()
+    expect(toast(page)).to_contain_text("Started")
+    expect(row.locator('[data-testid="badge-in-progress"]')).to_be_visible()
+    # and pausing from the same row clears it
+    row.hover()
+    row.locator('[data-testid="today-pause"]').click()
+    expect(toast(page)).to_contain_text("Paused")
+    expect(row.locator('[data-testid="badge-in-progress"]')).to_have_count(0)
 
 
 # --- P3: steps, find, suggestions, hashtag quick-add ------------------------

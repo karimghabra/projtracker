@@ -193,6 +193,41 @@ def test_start_task(c):
     assert c.get_node(ids["t1"])["state"] == "in_progress"
 
 
+def test_pause_returns_the_task_to_its_derived_state(c):
+    ids = chain(c)
+    c.start_task(ids["t1"])
+    r = c.pause_task(ids["t1"])
+    assert r["paused"]["state"] == "ready"
+    assert c.get_node(ids["t1"])["state"] == "ready"
+
+
+def test_pause_reports_the_flip_as_a_status_change(c):
+    ids = chain(c)
+    c.start_task(ids["t1"])
+    r = c.pause_task(ids["t1"])
+    changes = {ch["id"]: (ch["from"], ch["to"]) for ch in r["status_changes"]}
+    assert changes[ids["t1"]] == ("in_progress", "ready")
+
+
+def test_pause_lands_on_blocked_when_a_gate_appeared_meanwhile(c):
+    # start t2 is impossible (blocked), so gate t1 instead: start it, give it
+    # a prerequisite, pause — the derived state must be blocked, not ready
+    ids = chain(c)
+    extra = c.add_node("task", "gate", parent_id=ids["g"])["created"]["id"]
+    c.parallel([ids["t1"], ids["t2"], extra])
+    c.start_task(ids["t1"])
+    c.add_dependency(extra, ids["t1"])
+    r = c.pause_task(ids["t1"])
+    assert r["paused"]["state"] == "blocked"
+
+
+def test_pause_a_task_that_is_not_in_progress_is_invalid(c):
+    ids = chain(c)
+    with pytest.raises(CommandError) as ei:
+        c.pause_task(ids["t1"])
+    assert ei.value.code == "invalid_state"
+
+
 def test_drop_task_unblocks_successor(c):
     ids = chain(c)
     r = c.drop_task(ids["t1"])

@@ -4,6 +4,7 @@ import { AddDialog } from "./components/AddDialog";
 import { ConfirmDelete } from "./components/ConfirmDialog";
 import { EditDialog } from "./components/EditDialog";
 import { FindModal } from "./components/FindModal";
+import { GraphPanel } from "./components/GraphPanel";
 import {
   IconGraph,
   IconImport,
@@ -11,16 +12,16 @@ import {
   IconPlus,
   IconSun,
 } from "./components/icons";
-import { Sidebar, type View } from "./components/Sidebar";
+import { ProjectsPanel } from "./components/ProjectsPanel";
+import { StatTiles } from "./components/StatTiles";
 import { Toasts } from "./components/Toasts";
-import { BoardScreen } from "./screens/Board";
-import { GraphModal } from "./screens/GraphModal";
+import { TodoPanel } from "./components/TodoPanel";
 import { ImportWizard } from "./screens/ImportWizard";
-import { JournalScreen } from "./screens/Journal";
+import { JournalPanel } from "./screens/Journal";
 import { SettingsDialog } from "./screens/SettingsDialog";
 import { SetupScreen } from "./screens/Setup";
-import { TodayScreen } from "./screens/Today";
-import { UpcomingScreen } from "./screens/Upcoming";
+import { TodayPanel } from "./screens/Today";
+import { UpcomingPanel } from "./screens/Upcoming";
 import {
   hasStoredDb,
   loadConfig,
@@ -37,11 +38,11 @@ function currentTheme(): "light" | "dark" {
     : "light";
 }
 
+/** One page: every panel visible at once, no view switching. */
 export default function App() {
   const [cfg, setCfg] = useState<Config | null>(() =>
     hasStoredDb() ? loadConfig() : null,
   );
-  const [view, setView] = useState<View>("board");
   const [theme, setTheme] = useState<"light" | "dark">(currentTheme);
 
   const board = useBoard(cfg !== null);
@@ -50,10 +51,10 @@ export default function App() {
   const [editId, setEditId] = useState<number | null>(null);
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [importOpen, setImportOpen] = useState(false);
-  const [graphOpen, setGraphOpen] = useState(false);
   const [graphKey, setGraphKey] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
+  const [selectedProject, setSelectedProject] = useState<number | null>(null);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -76,7 +77,7 @@ export default function App() {
     setTheme(next);
   };
 
-  // one shared "something changed" hook: board refresh + live graph regen
+  // one shared "something changed" hook: board refresh + graph refetch
   const onMutated = useCallback(async () => {
     setGraphKey((k) => k + 1);
     await board.refresh();
@@ -101,9 +102,14 @@ export default function App() {
     );
   }
 
+  const scopeLabel =
+    selectedProject === null
+      ? "all projects"
+      : board.projects.find((p) => p.project_id === selectedProject)
+          ?.project_name || "planner";
+
   return (
     <div className="app">
-      <Sidebar view={view} onNav={setView} />
       <div className="content">
         <header>
           <div className="brand">
@@ -134,7 +140,12 @@ export default function App() {
           <button
             type="button"
             data-testid="graph-open"
-            onClick={() => setGraphOpen(true)}
+            title="Scroll to the graph"
+            onClick={() =>
+              document
+                .querySelector('[data-testid="graph-panel"]')
+                ?.scrollIntoView({ behavior: "smooth", block: "start" })
+            }
           >
             <IconGraph /> Graph
           </button>
@@ -164,24 +175,39 @@ export default function App() {
             className="primary"
             data-testid="refresh"
             disabled={board.loading}
-            onClick={() => void board.refresh()}
+            onClick={() => void onMutated()}
           >
             Refresh
           </button>
         </header>
 
-        {view === "board" && (
-          <BoardScreen
-            board={board}
-            onEdit={setEditId}
-            onDeleteRequest={setDeleteId}
-            onAdd={() => setAddOpen(true)}
-            onImport={() => setImportOpen(true)}
-          />
-        )}
-        {view === "today" && <TodayScreen board={board} />}
-        {view === "upcoming" && <UpcomingScreen board={board} />}
-        {view === "journal" && <JournalScreen board={board} />}
+        <div className="dash">
+          <StatTiles projects={board.projects} ready={board.ready} />
+          <div className="dash-grid">
+            <TodayPanel board={board} />
+            <TodoPanel
+              board={board}
+              selected={selectedProject}
+              scopeLabel={scopeLabel}
+            />
+            <ProjectsPanel
+              board={board}
+              selected={selectedProject}
+              onSelectProject={setSelectedProject}
+              onEdit={setEditId}
+              onDeleteRequest={setDeleteId}
+              onAdd={() => setAddOpen(true)}
+              onImport={() => setImportOpen(true)}
+            />
+            <GraphPanel
+              reloadKey={graphKey}
+              onEdit={setEditId}
+              onMutated={onMutated}
+            />
+            <JournalPanel board={board} />
+            <UpcomingPanel board={board} />
+          </div>
+        </div>
       </div>
 
       <AddDialog
@@ -209,13 +235,6 @@ export default function App() {
         open={importOpen}
         onClose={() => setImportOpen(false)}
         onImported={onMutated}
-      />
-      <GraphModal
-        open={graphOpen}
-        reloadKey={graphKey}
-        onClose={() => setGraphOpen(false)}
-        onEditReq={setEditId}
-        onMutated={onMutated}
       />
       <FindModal
         open={findOpen}

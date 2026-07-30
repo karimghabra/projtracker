@@ -4,7 +4,8 @@ import { announceDone, verbs } from "../api/pt";
 import type { ReadyTask } from "../api/types";
 import { HEALTH_BY_KEY } from "../status";
 import { EmptyState } from "./EmptyState";
-import { IconCheck } from "./icons";
+import { IconCheck, IconPlay } from "./icons";
+import { toast } from "../state/toasts";
 
 /**
  * The impact-ranked to-do list, rendered exactly in the order the command
@@ -21,11 +22,10 @@ export function ReadyList({
 }) {
   const [busy, setBusy] = useState<number | null>(null);
 
-  const tick = async (t: ReadyTask) => {
-    setBusy(t.id);
+  const run = async (id: number, fn: () => Promise<unknown>) => {
+    setBusy(id);
     try {
-      const res = await verbs.done(t.id);
-      announceDone(res);
+      await fn();
       await onDone();
     } catch {
       /* toasted */
@@ -33,6 +33,18 @@ export function ReadyList({
       setBusy(null);
     }
   };
+
+  const tick = (t: ReadyTask) =>
+    run(t.id, async () => {
+      const res = await verbs.done(t.id);
+      announceDone(res);
+    });
+
+  const start = (t: ReadyTask) =>
+    run(t.id, async () => {
+      const r = await verbs.start(t.id);
+      toast(`Started “${r.started.name}”.`);
+    });
 
   if (!ready.length) {
     return <EmptyState text={emptyText ?? "Nothing ready here."} />;
@@ -89,6 +101,17 @@ export function ReadyList({
                     : ""}
                 </div>
               </div>
+              <button
+                type="button"
+                className="rowbtn"
+                data-testid="ready-start"
+                title="Start — mark in progress"
+                aria-label={`Start “${t.name}”`}
+                disabled={busy === t.id}
+                onClick={() => void start(t)}
+              >
+                <IconPlay size={13} />
+              </button>
             </div>
           </div>
         );

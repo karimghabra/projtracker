@@ -275,6 +275,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     start = sub.add_parser("start", help="mark a task in progress")
     start.add_argument("id", type=int)
+    pause = sub.add_parser(
+        "pause", help="un-mark in progress; the task goes back to its "
+                      "derived state (ready, blocked, waiting)"
+    )
+    pause.add_argument("id", type=int)
     done = sub.add_parser("done", help="complete a task")
     done.add_argument("id", type=int)
     done.add_argument("--minutes", type=int, help="actual minutes spent")
@@ -451,6 +456,8 @@ def dispatch(args: argparse.Namespace, c: Commands):
         return c.arrived(args.id)
     if cmd == "start":
         return c.start_task(args.id)
+    if cmd == "pause":
+        return c.pause_task(args.id)
     if cmd == "done":
         then_wait = None
         if args.then_wait:
@@ -729,6 +736,9 @@ def print_human(result, cmd: str):
             f"exported {result['nodes']} nodes across "
             f"{result['sheets']} sheets to {result['exported']}"
         )
+    elif cmd == "pause":
+        n = result["paused"]
+        print(f"paused #{n['id']} '{n['name']}' — now {n['state']}")
     elif cmd in ("start", "done", "drop"):
         key = {"start": "started", "done": "completed", "drop": "dropped"}[cmd]
         n = result[key]
