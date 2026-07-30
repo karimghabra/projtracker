@@ -42,6 +42,7 @@ import type { GraphIndex } from '../core/graph.ts';
 import { emptyExperiment, stagesOf, validateExperiment } from '../core/experiments.ts';
 import { isRunComplete, scheduleRun } from '../core/protocols.ts';
 import { overdue, plannedAhead, upcomingReminders } from '../core/planner.ts';
+import type { ImportPlan } from '../store/excel.ts';
 import { canonicalise } from '../store/serialize.ts';
 import { Store, initialState } from '../store/store.ts';
 import type { Vault } from '../store/vault.ts';
@@ -70,6 +71,24 @@ import {
   todayView,
   treeView,
 } from './views.ts';
+
+export type ImportAction = 'create' | 'merge' | 'skip';
+
+export interface ImportPreview {
+  sheets: {
+    sheetName: string;
+    projectName: string;
+    action: ImportAction;
+    /** Set when a project of the same name already exists. */
+    existingId?: string;
+    milestones: number;
+    goals: number;
+    tasks: number;
+    done: number;
+  }[];
+  skipped: { sheet: string; reason: string }[];
+  review: { sheet: string; line?: number; message: string }[];
+}
 
 export interface Delta {
   ok: true;
@@ -1181,6 +1200,135 @@ export class App {
       // Its reminders are generated, so the sync at the end of this mutation
       // removes them; nothing to clean up by hand.
       return { ok: true as const, message: 'Run cancelled.' };
+    });
+  }
+
+  // ---------------------------------------------------------------- import
+
+  /**
+   * What an import would do, before it does anything.
+   *
+   * A project that merely shares a name with one you already have defaults to
+   * being created new: importing your real tracker next to somebody's sample
+   * file must not splice them together.
+   */
+  importPreview(plan: ImportPlan): ImportPreview {
+    return {
+      sheets: plan.sheets.map((sheet) => {
+        const existing = this.tree().find((p) => p.name.toLowerCase() === sheet.name.toLowerCase());
+        return {
+          sheetName: sheet.sheetName,
+          projectName: sheet.name,
+          action: 'create' as ImportAction,
+          existingId: existing?.id,
+          milestones: sheet.rows.filter((r) => r.kind === 'milestone').length,
+          goals: sheet.rows.filter((r) => r.kind === 'goal').length,
+          tasks: sheet.rows.filter((r) => r.kind === 'task').length,
+          done: sheet.rows.filter((r) => r.done).length,
+        };
+      }),
+      skipped: plan.skipped,
+      review: plan.review,
+    };
+  }
+
+  /**
+   * Bring a workbook in. One transaction, so an import is one undo step —
+   * changing your mind about four hundred rows should take one keystroke.
+   */
+  applyImport(plan: ImportPlan, decisions: Record<string, ImportAction> = {}): Delta & { created: number } {
+    const now = this.now;
+
+    return this.transaction(`Import ${plan.sheets.length} project(s)`, (app) => {
+      let created = 0;
+
+      for (const sheet of plan.sheets) {
+        const choice = decisions[sheet.sheetName] ?? 'create';
+        if (choice === 'skip') continue;
+
+        const existing =
+          choice === 'merge'
+            ? app.tree().find((p) => p.name.toLowerCase() === sheet.name.toLowerCase())
+            : undefined;
+        const projectId = existing?.id ?? app.addProject(sheet.name).id;
+        if (!existing) created += 1;
+
+        let milestoneId: NodeId | undefined;
+        let goalId: NodeId | undefined;
+        let milestoneSeq = 0;
+        let goalSeq = 0;
+        let taskSeq = 0;
+
+        for (const row of sheet.rows) {
+          if (row.kind === 'milestone') {
+            milestoneSeq = row.seq ?? milestoneSeq + 1;
+            milestoneId = app.addNode(projectId, row.name, {
+              seq: milestoneSeq,
+              notes: row.notes,
+              tags: row.tags,
+            }).id;
+            goalId = undefined;
+            goalSeq = 0;
+            created += 1;
+            continue;
+          }
+
+          if (row.kind === 'goal') {
+            // A goal with no milestone above it still needs somewhere to live.
+            if (!milestoneId) {
+              milestoneSeq += 1;
+              milestoneId = app.addNode(projectId, 'Unsorted', { seq: milestoneSeq }).id;
+              created += 1;
+            }
+            goalSeq = row.seq ?? goalSeq + 1;
+            goalId = app.addNode(milestoneId, row.name, {
+              seq: goalSeq,
+              notes: row.notes,
+              tags: row.tags,
+            }).id;
+            taskSeq = 0;
+            created += 1;
+            continue;
+          }
+
+          if (!milestoneId) {
+            milestoneSeq += 1;
+            milestoneId = app.addNode(projectId, 'Unsorted', { seq: milestoneSeq }).id;
+            created += 1;
+          }
+          if (!goalId) {
+            goalSeq += 1;
+            goalId = app.addNode(milestoneId, 'Unsorted', { seq: goalSeq }).id;
+            created += 1;
+          }
+
+          taskSeq = row.seq ?? taskSeq + 1;
+          const taskId = app.addNode(goalId, row.name, {
+            seq: taskSeq,
+            notes: row.notes,
+            tags: row.tags,
+            plannedFor: row.plannedFor,
+          }).id;
+          created += 1;
+
+          // Strikethrough means done; colour is a separate health axis and is
+          // never allowed to decide whether something is finished.
+          const node = this.store.state.nodes[taskId];
+          if (node) {
+            if (row.health !== 'not_begun') node.health = row.health;
+            if (row.done) {
+              node.status = 'done';
+              node.doneAt = now;
+            }
+          }
+        }
+      }
+
+      return {
+        ok: true as const,
+        message: `Imported ${created} item(s) from ${plan.sheets.length} sheet(s).`,
+        created,
+      };
     });
   }
 

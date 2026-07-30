@@ -15,6 +15,12 @@ export default defineConfig({
       '@commands': r('./src/commands'),
     },
   },
+  optimizeDeps: {
+    // exceljs is only reached through a dynamic import, so Vite would discover
+    // it the first time someone opens the import dialog and reload the page
+    // mid-interaction. Pre-bundle it instead.
+    include: ['exceljs'],
+  },
   build: {
     outDir: r('./dist-ui'),
     emptyOutDir: true,

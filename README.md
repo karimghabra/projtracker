@@ -1,0 +1,142 @@
+# Protracker
+
+A lab planner. It holds the shape of the work — projects, milestones, goals,
+task sequences and cell culture experiments — the scaffold inventory that work
+consumes, and the day-to-day surface that turns both into "what am I doing
+today".
+
+**[Download the Windows installer →](https://github.com/karimghabra/projtracker/releases/latest)**
+
+No Python, no Rust, no compilers. It installs per-user, so it does not need an
+administrator.
+
+---
+
+## What it does
+
+**Today** opens first: the day's list, a calendar, somewhere to jot a thought,
+and how each project is going. Pull work in from the ready pool, or just type
+what you need to do — a task need not belong to a project. Anything unfinished
+rolls forward until you deal with it.
+
+**Projects** are a hierarchy: project → milestone → goal → tasks or an
+experiment. Every level takes a sequence number, and those numbers *are* the
+dependencies: task 2 waits for task 1, and two things given the same number can
+run side by side. A guided wizard walks you through it the first time;
+everything stays editable afterwards.
+
+**The graph** draws that hierarchy and lets you link across it. Drag from one
+card onto another to make it wait — a goal in one project can gate a milestone
+in another. Cycles are refused with the loop spelled out. Line style says where
+each edge came from: one you drew, an order you set, or an order the app
+guessed. A guess is always overruled by a statement, and never causes a
+rejection.
+
+**The spreadsheet** is the same board as a grid, editable the way a spreadsheet
+is: click a cell, Enter commits and moves down, Tab moves right.
+
+**Experiments** take what you actually specify — samples, scaffold type, cells
+per scaffold, when the scaffolds arrive, seeding date, culture length, media
+transitions — and derive a dated timeline from it. Media changes and the
+endpoint appear on the calendar and on the day they are due.
+
+**Scaffolds** tracks what you have made and what state it is in. Select some
+batches, pick EDC/NHS or genipin, and every timed step of the protocol lands in
+your to-do list automatically. Protocols are ordinary editable records; the
+shipped timings are a starting point, not a prescription.
+
+**Undo reverts the whole image**, and it survives closing the app.
+
+## What it deliberately does not do
+
+There is no scheduler. Nothing ranks your work, assigns it to days, or decides
+what you should do next. You pick from a pool.
+
+What it *does* have is preset reminders: a protocol says "wash at +4 h" and an
+experiment says "switch media on day 7", so those become dated items. Fixed
+offsets, no inference. Cells do not wait for a ready pool, and that is the only
+reason anything here has a date you did not choose.
+
+Deadlines are soft. Nothing raises an alarm; overdue things simply stay on the
+list and say how late they are.
+
+## Your data
+
+Plain UTF-8 text files in a folder. **Settings** tells you where.
+
+```
+project tendon-study
+  id: n1
+  name: Tendon Scaffold Study
+  milestone fabrication
+    id: n2
+    name: Fabrication
+    seq: 1
+    goal cad-design
+      id: n3
+      name: CAD design
+      seq: 1
+      task draft-geometry
+        id: n4
+        name: Draft geometry in Fusion
+        seq: 1
+        status: done
+        doneAt: 2026-07-12T14:03
+```
+
+There is no database. Open the files in any editor, put them in git, sync them
+however you like. Serialization is canonical — the same state always produces
+the same bytes — so diffs mean something.
+
+## The command line
+
+`pt` works against the same folder as the app; neither needs to know the other
+exists.
+
+```bash
+pt today                      # the day's list
+pt ready                      # everything unblocked right now
+pt done "Draft geometry"      # complete it, and hear what it freed
+pt progress                   # which projects have gone quiet
+pt crosslink edc-nhs b12      # start a run; its steps land in the to-do list
+pt import "My Tracker.xlsx" --preview
+pt undo
+```
+
+`pt help` lists everything. `--json` on any command.
+`PROTRACKER_VAULT` sets the folder; it defaults to `~/.protracker/vault`.
+
+## Bringing a workbook across
+
+Import matches columns by header name, so a sheet with only
+Project/Milestone/Goal/Task works. It previews what it will do before writing
+anything. Strikethrough reads as done; fill colour sets health and never
+completion, because something can be finished and still have gone badly.
+
+## Building it
+
+```bash
+npm install
+npm run dev          # the app in a browser, no Electron needed
+npm test             # 151 unit tests, including 60 simulated days of use
+npm run test:e2e     # 83 end-to-end tests
+npm run pack         # a Windows installer in release/
+```
+
+## How it is put together
+
+| Path | What lives there |
+|---|---|
+| `src/core` | Pure domain: model, dependency engine, dates, planner, protocols, experiments. No I/O, no clock, no randomness. |
+| `src/store` | The vault text format, canonical serialization, the snapshot history. |
+| `src/commands` | The only writer. Every verb returns a delta. |
+| `src/cli` | A thin argv client. |
+| `src/ui` | React. Renders what it is given and computes nothing about readiness or blocking. |
+| `src/desktop` | Electron. A window and file access — nothing else. |
+
+The vault is an *interface*, not a path, which is why the whole application —
+command layer included — runs unchanged in a browser tab. That is what lets the
+end-to-end tests drive real domain logic with nothing mocked.
+
+`SPEC.md` is the specification, and records the decisions the design follows
+from.

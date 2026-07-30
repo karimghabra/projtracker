@@ -13,6 +13,7 @@ import { useApp } from '../state/store.ts';
 import { ConfirmDialog, Empty, HealthChip, InlineEdit, ProgressBar, StatusChip } from '../components/ui.tsx';
 import { NodeDetail } from '../components/NodeDetail.tsx';
 import { NewProjectWizard } from './NewProject.tsx';
+import { ImportButton, ImportDialog } from '../components/ImportDialog.tsx';
 import {
   IconChevronDown,
   IconChevronRight,
@@ -26,6 +27,7 @@ export function ProjectsScreen() {
   const { app } = useApp();
   const [selected, setSelected] = useState<string | null>(null);
   const [wizard, setWizard] = useState(false);
+  const [importing, setImporting] = useState(false);
   const tree = app.tree();
 
   const selectedNode = selected && app.state.nodes[selected] ? app.node(selected) : null;
@@ -37,15 +39,19 @@ export function ProjectsScreen() {
           title="No projects yet"
           icon={<IconProjects size={20} />}
           action={
-            <button className="btn primary" onClick={() => setWizard(true)} data-testid="add-project">
-              <IconPlus size={14} /> New project
-            </button>
+            <div className="inline">
+              <button className="btn primary" onClick={() => setWizard(true)} data-testid="add-project">
+                <IconPlus size={14} /> New project
+              </button>
+              <ImportButton onOpen={() => setImporting(true)} />
+            </div>
           }
         >
           Start with a project, describe its milestones, then the goals inside them. You can change
           all of it afterwards.
         </Empty>
         {wizard && <NewProjectWizard onClose={() => setWizard(false)} />}
+        {importing && <ImportDialog onClose={() => setImporting(false)} />}
       </>
     );
   }
@@ -56,6 +62,7 @@ export function ProjectsScreen() {
         <div className="inline" style={{ marginBottom: 'var(--space-3)' }}>
           <h2 style={{ fontSize: 14 }}>All work</h2>
           <span className="spacer" />
+          <ImportButton onOpen={() => setImporting(true)} />
           <button className="btn primary sm" onClick={() => setWizard(true)} data-testid="add-project">
             <IconPlus size={13} /> New project
           </button>
@@ -79,6 +86,7 @@ export function ProjectsScreen() {
       </aside>
 
       {wizard && <NewProjectWizard onClose={() => setWizard(false)} />}
+      {importing && <ImportDialog onClose={() => setImporting(false)} />}
     </div>
   );
 }

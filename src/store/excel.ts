@@ -241,30 +241,27 @@ export function readWorkbook(workbook: Workbookish): ImportPlan {
     const rows: ImportRow[] = [];
     let projectName = preambleName(sheet, header.row) ?? sheet.name;
 
+    // Real trackers come in two styles: blank continuation cells, and the full
+    // path repeated on every row. Some use both in one sheet, and a row that
+    // names a goal *and* its first task is entirely normal. So rather than
+    // classifying a row as one thing, track the current milestone and goal and
+    // emit whichever levels this row introduces.
+    let currentMilestone = '';
+    let currentGoal = '';
+
     for (let index = header.row + 1; index <= sheet.rowCount; index++) {
       const row = sheet.getRow(index);
       const at = (key: keyof ColumnMap) =>
         columns[key] === undefined ? '' : cellText(row.getCell(columns[key]!));
+      const cellOf = (key: keyof ColumnMap) =>
+        columns[key] === undefined ? undefined : row.getCell(columns[key]!);
 
       const project = at('project');
       const milestone = at('milestone');
       const goal = at('goal');
       const task = at('task');
       if (!project && !milestone && !goal && !task) continue;
-
-      // The deepest filled column decides what the row is.
-      const kind: RowKind = task ? 'task' : goal ? 'goal' : milestone ? 'milestone' : 'project';
-      const name = task || goal || milestone || project;
-      if (kind === 'project' && project) projectName = project;
-      if (kind === 'project') continue; // the project itself is the sheet
-
-      const cell =
-        columns[kind === 'task' ? 'task' : kind === 'goal' ? 'goal' : 'milestone'] === undefined
-          ? undefined
-          : row.getCell(columns[kind === 'task' ? 'task' : kind === 'goal' ? 'goal' : 'milestone']!);
-
-      const statusText = at('status');
-      const done = cell?.font?.strike === true || isDoneText(statusText);
+      if (project) projectName = project;
 
       const seqText = at('seq');
       const seq = seqText && Number.isFinite(Number(seqText)) ? Number(seqText) : undefined;
@@ -282,17 +279,37 @@ export function readWorkbook(workbook: Workbookish): ImportPlan {
         });
       }
 
-      rows.push({
-        kind,
-        name,
-        seq,
-        notes: at('notes') || undefined,
-        done,
-        health: healthFromText(at('health')) ?? healthFromColour(cell?.fill?.fgColor?.argb),
-        plannedFor,
-        tags: at('tags').split(',').map((t) => t.trim()).filter(Boolean),
-        line: index,
-      });
+      // The deepest thing this row introduces owns the row's own attributes;
+      // a container mentioned in passing gets only its name.
+      const deepest: RowKind = task ? 'task' : goal ? 'goal' : 'milestone';
+      const push = (kind: RowKind, name: string, key: keyof ColumnMap) => {
+        const cell = cellOf(key);
+        const own = kind === deepest;
+        rows.push({
+          kind,
+          name,
+          seq: own ? seq : undefined,
+          notes: own ? at('notes') || undefined : undefined,
+          done: own ? cell?.font?.strike === true || isDoneText(at('status')) : false,
+          health: own
+            ? (healthFromText(at('health')) ?? healthFromColour(cell?.fill?.fgColor?.argb))
+            : 'not_begun',
+          plannedFor: own ? plannedFor : undefined,
+          tags: own ? at('tags').split(',').map((t) => t.trim()).filter(Boolean) : [],
+          line: index,
+        });
+      };
+
+      if (milestone && milestone !== currentMilestone) {
+        currentMilestone = milestone;
+        currentGoal = '';
+        push('milestone', milestone, 'milestone');
+      }
+      if (goal && goal !== currentGoal) {
+        currentGoal = goal;
+        push('goal', goal, 'goal');
+      }
+      if (task) push('task', task, 'task');
     }
 
     if (rows.length === 0) {

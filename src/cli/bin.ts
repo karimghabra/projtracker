@@ -9,12 +9,14 @@
  * at the same one and neither needs to know the other exists.
  */
 
+import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { App } from '../commands/app.ts';
 import { toCommandError } from '../commands/errors.ts';
 import { formatDayMonth, systemClock } from '../core/dates.ts';
 import { formatOffset } from '../core/protocols.ts';
+import { readWorkbookFile } from '../store/excel.ts';
 import { NodeVault } from '../store/nodeVault.ts';
 
 const HELP = `protracker — a lab project tracker
@@ -63,6 +65,9 @@ usage: pt [--vault DIR] [--json] <command> [args]
     runs                      live crosslinking runs
     step <run-id> <step-id>   tick a protocol step
 
+  bringing a workbook across
+    import <file.xlsx> [--preview] [--merge]
+
   the vault
     where                     where the files are
     undo | redo
@@ -102,7 +107,7 @@ function vaultPath(flags: Args['flags']): string {
   return process.env['PROTRACKER_VAULT'] ?? join(homedir(), '.protracker', 'vault');
 }
 
-function main(argv: string[]): number {
+async function main(argv: string[]): Promise<number> {
   const { positional, flags } = parseArgs(argv);
   const json = flags['json'] === true;
 
@@ -123,8 +128,7 @@ function main(argv: string[]): number {
   };
 
   try {
-    const result = run(app, positional, flags, root, json, out, ref);
-    return result;
+    return await run(app, positional, flags, root, json, out, ref);
   } catch (error) {
     const failure = toCommandError(error);
     if (json) out({ ok: false, code: failure.code, message: failure.message, ...failure.details });
@@ -133,7 +137,7 @@ function main(argv: string[]): number {
   }
 }
 
-function run(
+async function run(
   app: App,
   positional: string[],
   flags: Args['flags'],
@@ -141,7 +145,7 @@ function run(
   json: boolean,
   out: (value: unknown) => void,
   ref: (token: string | undefined) => string,
-): number {
+): Promise<number> {
   const [command, ...rest] = positional;
   const say = (delta: { message: string }) => out(json ? delta : delta.message);
 
@@ -369,6 +373,42 @@ function run(
     case 'step':
       return say(app.tickRunStep(rest[0]!, rest[1]!, flags['undo'] !== true)), 0;
 
+    // ------------------------------------------------------------- import
+    case 'import': {
+      const file = rest[0];
+      if (!file) throw new Error('Which workbook? pt import tracker.xlsx');
+
+      const plan = await readWorkbookFile(readFileSync(file));
+      const preview = app.importPreview(plan);
+
+      if (flags['preview']) {
+        if (json) return out(preview), 0;
+        for (const sheet of preview.sheets) {
+          const note = sheet.existingId
+            ? ' (a project of this name already exists — pass --merge to add to it)'
+            : '';
+          out(`create  ${sheet.projectName}  ${dim(`${sheet.milestones}m ${sheet.goals}g ${sheet.tasks}t, ${sheet.done} done`)}${note}`);
+        }
+        for (const skip of preview.skipped) out(`skip    ${skip.sheet}  ${dim(skip.reason)}`);
+        for (const item of preview.review) {
+          out(`review  ${item.sheet}${item.line ? `:${item.line}` : ''}  ${item.message}`);
+        }
+        if (!preview.sheets.length) out('Nothing importable in that file.');
+        return 0;
+      }
+
+      const decisions: Record<string, 'create' | 'merge'> = {};
+      if (flags['merge']) for (const sheet of plan.sheets) decisions[sheet.sheetName] = 'merge';
+
+      const delta = app.applyImport(plan, decisions);
+      if (json) return out({ ...delta, review: preview.review }), 0;
+      out(delta.message);
+      for (const item of preview.review) {
+        out(`review  ${item.sheet}${item.line ? `:${item.line}` : ''}  ${item.message}`);
+      }
+      return 0;
+    }
+
     // -------------------------------------------------------------- vault
     case 'where':
       return out(json ? { vault: root } : root), 0;
@@ -388,4 +428,4 @@ function dim(text: string): string {
   return process.stdout.isTTY ? `[2m${text}[0m` : text;
 }
 
-process.exitCode = main(process.argv.slice(2));
+process.exitCode = await main(process.argv.slice(2));
