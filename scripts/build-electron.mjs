@@ -41,8 +41,16 @@ await build({
   entryPoints: [`${root}src/cli/bin.ts`],
   outfile: `${root}dist/cli/bin.js`,
   format: 'esm',
-  banner: { js: '#!/usr/bin/env node' },
-  external: ['exceljs'],
+  // exceljs is bundled in rather than left external, so the CLI works from a
+  // bare checkout of dist/ with nothing installed. It is CommonJS internally
+  // and calls require() for Node built-ins, which an ESM bundle has no such
+  // thing as — hence the createRequire shim.
+  banner: {
+    js:
+      '#!/usr/bin/env node\n' +
+      "import { createRequire as __createRequire } from 'node:module';\n" +
+      'const require = __createRequire(import.meta.url);',
+  },
 });
 
 console.log('built: dist-electron/main.cjs, dist-electron/preload.cjs, dist/cli/bin.js');

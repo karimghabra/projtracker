@@ -128,3 +128,16 @@ jobs:
           runs=$(node dist/cli/bin.js runs)
           case "$runs" in *EDC/NHS*) ;; *) echo "the run is not listed"; exit 1 ;; esac
           node dist/cli/bin.js where
+
+      # Exercises the bundled exceljs. It is CommonJS inside an ESM bundle, so
+      # it needs a createRequire shim — and without one this fails only here,
+      # at runtime, on the one command nothing else touches.
+      - name: Workbooks go out and come back
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export PROTRACKER_VAULT="$RUNNER_TEMP/vault"
+          node dist/cli/bin.js export "$RUNNER_TEMP/board.xlsx"
+          test -s "$RUNNER_TEMP/board.xlsx"
+          preview=$(node dist/cli/bin.js import "$RUNNER_TEMP/board.xlsx" --preview)
+          case "$preview" in *"Smoke test"*) ;; *) echo "the export did not read back"; exit 1 ;; esac
