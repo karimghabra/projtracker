@@ -6,7 +6,7 @@
  * a task and seeing where it sits are not mutually exclusive.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { childKindOf } from '../../core/model.ts';
 import type { NodeView, TreeNode } from '../../commands/views.ts';
 import { useApp } from '../state/store.ts';
@@ -23,9 +23,27 @@ import {
   IconTrash,
 } from '../components/icons.tsx';
 
-export function ProjectsScreen() {
+export function ProjectsScreen({
+  selectId,
+  onSelectionUsed,
+}: {
+  selectId?: string | null;
+  onSelectionUsed?: () => void;
+} = {}) {
   const { app } = useApp();
   const [selected, setSelected] = useState<string | null>(null);
+
+  // A search hit arrives as a request to select something; honour it once.
+  useEffect(() => {
+    if (!selectId) return;
+    setSelected(selectId);
+    onSelectionUsed?.();
+    requestAnimationFrame(() => {
+      document
+        .querySelector(`[data-testid="tree-${selectId}"]`)
+        ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    });
+  }, [selectId, onSelectionUsed]);
   const [wizard, setWizard] = useState(false);
   const [importing, setImporting] = useState(false);
   const tree = app.tree();

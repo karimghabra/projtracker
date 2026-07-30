@@ -2,9 +2,16 @@
  * The dependency graph.
  *
  * Project → milestone → goal, flowing left to right, one band per project.
- * Drag from a node's port onto another node to make that node wait for this
- * one; click an arrow to remove it. Links may cross projects freely — that is
- * the whole reason this screen exists.
+ * Drag from a card's port onto another card to make it wait; click an arrow to
+ * remove it. Links may cross projects freely — that is the reason this screen
+ * exists.
+ *
+ * A board is only useful while it stays readable, and a real lab has a dozen
+ * projects rather than two. So the toolbar is mostly about seeing less: filter
+ * to the projects you care about, collapse a band to its title, hide what is
+ * finished, or focus a single node and see only what it touches. Search dims
+ * everything that does not match rather than removing it, so you keep your
+ * bearings.
  *
  * Provenance is in the line style and never only in colour:
  *   thin grey, no arrow   containment (this is inside that)
@@ -63,14 +70,31 @@ interface Placed extends GraphNodeView {
 
 export function GraphScreen() {
   const { app, run } = useApp();
-  const [showGuessed, setShowGuessed] = useState(true);
+  const [showGuessed, setShowGuessed] = useState(false);
+  const [hideDone, setHideDone] = useState(false);
+  const [projectIds, setProjectIds] = useState<string[] | null>(null);
+  const [collapsed, setCollapsed] = useState<string[]>([]);
+  const [focusId, setFocusId] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
   const [dragFrom, setDragFrom] = useState<string | null>(null);
   const [pointer, setPointer] = useState<{ x: number; y: number } | null>(null);
   const [zoom, setZoom] = useState(1);
   const svgRef = useRef<SVGSVGElement>(null);
+  const canvasRef = useRef<HTMLDivElement>(null);
 
-  const graph = app.graph({ showGuessed });
+  const graph = app.graph({
+    showGuessed,
+    hideDone,
+    projectIds: projectIds ?? undefined,
+    collapsed,
+    focusId: focusId ?? undefined,
+  });
+
+  const needle = query.trim().toLowerCase();
+  const matches = needle
+    ? new Set(graph.nodes.filter((n) => n.name.toLowerCase().includes(needle)).map((n) => n.id))
+    : null;
 
   const { placed, width, height, bandBoxes } = useMemo(() => {
     const maxRank = graph.nodes.reduce((max, n) => Math.max(max, n.rank), 0);
@@ -81,6 +105,7 @@ export function GraphScreen() {
     }));
 
     const boxes = graph.bands.map((band) => ({
+      id: band.projectId,
       name: band.projectName,
       y: PAD_Y + band.firstLane * ROW_H - 22,
       h: band.laneCount * ROW_H + 12,
@@ -109,7 +134,14 @@ export function GraphScreen() {
     return { x: local.x, y: local.y };
   }, []);
 
-  if (graph.nodes.length === 0) {
+  const clearFilters = () => {
+    setFocusId(null);
+    setProjectIds(null);
+    setCollapsed([]);
+    setHideDone(false);
+  };
+
+  if (graph.projects.length === 0) {
     return (
       <Empty title="Nothing to draw yet" icon={<IconGraph size={20} />}>
         Add a project and its milestones, then come back to link work across projects.
@@ -119,21 +151,76 @@ export function GraphScreen() {
 
   const dropTargetValid = (id: string) => !dragFrom || app.checkDep(dragFrom, id).ok;
 
+  const toggleProject = (id: string) => {
+    const current = projectIds ?? graph.projects.map((p) => p.id);
+    const next = current.includes(id) ? current.filter((p) => p !== id) : [...current, id];
+    setProjectIds(next.length === graph.projects.length ? null : next);
+  };
+
+  const toggleBand = (id: string) =>
+    setCollapsed(collapsed.includes(id) ? collapsed.filter((c) => c !== id) : [...collapsed, id]);
+
+  const fitToWidth = () => {
+    const canvas = canvasRef.current;
+    if (!canvas || width === 0) return;
+    setZoom(Math.min(1.8, Math.max(0.3, +((canvas.clientWidth - 24) / width).toFixed(3))));
+  };
+
+  const filtering = focusId !== null || projectIds !== null || hideDone || collapsed.length > 0;
+
   return (
     <div className="graph-screen">
       <div className="graph-toolbar">
+        <input
+          className="input"
+          style={{ width: 180, flex: 'none' }}
+          value={query}
+          placeholder="Find on the board"
+          aria-label="Find on the board"
+          data-testid="graph-search"
+          onChange={(event) => setQuery(event.target.value)}
+        />
+
+        <div className="inline wrap" data-testid="graph-projects">
+          {graph.projects.map((project) => {
+            const on = !projectIds || projectIds.includes(project.id);
+            return (
+              <button
+                key={project.id}
+                className={on ? 'chip accent chip-button' : 'chip chip-button'}
+                aria-pressed={on}
+                title={`${project.nodes} items — click to show or hide`}
+                data-testid={`filter-${project.id}`}
+                onClick={() => toggleProject(project.id)}
+              >
+                {project.name}
+              </button>
+            );
+          })}
+        </div>
+
+        <span className="spacer" />
+
+        <label className="inline nowrap" style={{ gap: 6 }}>
+          <input
+            type="checkbox"
+            className="check"
+            checked={hideDone}
+            data-testid="hide-done"
+            onChange={(event) => setHideDone(event.target.checked)}
+          />
+          Hide finished
+        </label>
         <label className="inline nowrap" style={{ gap: 6 }}>
           <input
             type="checkbox"
             className="check"
             checked={showGuessed}
+            data-testid="show-guessed"
             onChange={(event) => setShowGuessed(event.target.checked)}
           />
-          Show guessed order
+          Guessed order
         </label>
-
-        <span className="faint nowrap">Drag the circle on a card onto whatever should wait for it.</span>
-        <span className="spacer" />
 
         <button
           className="btn ghost icon"
@@ -144,107 +231,154 @@ export function GraphScreen() {
         </button>
         <button
           className="btn ghost icon"
-          onClick={() => setZoom((z) => Math.max(0.4, +(z / 1.2).toFixed(3)))}
+          onClick={() => setZoom((z) => Math.max(0.3, +(z / 1.2).toFixed(3)))}
           aria-label="Zoom out"
         >
           <IconMinus size={14} />
         </button>
-        <button className="btn sm" onClick={() => setZoom(1)}>
-          Reset view
+        <button className="btn sm" onClick={fitToWidth} data-testid="fit-width">
+          Fit
+        </button>
+        <button
+          className="btn sm"
+          data-testid="reset-view"
+          disabled={!filtering && zoom === 1}
+          onClick={() => {
+            setZoom(1);
+            clearFilters();
+          }}
+        >
+          Show everything
         </button>
       </div>
 
-      <div className="graph-canvas">
-        <svg
-          ref={svgRef}
-          role="application"
-          aria-label="Dependency graph"
-          data-testid="graph-svg"
-          width={width * zoom}
-          height={height * zoom}
-          viewBox={`0 0 ${width} ${height}`}
-          onMouseMove={(event) => {
-            if (dragFrom) setPointer(toSvgPoint(event.clientX, event.clientY));
-          }}
-          onMouseUp={() => {
-            setDragFrom(null);
-            setPointer(null);
-          }}
-          onMouseLeave={() => {
-            setDragFrom(null);
-            setPointer(null);
-          }}
-        >
-          <defs>
-            <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--accent)" />
-            </marker>
-            <marker id="arrow-grey" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
-              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--text-faint)" />
-            </marker>
-          </defs>
+      {filtering && (
+        <div className="graph-notice" data-testid="graph-filter-notice">
+          <span className="grow">
+            {focusId && app.state.nodes[focusId]
+              ? `Focused on ${app.node(focusId).name} — showing what it contains and what it is linked to.`
+              : `${graph.hiddenCount} item(s) hidden.`}
+          </span>
+          <button className="btn ghost sm" onClick={clearFilters} data-testid="clear-filters">
+            Clear
+          </button>
+        </div>
+      )}
 
-          {bandBoxes.map((band) => (
-            <g key={band.name}>
-              <rect
-                x={12}
-                y={band.y}
-                width={width - 40}
-                height={band.h}
-                rx={12}
-                fill="var(--bg-sunken)"
-                stroke="var(--border)"
+      <div className="graph-canvas" ref={canvasRef}>
+        {graph.nodes.length === 0 ? (
+          <Empty title="Everything is hidden" icon={<IconGraph size={20} />}>
+            The current filters leave nothing to draw. Clear them to see the board again.
+          </Empty>
+        ) : (
+          <svg
+            ref={svgRef}
+            role="application"
+            aria-label="Dependency graph"
+            data-testid="graph-svg"
+            width={width * zoom}
+            height={height * zoom}
+            viewBox={`0 0 ${width} ${height}`}
+            onMouseMove={(event) => {
+              if (dragFrom) setPointer(toSvgPoint(event.clientX, event.clientY));
+            }}
+            onMouseUp={() => {
+              setDragFrom(null);
+              setPointer(null);
+            }}
+            onMouseLeave={() => {
+              setDragFrom(null);
+              setPointer(null);
+            }}
+          >
+            <defs>
+              <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--accent)" />
+              </marker>
+              <marker id="arrow-grey" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--text-faint)" />
+              </marker>
+            </defs>
+
+            {bandBoxes.map((band) => (
+              <g key={band.id} data-testid={`band-${band.id}`}>
+                <rect
+                  x={12}
+                  y={band.y}
+                  width={Math.max(200, width - 40)}
+                  height={band.h}
+                  rx={12}
+                  fill="var(--bg-sunken)"
+                  stroke="var(--border)"
+                />
+                <g
+                  className="band-toggle"
+                  onClick={() => toggleBand(band.id)}
+                  style={{ cursor: 'pointer' }}
+                  data-testid={`collapse-${band.id}`}
+                >
+                  <title>
+                    {collapsed.includes(band.id) ? 'Expand this project' : 'Collapse this project'}
+                  </title>
+                  <rect x={16} y={band.y + 3} width={Math.max(180, width - 48)} height={20} fill="transparent" />
+                  <text x={26} y={band.y + 18} className="graph-band-label">
+                    {collapsed.includes(band.id) ? '▸' : '▾'} {band.name}
+                  </text>
+                </g>
+              </g>
+            ))}
+
+            {graph.edges.map((edge) => (
+              <Edge
+                key={`${edge.via}-${edge.from}-${edge.to}`}
+                edge={edge}
+                positions={positions}
+                onRemove={edge.depId ? () => run((a) => a.removeDep(edge.depId!)) : undefined}
               />
-              <text x={26} y={band.y + 18} className="graph-band-label">
-                {band.name}
-              </text>
-            </g>
-          ))}
+            ))}
 
-          {graph.edges.map((edge) => (
-            <Edge
-              key={`${edge.via}-${edge.from}-${edge.to}`}
-              edge={edge}
-              positions={positions}
-              onRemove={edge.depId ? () => run((a) => a.removeDep(edge.depId!)) : undefined}
-            />
-          ))}
+            {dragFrom && pointer && positions.get(dragFrom) && (
+              <line
+                x1={positions.get(dragFrom)!.x + NODE_W}
+                y1={positions.get(dragFrom)!.y + NODE_H / 2}
+                x2={pointer.x}
+                y2={pointer.y}
+                stroke="var(--accent)"
+                strokeWidth={2}
+                strokeDasharray="5 4"
+                pointerEvents="none"
+              />
+            )}
 
-          {dragFrom && pointer && positions.get(dragFrom) && (
-            <line
-              x1={positions.get(dragFrom)!.x + NODE_W}
-              y1={positions.get(dragFrom)!.y + NODE_H / 2}
-              x2={pointer.x}
-              y2={pointer.y}
-              stroke="var(--accent)"
-              strokeWidth={2}
-              strokeDasharray="5 4"
-              pointerEvents="none"
-            />
-          )}
-
-          {placed.map((node) => (
-            <GraphNode
-              key={node.id}
-              node={node}
-              selected={selected === node.id}
-              dragging={!!dragFrom}
-              isSource={dragFrom === node.id}
-              validTarget={dropTargetValid(node.id)}
-              onSelect={() => setSelected(node.id)}
-              onStartLink={() => setDragFrom(node.id)}
-              onDropLink={() => {
-                if (dragFrom && dragFrom !== node.id) run((a) => a.addDep(dragFrom, node.id));
-                setDragFrom(null);
-                setPointer(null);
-              }}
-            />
-          ))}
-        </svg>
+            {placed.map((node) => (
+              <GraphNode
+                key={node.id}
+                node={node}
+                selected={selected === node.id}
+                matched={matches ? matches.has(node.id) : null}
+                dragging={!!dragFrom}
+                isSource={dragFrom === node.id}
+                validTarget={dropTargetValid(node.id)}
+                onSelect={() => setSelected(node.id)}
+                onStartLink={() => setDragFrom(node.id)}
+                onDropLink={() => {
+                  if (dragFrom && dragFrom !== node.id) run((a) => a.addDep(dragFrom, node.id));
+                  setDragFrom(null);
+                  setPointer(null);
+                }}
+              />
+            ))}
+          </svg>
+        )}
       </div>
 
       {selected && app.state.nodes[selected] && (
-        <GraphInspector id={selected} onClose={() => setSelected(null)} />
+        <GraphInspector
+          id={selected}
+          focused={focusId === selected}
+          onFocus={() => setFocusId(focusId === selected ? null : selected)}
+          onClose={() => setSelected(null)}
+        />
       )}
 
       <div className="graph-legend">
@@ -252,7 +386,8 @@ export function GraphScreen() {
         <span><Sample stroke="var(--accent)" width={2} /> link you drew</span>
         <span><Sample stroke="var(--text-faint)" width={1.6} /> order you set</span>
         <span><Sample stroke="var(--text-faint)" width={1.6} dash="4 3" /> order we guessed</span>
-        <span><Sample stroke="var(--text-faint)" width={1.4} dash="1 3" opacity={0.5} /> guess overruled</span>
+        <span className="spacer" />
+        <span className="faint">Drag the circle on a card onto whatever should wait for it.</span>
       </div>
     </div>
   );
@@ -352,6 +487,7 @@ function Edge({
 function GraphNode({
   node,
   selected,
+  matched,
   dragging,
   isSource,
   validTarget,
@@ -361,6 +497,8 @@ function GraphNode({
 }: {
   node: Placed;
   selected: boolean;
+  /** null when nothing is being searched for. */
+  matched: boolean | null;
   dragging: boolean;
   isSource: boolean;
   validTarget: boolean;
@@ -368,13 +506,16 @@ function GraphNode({
   onStartLink: () => void;
   onDropLink: () => void;
 }) {
-  const dim = dragging && !validTarget && !isSource;
+  // Search dims the misses rather than removing them, so the board keeps its
+  // shape and you keep your bearings.
+  const dim = (dragging && !validTarget && !isSource) || matched === false;
 
   return (
     <g
       transform={`translate(${node.x}, ${node.y})`}
       data-testid={`gnode-${node.id}`}
-      opacity={dim ? 0.3 : 1}
+      data-matched={matched === true ? 'true' : undefined}
+      opacity={dim ? 0.22 : 1}
       onMouseUp={dragging && !isSource ? onDropLink : undefined}
       style={{ cursor: 'pointer' }}
     >
@@ -383,18 +524,18 @@ function GraphNode({
         height={NODE_H}
         rx={9}
         fill={STATUS_FILL[node.derived]}
-        stroke={selected ? 'var(--accent)' : STATUS_STROKE[node.derived]}
-        strokeWidth={selected ? 2.5 : 1.4}
+        stroke={selected || matched === true ? 'var(--accent)' : STATUS_STROKE[node.derived]}
+        strokeWidth={selected ? 2.5 : matched === true ? 2 : 1.4}
         onClick={onSelect}
       />
-      <text x={11} y={17} className="graph-node-kind" onClick={onSelect}>
+      <text x={11} y={17} className="graph-node-kind">
         {node.kind}
         {node.progress ? ` · ${node.progress.done}/${node.progress.total}` : ''}
       </text>
-      <text x={11} y={34} className="graph-node-name" onClick={onSelect}>
+      <text x={11} y={34} className="graph-node-name">
         {node.name.length > 21 ? `${node.name.slice(0, 20)}…` : node.name}
       </text>
-      <text x={11} y={47} className="graph-node-status" onClick={onSelect}>
+      <text x={11} y={47} className="graph-node-status">
         {node.derived === 'waiting' && node.waitingOn
           ? `waiting: ${node.waitingOn.reason.slice(0, 16)}`
           : node.derived === 'blocked' && node.blockedBy.length
@@ -423,19 +564,92 @@ function GraphNode({
   );
 }
 
-function GraphInspector({ id, onClose }: { id: string; onClose: () => void }) {
+function GraphInspector({
+  id,
+  focused,
+  onFocus,
+  onClose,
+}: {
+  id: string;
+  focused: boolean;
+  onFocus: () => void;
+  onClose: () => void;
+}) {
   const { app, run } = useApp();
+  const [linking, setLinking] = useState(false);
+  const [query, setQuery] = useState('');
   const node = app.node(id);
+
+  // Dragging works for two cards you can see at once. On a board with eight
+  // projects the other end is usually off-screen, so there has to be a way to
+  // link by name — which is also the only way that works from a keyboard.
+  const candidates = app
+    .flat()
+    .filter((other) => other.kind === 'project' || other.kind === 'milestone' || other.kind === 'goal')
+    .filter((other) => other.id !== id)
+    .filter((other) => (query ? other.path.toLowerCase().includes(query.toLowerCase()) : true))
+    .filter((other) => app.checkDep(id, other.id).ok)
+    .slice(0, 8);
 
   return (
     <div className="graph-inspector" data-testid="graph-inspector">
       <div className="inline">
         <span className="chip kind-chip">{node.kind}</span>
         <strong className="grow">{node.name}</strong>
+        <button
+          className={focused ? 'btn sm primary' : 'btn sm'}
+          onClick={onFocus}
+          data-testid="focus-node"
+          title="Show only this and what it touches"
+        >
+          {focused ? 'Unfocus' : 'Focus'}
+        </button>
+        <button
+          className="btn sm"
+          onClick={() => setLinking(!linking)}
+          data-testid="link-from-node"
+          title="Make something else wait for this"
+        >
+          Link to…
+        </button>
         <button className="btn ghost sm" onClick={onClose}>
           Close
         </button>
       </div>
+
+      {linking && (
+        <div className="stack tight" style={{ marginTop: 8 }}>
+          <input
+            className="input"
+            autoFocus
+            value={query}
+            placeholder="What should wait for this?"
+            aria-label="What should wait for this?"
+            data-testid="link-search"
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          {candidates.length === 0 && (
+            <span className="faint">Nothing here can wait for it without making a loop.</span>
+          )}
+          {candidates.map((other) => (
+            <button
+              key={other.id}
+              className="row"
+              style={{ border: 0, background: 'var(--bg-sunken)', textAlign: 'left', cursor: 'pointer' }}
+              data-testid={`link-to-${other.id}`}
+              onClick={() => {
+                run((a) => a.addDep(id, other.id));
+                setLinking(false);
+                setQuery('');
+              }}
+            >
+              <span className="chip kind-chip">{other.kind}</span>
+              <span className="grow row-title">{other.name}</span>
+              <span className="faint">{other.projectName}</span>
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="inline wrap" style={{ marginTop: 8 }}>
         <input

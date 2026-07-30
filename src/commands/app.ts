@@ -50,6 +50,7 @@ import { CommandError, conflict, invalid, notAllowed, notFound } from './errors.
 import { allocateId, allocateSlugId } from './ids.ts';
 import type {
   CalendarDay,
+  GraphOptions,
   GraphView,
   InventoryView,
   NodeView,
@@ -229,7 +230,7 @@ export class App {
     return calendarView(this.index, month, this.today);
   }
 
-  graph(options: { showGuessed?: boolean } = {}): GraphView {
+  graph(options: GraphOptions = {}): GraphView {
     return graphView(this.index, this.today, options);
   }
 

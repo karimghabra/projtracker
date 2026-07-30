@@ -44,6 +44,29 @@
   border-radius: var(--radius-sm);
   background: var(--bg-sunken);
   overflow: hidden;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  display: block;
+  width: 100%;
+}
+
+.calendar-day.is-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+/* A quiet affordance: the cell says it can take something, on hover. */
+.calendar-add {
+  opacity: 0;
+  color: var(--accent);
+  font-weight: 700;
+  transition: opacity var(--dur) var(--ease);
+}
+
+.calendar-day.clickable:hover .calendar-add,
+.calendar-day.clickable:focus-visible .calendar-add {
+  opacity: 1;
 }
 
 .calendar-day.clickable { cursor: pointer; }
@@ -516,3 +539,59 @@ kbd {
 .today-group-head .spacer { flex: 1; }
 .today-group-head strong { color: var(--text); }
 .today-group .row { border-radius: 0; padding-left: 22px; }
+
+/* --------------------------------------------------------- group labels */
+
+.group-label {
+  padding: 8px 8px 2px;
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.group-label:first-child { padding-top: 2px; }
+
+.day-detail-list li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.day-detail-list li button { opacity: 0; }
+.day-detail-list li:hover button { opacity: 1; }
+
+/* --------------------------------------------------------- graph notice */
+
+.graph-notice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px var(--space-4);
+  border-bottom: 1px solid var(--border);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 12.5px;
+  flex: none;
+}
+
+.chip-button {
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 550;
+}
+
+.chip-button[aria-pressed='false'] {
+  opacity: 0.5;
+  text-decoration: line-through;
+}
+
+.graph-toolbar {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+.band-toggle text { pointer-events: none; }

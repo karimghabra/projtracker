@@ -10,7 +10,8 @@ import { useState } from 'react';
 import { formatDayMonth, formatRelativeDay } from '../../core/dates.ts';
 import type { TodayItemView } from '../../commands/views.ts';
 import { useApp } from '../state/store.ts';
-import { Calendar, DayDetail } from '../components/Calendar.tsx';
+import { Calendar, DayPanel } from '../components/Calendar.tsx';
+import { UpcomingPanel } from '../components/UpcomingPanel.tsx';
 import { Empty, ProgressBar, QuickAdd, StatusChip } from '../components/ui.tsx';
 import { NewProjectWizard } from './NewProject.tsx';
 import {
@@ -18,6 +19,7 @@ import {
   IconCheck,
   IconChevronDown,
   IconChevronRight,
+  IconChevronUp,
   IconClock,
   IconFlask,
   IconHome,
@@ -48,11 +50,15 @@ export function HomeScreen({ onNavigate }: { onNavigate: (view: ViewName) => voi
             <h2>Calendar</h2>
           </div>
           <div className="panel-body flush">
-            <Calendar onPickDay={setPickedDay} />
-            {pickedDay && <DayDetail date={pickedDay} onClose={() => setPickedDay(null)} />}
+            <Calendar
+              selected={pickedDay}
+              onPickDay={(date) => setPickedDay(date === pickedDay ? null : date)}
+            />
+            {pickedDay && <DayPanel date={pickedDay} onClose={() => setPickedDay(null)} />}
           </div>
         </div>
 
+        <UpcomingPanel />
         <CapturePanel />
       </div>
 
@@ -72,6 +78,20 @@ export function HomeScreen({ onNavigate }: { onNavigate: (view: ViewName) => voi
 function TodayPanel() {
   const { app, run } = useApp();
   const today = app.todayList();
+
+  // Reordering is by button rather than drag: it works from the keyboard, it
+  // works on a laptop trackpad in gloves, and it cannot be started by accident
+  // while ticking something off.
+  const move = (key: string, direction: -1 | 1) => {
+    const keys = today.items.filter((i) => i.kind === 'task').map((i) => i.key);
+    const at = keys.indexOf(key);
+    const to = at + direction;
+    if (at < 0 || to < 0 || to >= keys.length) return;
+    const next = [...keys];
+    next.splice(at, 1);
+    next.splice(to, 0, key);
+    run((a) => a.todayReorder(next), { silent: true });
+  };
 
   return (
     <section className="panel" data-testid="today-panel">
@@ -93,11 +113,22 @@ function TodayPanel() {
           </Empty>
         ) : (
           <div className="list" data-testid="today-list">
-            {groupRuns(today.items).map((run) =>
-              run.group ? (
-                <TodayGroup key={run.group.key} label={run.group.label} sub={run.group.sub} items={run.items} />
+            {groupRuns(today.items).map((group) =>
+              group.group ? (
+                <TodayGroup
+                  key={group.group.key}
+                  label={group.group.label}
+                  sub={group.group.sub}
+                  items={group.items}
+                />
               ) : (
-                run.items.map((item) => <TodayRow key={item.key} item={item} />)
+                group.items.map((item) => (
+                  <TodayRow
+                    key={item.key}
+                    item={item}
+                    onMove={item.kind === 'task' ? (d) => move(item.key, d) : undefined}
+                  />
+                ))
               ),
             )}
           </div>
@@ -168,7 +199,13 @@ function TodayGroup({
   );
 }
 
-function TodayRow({ item }: { item: TodayItemView }) {
+function TodayRow({
+  item,
+  onMove,
+}: {
+  item: TodayItemView;
+  onMove?: (direction: -1 | 1) => void;
+}) {
   const { app, run } = useApp();
 
   const toggle = () => {
@@ -211,6 +248,28 @@ function TodayRow({ item }: { item: TodayItemView }) {
       </div>
 
       <div className="row-actions">
+        {onMove && (
+          <>
+            <button
+              className="btn ghost icon sm"
+              title="Move up"
+              aria-label={`Move ${item.title} up`}
+              data-testid={`up-${item.key}`}
+              onClick={() => onMove(-1)}
+            >
+              <IconChevronUp size={13} />
+            </button>
+            <button
+              className="btn ghost icon sm"
+              title="Move down"
+              aria-label={`Move ${item.title} down`}
+              data-testid={`down-${item.key}`}
+              onClick={() => onMove(1)}
+            >
+              <IconChevronDown size={13} />
+            </button>
+          </>
+        )}
         {item.kind === 'task' && !item.done && (
           <button
             className="btn ghost icon sm"

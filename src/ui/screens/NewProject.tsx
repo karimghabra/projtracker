@@ -46,6 +46,16 @@ const STEPS = ['Project', 'Milestones', 'Goals', 'Detail'] as const;
 let keySeq = 0;
 const nextKey = () => `k${++keySeq}`;
 
+/** Move to the next text field in the dialog, the way Tab would. */
+function focusNext(from: HTMLElement): void {
+  const fields = [
+    ...(from.closest('.modal')?.querySelectorAll<HTMLInputElement>('input[type=text], input:not([type])') ??
+      []),
+  ];
+  const at = fields.indexOf(from as HTMLInputElement);
+  fields[at + 1]?.focus();
+}
+
 export function NewProjectWizard({ onClose }: { onClose: () => void }) {
   const { run } = useApp();
   const [step, setStep] = useState(0);
@@ -142,6 +152,12 @@ export function NewProjectWizard({ onClose }: { onClose: () => void }) {
               autoFocus
               placeholder="Tendon scaffold study"
               onChange={(event) => setName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && name.trim()) {
+                  event.preventDefault();
+                  setStep(1);
+                }
+              }}
               data-testid="project-name"
             />
           </div>
@@ -170,9 +186,38 @@ export function NewProjectWizard({ onClose }: { onClose: () => void }) {
       )}
 
       {step === 3 && (
-        <DetailStep milestones={milestones} setMilestones={setMilestones} goalCount={allGoals.length} />
+        <>
+          <DetailStep
+            milestones={milestones}
+            setMilestones={setMilestones}
+            goalCount={allGoals.length}
+          />
+          <Summary name={name} milestones={milestones} />
+        </>
       )}
     </Modal>
+  );
+}
+
+/** What is about to be created, counted, so Create is not a leap of faith. */
+function Summary({ name, milestones }: { name: string; milestones: DraftMilestone[] }) {
+  const named = milestones.filter((m) => m.name.trim());
+  const goals = named.flatMap((m) => m.goals.filter((g) => g.name.trim()));
+  const tasks = goals.flatMap((g) => g.tasks.filter((t) => t.name.trim()));
+  const experiments = goals.filter((g) => g.experiment).length;
+
+  return (
+    <div className="notice" data-testid="wizard-summary">
+      <div>
+        <strong>{name.trim() || 'This project'}</strong> will be created with {named.length}{' '}
+        milestone{named.length === 1 ? '' : 's'}, {goals.length} goal
+        {goals.length === 1 ? '' : 's'}, {tasks.length} task{tasks.length === 1 ? '' : 's'}
+        {experiments > 0 && ` and ${experiments} experiment${experiments === 1 ? '' : 's'}`}.
+        <div className="faint" style={{ marginTop: 4 }}>
+          All of it stays editable, and undo removes the lot in one step.
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -239,6 +284,20 @@ function MilestoneStep({
                   ),
                 )
               }
+              onKeyDown={(event) => {
+                // Enter adds the next one. Typing a list should feel like
+                // typing a list, not like filling a form in forty times.
+                if (event.key !== 'Enter' || !milestone.name.trim()) return;
+                event.preventDefault();
+                if (index === milestones.length - 1) {
+                  setMilestones([
+                    ...milestones,
+                    { key: nextKey(), name: '', seq: milestones.length + 1, goals: [] },
+                  ]);
+                } else {
+                  focusNext(event.currentTarget);
+                }
+              }}
             />
             <button
               className="btn ghost icon"
@@ -318,6 +377,7 @@ function GoalStep({
                 <input
                   className="input"
                   value={goal.name}
+                  autoFocus={index === milestone.goals.length - 1 && !goal.name}
                   placeholder="CAD design"
                   aria-label={`Goal ${index + 1} of ${milestone.name}`}
                   data-testid={`goal-name-${milestone.seq}-${index}`}
@@ -329,6 +389,25 @@ function GoalStep({
                       ),
                     )
                   }
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Enter' || !goal.name.trim()) return;
+                    event.preventDefault();
+                    if (index === milestone.goals.length - 1) {
+                      update(milestone.key, [
+                        ...milestone.goals,
+                        {
+                          key: nextKey(),
+                          name: '',
+                          seq: milestone.goals.length + 1,
+                          ordering: 'sequential',
+                          tasks: [],
+                          experimentName: '',
+                        },
+                      ]);
+                    } else {
+                      focusNext(event.currentTarget);
+                    }
+                  }}
                 />
                 <select
                   className="select"
@@ -458,6 +537,7 @@ function DetailStep({
                       <input
                         className="input"
                         value={task.name}
+                        autoFocus={index === goal.tasks.length - 1 && !task.name}
                         placeholder="Draft the geometry"
                         aria-label={`Task ${index + 1} of ${goal.name}`}
                         data-testid={`task-name-${goal.key}-${index}`}
@@ -468,6 +548,20 @@ function DetailStep({
                             ),
                           })
                         }
+                        onKeyDown={(event) => {
+                          if (event.key !== 'Enter' || !task.name.trim()) return;
+                          event.preventDefault();
+                          if (index === goal.tasks.length - 1) {
+                            update(milestone.key, goal.key, {
+                              tasks: [
+                                ...goal.tasks,
+                                { key: nextKey(), name: '', seq: goal.tasks.length + 1 },
+                              ],
+                            });
+                          } else {
+                            focusNext(event.currentTarget);
+                          }
+                        }}
                       />
                       <button
                         className="btn ghost icon"

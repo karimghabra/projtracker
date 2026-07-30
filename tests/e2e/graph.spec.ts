@@ -141,14 +141,16 @@ test.describe('the graph', () => {
     await expect(page.getByTestId(key)).toBeAttached();
   });
 
-  test('shows and hides guessed order', async ({ h }) => {
+  test('guessed order is off by default and can be turned on', async ({ h }) => {
     const { page } = h;
     await twoProjects(page);
 
-    const toggle = page.getByLabel('Show guessed order');
-    await expect(toggle).toBeChecked();
-    await toggle.uncheck();
+    // Off by default: a guess is the least interesting thing on the board, and
+    // showing every one of them is most of what makes a graph unreadable.
+    const toggle = page.getByTestId('show-guessed');
     await expect(toggle).not.toBeChecked();
+    await toggle.check();
+    await expect(toggle).toBeChecked();
   });
 
   test('selecting a node opens an inspector that can rename and renumber', async ({ h }) => {
@@ -177,8 +179,7 @@ test.describe('the graph', () => {
     // The drawing is rendered larger, not re-laid-out.
     expect(await svg.getAttribute('viewBox')).toBe(viewBox);
 
-    await page.getByRole('button', { name: 'Zoom out' }).click();
-    await page.getByRole('button', { name: 'Reset view' }).click();
+    await page.getByTestId('reset-view').click();
     expect(Number(await svg.getAttribute('width'))).toBe(before);
   });
 

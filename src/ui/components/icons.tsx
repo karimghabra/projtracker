@@ -92,6 +92,7 @@ export const IconCheck = svg(<path d="m5 12.5 4.5 4.5L19 7" />);
 export const IconChevronRight = svg(<path d="m9 5 7 7-7 7" />);
 export const IconChevronDown = svg(<path d="m5 9 7 7 7-7" />);
 export const IconChevronLeft = svg(<path d="m15 5-7 7 7 7" />);
+export const IconChevronUp = svg(<path d="m5 15 7-7 7 7" />);
 export const IconSearch = svg(
   <>
     <circle cx="11" cy="11" r="6.5" />

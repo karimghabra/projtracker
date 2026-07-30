@@ -421,6 +421,25 @@ export interface GraphView {
   edges: GraphEdgeView[];
   bands: GraphBand[];
   laneCount: number;
+  /** Every project, whether drawn or not, so the filter can list them all. */
+  projects: { id: NodeId; name: string; nodes: number; hidden: boolean }[];
+  /** How many nodes the current filters are leaving out. */
+  hiddenCount: number;
+}
+
+export interface GraphOptions {
+  showGuessed?: boolean;
+  /** Draw only these projects. Undefined means all of them. */
+  projectIds?: NodeId[];
+  /** Bands reduced to their project card. */
+  collapsed?: NodeId[];
+  /** Leave out anything finished. */
+  hideDone?: boolean;
+  /**
+   * Show only this node's own line of descent and whatever it is linked to.
+   * The answer to "I have twelve projects and I want to see this one thing".
+   */
+  focusId?: NodeId;
 }
 
 /**
@@ -435,15 +454,43 @@ export interface GraphView {
  * centred against its children. Dependency arrows are drawn on top of that
  * rather than driving it, because the hierarchy is the thing being navigated.
  */
-export function graphView(
-  index: GraphIndex,
-  today: DateOnly,
-  options: { showGuessed?: boolean } = {},
-): GraphView {
+export function graphView(index: GraphIndex, today: DateOnly, options: GraphOptions = {}): GraphView {
   const state = index.state;
+  const allProjects = rootProjects(index);
+
+  const collapsed = new Set(options.collapsed ?? []);
+  const chosen = options.projectIds ? new Set(options.projectIds) : null;
+
+  // Focus: this node's ancestors and descendants, plus anything it is linked
+  // to (and their ancestors, so the band still makes sense).
+  let focusSet: Set<NodeId> | null = null;
+  if (options.focusId && state.nodes[options.focusId]) {
+    const id = options.focusId;
+    focusSet = new Set<NodeId>([id]);
+    for (const a of index.ancestors.get(id) ?? []) focusSet.add(a);
+    for (const d of index.descendants.get(id) ?? []) focusSet.add(d);
+    for (const edge of index.edges) {
+      if (edge.suppressed) continue;
+      const other = edge.from === id ? edge.to : edge.to === id ? edge.from : null;
+      if (!other) continue;
+      focusSet.add(other);
+      for (const a of index.ancestors.get(other) ?? []) focusSet.add(a);
+      for (const d of index.descendants.get(other) ?? []) focusSet.add(d);
+    }
+  }
+
   const isVisible = (id: NodeId) => {
-    const kind = state.nodes[id]?.kind;
-    return kind === 'project' || kind === 'milestone' || kind === 'goal';
+    const node = state.nodes[id];
+    if (!node) return false;
+    if (node.kind !== 'project' && node.kind !== 'milestone' && node.kind !== 'goal') return false;
+
+    const projectId = node.kind === 'project' ? node.id : findProject(index, id)?.id;
+    if (chosen && projectId && !chosen.has(projectId)) return false;
+    if (focusSet && !focusSet.has(id)) return false;
+    // A collapsed band keeps its project card and nothing else.
+    if (collapsed.has(projectId ?? '') && node.kind !== 'project') return false;
+    if (options.hideDone && node.kind !== 'project' && isDone(index, id)) return false;
+    return true;
   };
 
   const rank = new Map<NodeId, number>();
@@ -451,7 +498,8 @@ export function graphView(
   const bands: GraphBand[] = [];
   let nextLane = 0;
 
-  for (const project of rootProjects(index)) {
+  for (const project of allProjects) {
+    if (!isVisible(project.id)) continue;
     const firstLane = nextLane;
     const members: NodeId[] = [];
 
@@ -537,7 +585,25 @@ export function graphView(
     });
   }
 
-  return { nodes, edges, bands, laneCount: Math.ceil(nextLane) };
+  const drawn = visibleSet.size;
+  const total = index.order.filter((id) => {
+    const kind = state.nodes[id]?.kind;
+    return kind === 'project' || kind === 'milestone' || kind === 'goal';
+  }).length;
+
+  return {
+    nodes,
+    edges,
+    bands,
+    laneCount: Math.ceil(nextLane),
+    projects: allProjects.map((p) => ({
+      id: p.id,
+      name: p.name,
+      nodes: 1 + (index.descendants.get(p.id) ?? []).length,
+      hidden: !visibleSet.has(p.id),
+    })),
+    hiddenCount: Math.max(0, total - drawn),
+  };
 }
 
 function edgeKey(edge: EffectiveEdge): string {

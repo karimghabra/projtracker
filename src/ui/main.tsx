@@ -7,7 +7,19 @@ import { UiStore, initStore } from './state/store.ts';
 import { chooseVault } from './state/vault.ts';
 
 const choice = chooseVault();
-initStore(new UiStore(choice.vault, choice.location));
+const store = new UiStore(choice.vault, choice.location);
+initStore(store);
+
+/**
+ * A handle on the running app, for tests and for debugging a real vault from
+ * the console. It grants nothing the page does not already have — the command
+ * layer runs in this window either way — and it saves a test forty clicks when
+ * the thing under test is how a big board reads rather than how it was built.
+ */
+(window as unknown as { __pt: unknown }).__pt = {
+  app: store.app,
+  run: (fn: (app: typeof store.app) => unknown) => store.run(fn),
+};
 
 // Theme is remembered across launches; the system preference is the default.
 const stored = window.localStorage.getItem('protracker:theme');

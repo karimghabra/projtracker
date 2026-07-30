@@ -6,9 +6,11 @@ import type { ViewName } from '../AppShell.tsx';
 export function SearchModal({
   onClose,
   onNavigate,
+  onSelectNode,
 }: {
   onClose: () => void;
   onNavigate: (view: ViewName) => void;
+  onSelectNode: (id: string) => void;
 }) {
   const { app } = useApp();
   const [query, setQuery] = useState('');
@@ -35,6 +37,8 @@ export function SearchModal({
               className="row"
               style={{ border: 0, background: 'transparent', textAlign: 'left', cursor: 'pointer' }}
               onClick={() => {
+                // Land on the thing itself, not merely the screen it lives on.
+                if (hit.kind === 'node') onSelectNode(hit.id);
                 onNavigate(hit.kind === 'note' ? 'journal' : 'projects');
                 onClose();
               }}

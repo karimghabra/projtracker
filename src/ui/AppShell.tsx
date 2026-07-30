@@ -64,6 +64,8 @@ export function AppShell() {
   const [theme, setTheme] = useState(() => document.documentElement.dataset['theme'] ?? 'system');
   const [showSettings, setShowSettings] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
+  /** A node chosen from search, handed to whichever screen opens next. */
+  const [pendingSelection, setPendingSelection] = useState<string | null>(null);
 
   useEffect(() => {
     const onHash = () => setView(readHash());
@@ -199,7 +201,12 @@ export function AppShell() {
 
         <main className={view === 'graph' || view === 'sheet' ? 'screen flush' : 'screen'}>
           {view === 'home' && <HomeScreen onNavigate={go} />}
-          {view === 'projects' && <ProjectsScreen />}
+          {view === 'projects' && (
+            <ProjectsScreen
+              selectId={pendingSelection}
+              onSelectionUsed={() => setPendingSelection(null)}
+            />
+          )}
           {view === 'graph' && <GraphScreen />}
           {view === 'sheet' && <SheetScreen />}
           {view === 'inventory' && <InventoryScreen />}
@@ -208,7 +215,13 @@ export function AppShell() {
       </div>
 
       {showSettings && <SettingsDialog onClose={() => setShowSettings(false)} />}
-      {showSearch && <SearchModal onClose={() => setShowSearch(false)} onNavigate={go} />}
+      {showSearch && (
+        <SearchModal
+          onClose={() => setShowSearch(false)}
+          onNavigate={go}
+          onSelectNode={setPendingSelection}
+        />
+      )}
       <Toasts />
       <span className="sr-only" data-testid="today-date">
         {formatRelativeDay(today, today)}
