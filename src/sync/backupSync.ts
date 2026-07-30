@@ -14,14 +14,29 @@
  * one a restore reads.
  */
 
+import { checksum } from '../core/checksum.ts';
 import type { BackupMeta, BackupRead, VaultFiles } from '../store/backup.ts';
 import { BACKUP_MARKER, BACKUP_SHEET, backupGrid, readBackupGrid } from '../store/backup.ts';
 import { SUMMARY_MARKER } from '../store/excelExport.ts';
+import type { Grid } from './reconcile.ts';
 import type { SheetsTransport } from './sheets.ts';
 
-export interface Grid {
-  title: string;
-  rows: string[][];
+export type { Grid };
+
+/**
+ * A fingerprint of every readable tab as we last wrote it.
+ *
+ * This is the whole basis of not overwriting somebody's edit. Before a push,
+ * the tabs are read back and fingerprinted again: identical means nobody has
+ * touched the spreadsheet since and it is ours to rewrite; different means
+ * somebody typed in it, and rewriting would throw their work away.
+ */
+export type Fingerprints = Record<string, string>;
+
+export function fingerprint(grids: Grid[]): Fingerprints {
+  const out: Fingerprints = {};
+  for (const grid of grids) out[grid.title] = checksum(JSON.stringify(grid.rows));
+  return out;
 }
 
 export interface PushReport {
@@ -30,6 +45,59 @@ export interface PushReport {
   written: string[];
   removed: string[];
   files: number;
+  /** What was written, so the next push can tell whether anyone edited it. */
+  fingerprints: Fingerprints;
+}
+
+/** Tabs somebody has typed in since we last wrote them. */
+export interface Untouched {
+  ok: boolean;
+  edited: string[];
+}
+
+/**
+ * Whether the spreadsheet still says what we left it saying.
+ *
+ * Called before every push, and it is the reason automatic push and editing in
+ * the sheet can coexist at all. Without it the timer wins every race and the
+ * app silently eats whatever somebody typed between two backups.
+ */
+export async function untouchedSince(
+  transport: SheetsTransport,
+  expected: Fingerprints,
+): Promise<Untouched> {
+  const titles = Object.keys(expected);
+  if (titles.length === 0) return { ok: true, edited: [] };
+
+  const present = new Set(await transport.tabs());
+  const edited: string[] = [];
+
+  for (const title of titles) {
+    // A tab that has been deleted outright is a change too, and a loud one.
+    if (!present.has(title)) {
+      edited.push(title);
+      continue;
+    }
+    const rows = await transport.readTab(title);
+    if (checksum(JSON.stringify(trim(rows))) !== expected[title]) edited.push(title);
+  }
+
+  return { ok: edited.length === 0, edited };
+}
+
+/**
+ * Sheets drops trailing empty cells and trailing empty rows on the way out, so
+ * what comes back is never quite what went in. Both sides are trimmed the same
+ * way, or every tab looks edited the moment it is read.
+ */
+function trim(rows: string[][]): string[][] {
+  const out = rows.map((row) => {
+    const copy = [...row];
+    while (copy.length && copy[copy.length - 1] === '') copy.pop();
+    return copy;
+  });
+  while (out.length && out[out.length - 1]!.length === 0) out.pop();
+  return out;
 }
 
 /** A1 values that mean "Protracker wrote this tab", and may therefore be replaced. */
@@ -77,7 +145,29 @@ export async function pushBackup(
     written,
     removed,
     files: Object.keys(content.files).length,
+    fingerprints: fingerprint(content.readable.map((g) => ({ title: g.title, rows: trim(g.rows) }))),
   };
+}
+
+/**
+ * The readable tabs, for working out what somebody changed.
+ *
+ * Deliberately not `pullBackup`: that one reads the `Vault` tab and replaces
+ * everything, and this one reads what people actually look at and proposes a
+ * merge. Two operations with opposite consequences must not share a name, let
+ * alone a code path.
+ */
+export async function readReadableTabs(
+  transport: SheetsTransport,
+  titles: string[],
+): Promise<Grid[]> {
+  const present = new Set(await transport.tabs());
+  const grids: Grid[] = [];
+  for (const title of titles) {
+    if (!present.has(title)) continue;
+    grids.push({ title, rows: await transport.readTab(title) });
+  }
+  return grids;
 }
 
 /**

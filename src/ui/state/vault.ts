@@ -16,14 +16,31 @@ export interface SheetsStatus {
   clientEmail?: string;
   spreadsheetId?: string;
   lastPushAt?: string;
+  auto: boolean;
+  everyMinutes: number;
+  /** Fingerprint of the vault as it was when we last pushed. */
+  vault?: string;
+}
+
+export interface PushOutcome {
+  /** True when somebody edited the spreadsheet and nothing was written. */
+  blocked: boolean;
+  edited?: string[];
+  spreadsheet?: string;
+  written?: string[];
+  removed?: string[];
+  files?: number;
 }
 
 export interface SheetsBridge {
   status(): Promise<SheetsStatus>;
   chooseKey(): Promise<SheetsStatus>;
   setSpreadsheet(link: string): Promise<SheetsStatus>;
+  setAuto(auto: boolean, everyMinutes?: number): Promise<SheetsStatus>;
   forget(): Promise<SheetsStatus>;
-  push(payload: unknown): Promise<{ spreadsheet: string; written: string[]; removed: string[]; files: number }>;
+  push(payload: unknown): Promise<PushOutcome>;
+  /** What we last wrote, and what is in the spreadsheet now. */
+  review(): Promise<{ baseline: { title: string; rows: string[][] }[]; theirs: { title: string; rows: string[][] }[] }>;
   pull(): Promise<{ files: Record<string, string>; problems: string[]; meta: { generatedAt: string; version: string } }>;
 }
 
@@ -109,7 +126,10 @@ export interface VaultChoice {
 
 export function chooseVault(): VaultChoice {
   const bridge = window.protracker;
-  if (bridge) {
+  // Tested for the function it is about to call, not merely for existing: the
+  // bridge is assembled a piece at a time, and a half-built one must not be
+  // mistaken for a vault on disk.
+  if (bridge?.readFile) {
     return {
       kind: 'desktop',
       location: bridge.vaultPath(),

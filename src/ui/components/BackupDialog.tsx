@@ -19,6 +19,7 @@ import { APP_VERSION } from '../../core/version.ts';
 import type { SheetsStatus } from '../state/vault.ts';
 import { useApp } from '../state/store.ts';
 import { ConfirmDialog, Modal } from './ui.tsx';
+import { SheetsPanel } from './SheetsPanel.tsx';
 import { IconImport, IconWarning } from './icons.tsx';
 
 type Pending = { files: VaultFiles; from: string; problems: string[]; takenAt?: string };
@@ -38,7 +39,7 @@ export function BackupDialog({ onClose }: { onClose: () => void }) {
     try {
       setStatus(await bridge.status());
     } catch {
-      setStatus({ configured: false });
+      setStatus({ configured: false, auto: false, everyMinutes: 30 });
     }
   }, [bridge]);
 
@@ -103,21 +104,6 @@ export function BackupDialog({ onClose }: { onClose: () => void }) {
 
   // ---------------------------------------------------------- google sheets
 
-  const pushToSheets = () =>
-    guard('push', async () => {
-      const { readableGrids } = await import('../../store/excelExport.ts');
-      const report = await bridge!.push({
-        ...contents(),
-        readable: readableGrids(app.state, app.today),
-      });
-      store.toast(
-        `Backed up ${report.files} file(s) to "${report.spreadsheet}"${
-          report.removed.length ? `, removing ${report.removed.length} stale tab(s)` : ''
-        }.`,
-      );
-      await refresh();
-    });
-
   const pullFromSheets = () =>
     guard('pull', async () => {
       const read = await bridge!.pull();
@@ -165,13 +151,13 @@ export function BackupDialog({ onClose }: { onClose: () => void }) {
           </div>
         )}
 
-        {/* ------------------------------------------------------- a file */}
+        {/* --------------------------------------------------- a file */}
         <div className="field">
           <label>A backup file</label>
           <span className="hint">
             A spreadsheet with the readable sheets on top and the whole vault hidden inside it.
-            Restoring from one reproduces this vault exactly — dependencies, journal, protocol runs
-            and all. An ordinary export does not: it is a report.
+            Nothing to set up, works offline. An ordinary export is not this: it is a report, and
+            it cannot be restored from.
           </span>
           <div className="inline wrap" style={{ marginTop: 8 }}>
             <button
@@ -183,6 +169,57 @@ export function BackupDialog({ onClose }: { onClose: () => void }) {
               <IconImport size={13} className="flip" />{' '}
               {busy === 'file' ? 'Saving…' : 'Save a backup file'}
             </button>
+          </div>
+        </div>
+
+        <hr className="sep" />
+
+        {/* ----------------------------------------------- google sheets */}
+        <div className="field">
+          <label>Google Sheets</label>
+          {!bridge ? (
+            <span className="hint" data-testid="sheets-desktop-only">
+              Backing up to Google Sheets needs the desktop app — a browser tab has nowhere safe to
+              keep the key.
+            </span>
+          ) : status?.configured ? (
+            <SheetsPanel
+              bridge={bridge}
+              status={status}
+              onStatus={setStatus}
+              busy={busy}
+              setBusy={setBusy}
+              onFailure={setFailure}
+            />
+          ) : (
+            <SheetsSetup
+              status={status}
+              link={link}
+              busy={busy !== null}
+              onLink={setLink}
+              onChooseKey={() => void guard('key', async () => setStatus(await bridge.chooseKey()))}
+              onSetSpreadsheet={() =>
+                void guard('link', async () => setStatus(await bridge.setSpreadsheet(link)))
+              }
+            />
+          )}
+        </div>
+
+        <hr className="sep" />
+
+        {/*
+          Recovery, on its own and last. Everything above adds to a backup or
+          merges a change; everything here throws the current vault away. They
+          are kept apart because a merge and a replace with similar labels sitting
+          side by side is the worst mistake this dialog could invite.
+        */}
+        <div className="field">
+          <label>Start again from a backup</label>
+          <span className="hint">
+            Replaces everything in the vault. Not a merge, and not undoable — this is the button
+            for when something has already gone wrong.
+          </span>
+          <div className="inline wrap" style={{ marginTop: 8 }}>
             <label className="btn" htmlFor="backup-file">
               Restore from a file…
             </label>
@@ -198,75 +235,17 @@ export function BackupDialog({ onClose }: { onClose: () => void }) {
                 if (file) void openFile(file);
               }}
             />
+            {bridge && status?.configured && (
+              <button
+                className="btn"
+                onClick={pullFromSheets}
+                disabled={busy !== null}
+                data-testid="sheets-pull"
+              >
+                {busy === 'pull' ? 'Reading…' : 'Restore from the spreadsheet…'}
+              </button>
+            )}
           </div>
-        </div>
-
-        <hr className="sep" />
-
-        {/* ----------------------------------------------- google sheets */}
-        <div className="field">
-          <label>Google Sheets</label>
-          {!bridge ? (
-            <span className="hint" data-testid="sheets-desktop-only">
-              Backing up to Google Sheets needs the desktop app — a browser tab has nowhere safe to
-              keep the key.
-            </span>
-          ) : status?.configured ? (
-            <>
-              <span className="hint">
-                Backing up rewrites the whole spreadsheet: a readable tab per project, and a hidden{' '}
-                <code>Vault</code> tab that is the part a restore reads. Share the spreadsheet with
-                whoever you like — the readable tabs are for them.
-              </span>
-              <div className="stack tight faint mono" style={{ marginTop: 6, fontSize: 12 }}>
-                <div data-testid="sheets-account">{status.clientEmail}</div>
-                <div>
-                  {status.lastPushAt
-                    ? `Last backed up ${status.lastPushAt.replace('T', ' ')}`
-                    : 'Never backed up yet'}
-                </div>
-              </div>
-              <div className="inline wrap" style={{ marginTop: 8 }}>
-                <button
-                  className="btn primary"
-                  onClick={pushToSheets}
-                  disabled={busy !== null}
-                  data-testid="sheets-push"
-                >
-                  {busy === 'push' ? 'Backing up…' : 'Back up now'}
-                </button>
-                <button
-                  className="btn"
-                  onClick={pullFromSheets}
-                  disabled={busy !== null}
-                  data-testid="sheets-pull"
-                >
-                  {busy === 'pull' ? 'Reading…' : 'Restore from the spreadsheet…'}
-                </button>
-                <span className="spacer" />
-                <button
-                  className="btn subtle"
-                  onClick={() => void guard('forget', async () => setStatus(await bridge.forget()))}
-                  disabled={busy !== null}
-                >
-                  Forget these credentials
-                </button>
-              </div>
-            </>
-          ) : (
-            <SheetsSetup
-              status={status}
-              link={link}
-              busy={busy !== null}
-              onLink={setLink}
-              onChooseKey={() =>
-                void guard('key', async () => setStatus(await bridge.chooseKey()))
-              }
-              onSetSpreadsheet={() =>
-                void guard('link', async () => setStatus(await bridge.setSpreadsheet(link)))
-              }
-            />
-          )}
         </div>
       </Modal>
 

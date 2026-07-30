@@ -17,6 +17,10 @@ export interface SheetsStatus {
   spreadsheetId?: string;
   spreadsheetTitle?: string;
   lastPushAt?: string;
+  auto: boolean;
+  everyMinutes: number;
+  /** Fingerprint of the vault as it was when we last pushed. */
+  vault?: string;
 }
 
 contextBridge.exposeInMainWorld('protracker', {
@@ -39,7 +43,10 @@ contextBridge.exposeInMainWorld('protracker', {
     setSpreadsheet: (link: string): Promise<SheetsStatus> =>
       ipcRenderer.invoke('pt:sheets:setSpreadsheet', link),
     forget: (): Promise<SheetsStatus> => ipcRenderer.invoke('pt:sheets:forget'),
+    setAuto: (auto: boolean, everyMinutes?: number): Promise<SheetsStatus> =>
+      ipcRenderer.invoke('pt:sheets:setAuto', auto, everyMinutes),
     push: (payload: unknown): Promise<unknown> => ipcRenderer.invoke('pt:sheets:push', payload),
+    review: (): Promise<unknown> => ipcRenderer.invoke('pt:sheets:review'),
     pull: (): Promise<unknown> => ipcRenderer.invoke('pt:sheets:pull'),
   },
 });

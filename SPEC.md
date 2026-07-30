@@ -329,6 +329,50 @@ unzip, no unverified-app warning, no browser round trip, and credentials the use
 owns and can revoke. The transport is `fetch` plus `node:crypto`, not a client
 library.
 
+### 7.2 Reading edits back
+
+The readable tabs are editable, and what somebody types there can be brought
+back in. Two problems have to be solved for that to be safe.
+
+**Identity.** The tabs carry an `ID` column. Without it a rename is
+indistinguishable from a delete plus a create and no merge is sound. Column
+positions are read from each tab's own header row, not assumed, so inserting or
+moving a column in Sheets — an obvious thing for a person to do — changes
+nothing. It also means the Summary and `Vault` tabs are skipped for a true
+reason (no `ID` column) rather than by name.
+
+**Whose change is whose.** Comparing the sheet against the board is not enough:
+a cell differs just as much when the app moved on and the sheet is stale, and
+applying that silently reverts the user's own work. So `reconcile` is
+three-way — *baseline* (what we last pushed, stored beside the app), *mine*
+(what the board would write now), *theirs* (what the spreadsheet holds):
+
+| baseline → mine | baseline → theirs | outcome |
+|---|---|---|
+| unchanged | changed | propose it |
+| changed | unchanged | nothing; the next push carries it |
+| changed | changed, same value | nothing |
+| changed | changed, differently | a conflict, stated, never resolved automatically |
+
+With no baseline, nothing is proposed at all and the reason is said out loud.
+
+Consequences that fall out of this:
+
+- **Automatic push must never overwrite an edit.** Before every push the tabs
+  are read back and fingerprinted against what we wrote; if they differ, nothing
+  is written and the user is told which tab changed. Without this the timer wins
+  every race and edits vanish without trace.
+- **Deletions are reported, never applied by default.** A missing row means
+  somebody deleted it, or sorted the sheet and dragged over it.
+- **Applying is one transaction**, so an afternoon of edits made on a phone is
+  one undo away.
+- Status and completion on a container are refused: those are arithmetic over
+  its contents.
+- **Restoring and merging are kept apart** in the UI and in the code. One
+  replaces everything from the `Vault` tab, the other merges reviewed cells from
+  the readable tabs; sharing a name or a code path would be the worst bug the
+  feature could have.
+
 ---
 
 ## 8. Architecture

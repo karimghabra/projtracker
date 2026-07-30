@@ -32,6 +32,7 @@ import { InventoryScreen } from './screens/Inventory.tsx';
 import { JournalScreen } from './screens/Journal.tsx';
 import { SettingsDialog } from './screens/Settings.tsx';
 import { BackupDialog } from './components/BackupDialog.tsx';
+import { useAutoSync } from './state/autoSync.ts';
 import { SearchModal } from './components/SearchModal.tsx';
 
 export type ViewName = 'home' | 'projects' | 'graph' | 'sheet' | 'inventory' | 'journal';
@@ -65,6 +66,10 @@ export function AppShell() {
   const [theme, setTheme] = useState(() => document.documentElement.dataset['theme'] ?? 'system');
   const [showSettings, setShowSettings] = useState(false);
   const [showBackup, setShowBackup] = useState(false);
+
+  // Keeps the spreadsheet current by itself when that is switched on. A
+  // no-op in a browser, which is why it can live at the top of the shell.
+  useAutoSync();
   const [showSearch, setShowSearch] = useState(false);
   /** A node chosen from search, handed to whichever screen opens next. */
   const [pendingSelection, setPendingSelection] = useState<string | null>(null);

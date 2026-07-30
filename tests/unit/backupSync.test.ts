@@ -13,7 +13,7 @@ import { readableGrids } from '@store/excelExport.ts';
 import { MemoryVault } from '@store/vault.ts';
 import { App } from '@commands/app.ts';
 import { fixedClock } from '@core/dates.ts';
-import { pullBackup, pushBackup } from '@sync/backupSync.ts';
+import { pullBackup, pushBackup, readReadableTabs, untouchedSince } from '@sync/backupSync.ts';
 import type { SheetsTransport } from '@sync/sheets.ts';
 import { parseServiceAccount, parseSpreadsheetId } from '@sync/sheets.ts';
 import { harness, sampleBoard, T0 } from './helpers.ts';
@@ -216,6 +216,73 @@ describe('pulling a board back', () => {
     );
 
     expect((await pullBackup(sheets)).problems).toEqual([]);
+  });
+});
+
+describe('noticing that somebody edited the spreadsheet', () => {
+  it('says the sheet is untouched right after a push', async () => {
+    const sheets = new FakeSheets();
+    const report = await push(sheets, board());
+
+    // The trap this is really testing: Sheets drops trailing empty cells and
+    // rows on the way out, so a naive comparison calls every tab edited the
+    // first time it is read back.
+    for (const [title, rows] of sheets.grids) {
+      sheets.grids.set(
+        title,
+        rows.map((row) => {
+          const copy = [...row];
+          while (copy.length && copy[copy.length - 1] === '') copy.pop();
+          return copy;
+        }),
+      );
+    }
+
+    expect(await untouchedSince(sheets, report.fingerprints)).toEqual({ ok: true, edited: [] });
+  });
+
+  it('names the tab somebody typed in', async () => {
+    const h = board();
+    const sheets = new FakeSheets();
+    const report = await push(sheets, h);
+
+    const grid = sheets.grids.get('Tendon Study')!;
+    grid[4] = [...grid[4]!];
+    grid[4]![10] = 'a note typed on a phone';
+
+    const result = await untouchedSince(sheets, report.fingerprints);
+    expect(result.ok).toBe(false);
+    expect(result.edited).toEqual(['Tendon Study']);
+  });
+
+  it('treats a deleted tab as a change, and a loud one', async () => {
+    const sheets = new FakeSheets();
+    const report = await push(sheets, board());
+    sheets.grids.delete('Tendon Study');
+
+    expect((await untouchedSince(sheets, report.fingerprints)).edited).toEqual(['Tendon Study']);
+  });
+
+  it('ignores a tab it never wrote', async () => {
+    const sheets = new FakeSheets();
+    const report = await push(sheets, board());
+    sheets.grids.set('Reagent orders', [['Item'], ['Collagen']]);
+
+    expect((await untouchedSince(sheets, report.fingerprints)).ok).toBe(true);
+  });
+
+  it('has nothing to check before the first push', async () => {
+    expect(await untouchedSince(new FakeSheets(), {})).toEqual({ ok: true, edited: [] });
+  });
+
+  it('reads back only the readable tabs, never the vault', async () => {
+    const h = board();
+    const sheets = new FakeSheets();
+    const report = await push(sheets, h);
+
+    const grids = await readReadableTabs(sheets, Object.keys(report.fingerprints));
+    expect(grids.map((g) => g.title)).toEqual(['Summary', 'Tendon Study']);
+    expect(grids.map((g) => g.title)).not.toContain(BACKUP_SHEET);
   });
 });
 

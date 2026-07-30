@@ -131,6 +131,27 @@ account key you download from Google, and a spreadsheet shared with that
 account's address. The key stays on your machine and never goes in the vault —
 the vault is the thing you share.
 
+### Editing in the spreadsheet
+
+Tick something done on your phone, rename a task, add a row under a goal, type
+a completion period — then **Check for changes** in the Backup dialog and take
+what you want, one tick box at a time.
+
+It works out *whose* change is whose by comparing three things: what was last
+sent, what the board says now, and what the spreadsheet holds. A cell changed
+only in the sheet is proposed; one changed only in the app is left alone,
+because the next backup carries it; one changed in both is called a conflict
+and never resolved for you. Deletions are reported and never ticked by default
+— a row goes missing because somebody meant it, or because they dragged over it
+while sorting, and those look identical from here.
+
+Everything you accept applies as one undo step.
+
+**Keep the spreadsheet up to date automatically** pushes on a timer, but only
+when something has actually changed — and never over an edit made in the
+spreadsheet. If somebody has typed in it, the backup stops and says so instead
+of overwriting them.
+
 ## The command line
 
 `pt` works against the same folder as the app; neither needs to know the other

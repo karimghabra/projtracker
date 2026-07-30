@@ -11,8 +11,8 @@ import { BrowserWindow, app, dialog, ipcMain, shell } from 'electron';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import type { BackupMeta, VaultFiles } from '../store/backup.ts';
-import type { Grid } from '../sync/backupSync.ts';
-import { pullBackup, pushBackup } from '../sync/backupSync.ts';
+import type { Fingerprints, Grid } from '../sync/backupSync.ts';
+import { pullBackup, pushBackup, readReadableTabs, untouchedSince } from '../sync/backupSync.ts';
 import type { ServiceAccount } from '../sync/sheets.ts';
 import { GoogleSheets, parseServiceAccount, parseSpreadsheetId } from '../sync/sheets.ts';
 
@@ -72,6 +72,15 @@ interface SheetsSettings {
   account?: ServiceAccount;
   spreadsheetId?: string;
   lastPushAt?: string;
+  /** Push by itself, rather than waiting to be asked. */
+  auto?: boolean;
+  /** Minutes between automatic pushes. */
+  everyMinutes?: number;
+  /** What the readable tabs looked like when we last wrote them. */
+  fingerprints?: Fingerprints;
+  /** A fingerprint of the vault at that moment, so "has anything changed since"
+   *  survives the app being closed and reopened. */
+  vault?: string;
 }
 
 /**
@@ -98,17 +107,41 @@ function writeSettings(settings: SheetsSettings): void {
   writeFileSync(settingsFile(), `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
 }
 
+/**
+ * The baseline lives in its own file: it is the whole readable board, and
+ * putting it in the settings would make the one file a person might open
+ * unreadable.
+ */
+function baselineFile(): string {
+  return join(app.getPath('userData'), 'google-sheets-baseline.json');
+}
+
+function readBaseline(): Grid[] {
+  try {
+    const parsed = JSON.parse(readFileSync(baselineFile(), 'utf8')) as Grid[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 function statusOf(settings: SheetsSettings): {
   configured: boolean;
   clientEmail?: string;
   spreadsheetId?: string;
   lastPushAt?: string;
+  auto: boolean;
+  everyMinutes: number;
+  vault?: string;
 } {
   return {
     configured: Boolean(settings.account && settings.spreadsheetId),
     clientEmail: settings.account?.clientEmail,
     spreadsheetId: settings.spreadsheetId,
     lastPushAt: settings.lastPushAt,
+    auto: settings.auto === true,
+    everyMinutes: settings.everyMinutes ?? 30,
+    vault: settings.vault,
   };
 }
 
@@ -146,23 +179,74 @@ function registerSheetsHandlers(): void {
   });
 
   ipcMain.handle('pt:sheets:forget', () => {
-    try {
-      rmSync(settingsFile(), { force: true });
-    } catch {
-      // Already gone is the outcome we wanted.
+    for (const file of [settingsFile(), baselineFile()]) {
+      try {
+        rmSync(file, { force: true });
+      } catch {
+        // Already gone is the outcome we wanted.
+      }
     }
     return statusOf({});
   });
 
+  ipcMain.handle('pt:sheets:setAuto', (_event, auto: boolean, everyMinutes?: number) => {
+    const settings = {
+      ...readSettings(),
+      auto: auto === true,
+      everyMinutes: Number.isFinite(everyMinutes) ? Math.max(5, Number(everyMinutes)) : undefined,
+    };
+    writeSettings(settings);
+    return statusOf(settings);
+  });
+
   ipcMain.handle(
     'pt:sheets:push',
-    async (_event, payload: { files: VaultFiles; meta: BackupMeta; readable: Grid[] }) => {
+    async (
+      _event,
+      payload: {
+        files: VaultFiles;
+        meta: BackupMeta;
+        readable: Grid[];
+        vault: string;
+        /** Overwrite even though somebody edited the spreadsheet. */
+        force?: boolean;
+      },
+    ) => {
       const settings = readSettings();
-      const report = await pushBackup(connect(settings), payload);
-      writeSettings({ ...settings, lastPushAt: payload.meta.generatedAt });
-      return report;
+      const transport = connect(settings);
+
+      // The rule that lets automatic push and editing in Sheets coexist: never
+      // overwrite a tab somebody has typed in since we last wrote it. Without
+      // this the timer wins every race and the edit is gone with no trace.
+      if (!payload.force && settings.fingerprints) {
+        const check = await untouchedSince(transport, settings.fingerprints);
+        if (!check.ok) return { blocked: true, edited: check.edited };
+      }
+
+      const report = await pushBackup(transport, payload);
+      writeFileSync(baselineFile(), JSON.stringify(payload.readable), 'utf8');
+      writeSettings({
+        ...settings,
+        lastPushAt: payload.meta.generatedAt,
+        fingerprints: report.fingerprints,
+        vault: payload.vault,
+      });
+      return { blocked: false, ...report };
     },
   );
+
+  /**
+   * Everything the renderer needs to work out what somebody changed: what we
+   * last wrote, and what is there now. The reasoning stays in the renderer,
+   * where the board is; this only fetches.
+   */
+  ipcMain.handle('pt:sheets:review', async () => {
+    const settings = readSettings();
+    const baseline = readBaseline();
+    const titles = Object.keys(settings.fingerprints ?? {});
+    const theirs = await readReadableTabs(connect(settings), titles);
+    return { baseline, theirs };
+  });
 
   ipcMain.handle('pt:sheets:pull', async () => pullBackup(connect(readSettings())));
 }
