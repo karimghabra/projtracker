@@ -5,19 +5,33 @@ task sequences and cell culture experiments — the scaffold inventory that work
 consumes, and the day-to-day surface that turns both into "what am I doing
 today".
 
-**[Download the Windows installer →](https://github.com/karimghabra/projtracker/releases/latest)**
+**[Download →](https://github.com/karimghabra/projtracker/releases/latest)**
 
-No Python, no Rust, no compilers. It installs per-user, so it does not need an
-administrator.
+| Platform | File |
+|---|---|
+| Windows | `Protracker-Setup-*.exe` |
+| macOS | `Protracker-*-arm64.dmg` (Apple silicon) or `-x64.dmg` (Intel) |
+| Linux | `Protracker-*.AppImage` or `.deb` |
+
+No Python, no Rust, no compilers. Windows and macOS install per-user, so no
+administrator is needed. The builds are unsigned, so Windows SmartScreen warns
+on first run (More info → Run anyway) and macOS needs right-click → Open once.
 
 ---
 
 ## What it does
 
-**Today** opens first: the day's list, a calendar, somewhere to jot a thought,
-and how each project is going. Pull work in from the ready pool, or just type
-what you need to do — a task need not belong to a project. Anything unfinished
-rolls forward until you deal with it.
+**Today** opens first: the day's list, a calendar, what is coming up, somewhere
+to jot a thought, and how each project is going. Pull work in from the ready
+pool, or just type what you need to do — a task need not belong to a project.
+Anything unfinished rolls forward until you deal with it, and so does anything
+dated that you missed.
+
+**The calendar is where you plan**, not just where you look. Click any day to
+open it: one field puts a task on that day, one button sets a reminder on it,
+and whatever is already there can be ticked or taken off. Reminders can run
+over several days — a span says "show me on these days" and expires; a one-day
+reminder keeps rolling forward until it is dealt with.
 
 **Projects** are a hierarchy: project → milestone → goal → tasks or an
 experiment. Every level takes a sequence number, and those numbers *are* the
@@ -27,10 +41,15 @@ everything stays editable afterwards.
 
 **The graph** draws that hierarchy and lets you link across it. Drag from one
 card onto another to make it wait — a goal in one project can gate a milestone
-in another. Cycles are refused with the loop spelled out. Line style says where
-each edge came from: one you drew, an order you set, or an order the app
-guessed. A guess is always overruled by a statement, and never causes a
-rejection.
+in another — or use the picker when the other end is three projects away.
+Cycles are refused with the loop spelled out. Line style says where each edge
+came from: one you drew, an order you set, or an order the app guessed. A guess
+is always overruled by a statement, and never causes a rejection.
+
+A dozen projects is a hundred cards, so most of the toolbar is about seeing
+less: filter to the projects you care about, collapse a band to its title, hide
+finished work, or focus one node and see only what it touches. Search dims the
+misses rather than removing them, so the board keeps its shape.
 
 **The spreadsheet** is the same board as a grid, editable the way a spreadsheet
 is: click a cell, Enter commits and moves down, Tab moves right.
@@ -99,27 +118,35 @@ pt ready                      # everything unblocked right now
 pt done "Draft geometry"      # complete it, and hear what it freed
 pt progress                   # which projects have gone quiet
 pt crosslink edc-nhs b12      # start a run; its steps land in the to-do list
+pt remind "Order collagen" --on 2026-08-14 --span 3
 pt import "My Tracker.xlsx" --preview
+pt export board.xlsx
 pt undo
 ```
 
 `pt help` lists everything. `--json` on any command.
 `PROTRACKER_VAULT` sets the folder; it defaults to `~/.protracker/vault`.
 
-## Bringing a workbook across
+## Workbooks, in and out
 
 Import matches columns by header name, so a sheet with only
 Project/Milestone/Goal/Task works. It previews what it will do before writing
 anything. Strikethrough reads as done; fill colour sets health and never
 completion, because something can be finished and still have gone badly.
 
+Export writes the same layout back out, for a supervisor, a collaborator or a
+report. It round-trips: cell culture definitions travel in one readable cell
+(`samples=24; seed=2026-08-03; days=21; phases=Proliferation@0,Differentiation@7`)
+and come back as experiments with their timelines intact.
+
 ## Building it
 
 ```bash
 npm install
 npm run dev          # the app in a browser, no Electron needed
-npm test             # 151 unit tests, including 60 simulated days of use
-npm run test:e2e     # 83 end-to-end tests
+npm test             # 166 unit tests, including 60 simulated days of use
+npm run test:e2e     # 170 end-to-end tests
+npm run icon         # regenerate the app icon
 npm run pack         # a Windows installer in release/
 ```
 
