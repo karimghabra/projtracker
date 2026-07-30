@@ -70,21 +70,35 @@ jobs:
       # write through the CLI, read the files back, and check they say what
       # they should.
       - name: Drive it
+        shell: bash
         run: |
+          set -euo pipefail
           export PROTRACKER_VAULT="$RUNNER_TEMP/vault"
-          node dist/cli/bin.js add project "Smoke test"
-          node dist/cli/bin.js add smoke-test "Milestone" --seq 1
-          node dist/cli/bin.js add smoke-test.milestone "Goal" --seq 1
-          node dist/cli/bin.js add smoke-test.milestone.goal "First" --seq 1
-          node dist/cli/bin.js add smoke-test.milestone.goal "Second" --seq 2
-          node dist/cli/bin.js ready --json | tee ready.json
-          test "$(node -e "console.log(require('./ready.json').length)")" = "1"
-          node dist/cli/bin.js done First
-          node dist/cli/bin.js ready --json | grep -q Second
-          grep -q 'status: done' "$PROTRACKER_VAULT/projects/smoke-test.pt"
-          node dist/cli/bin.js undo
-          grep -qv 'status: done' "$PROTRACKER_VAULT/projects/smoke-test.pt" || true
-          node dist/cli/bin.js scaffold type "Collagen sponge"
-          node dist/cli/bin.js scaffold add collagen-sponge 24
-          node dist/cli/bin.js crosslink edc-nhs b8 || node dist/cli/bin.js scaffolds
-          node dist/cli/bin.js where
+          pt() { node dist/cli/bin.js "$@"; }
+          project="$PROTRACKER_VAULT/projects/smoke-test.pt"
+
+          pt add project "Smoke test"
+          pt add smoke-test "Milestone" --seq 1
+          pt add smoke-test.milestone "Goal" --seq 1
+          pt add smoke-test.milestone.goal "First" --seq 1
+          pt add smoke-test.milestone.goal "Second" --seq 2
+
+          # Only the first task is actionable; the second waits on its rank.
+          test "$(pt ready --json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).length))')" = "1"
+
+          pt done First
+          pt ready --json | grep -q Second
+          grep -q 'status: done' "$project"
+
+          # Undo reverts the whole image, on disk as well as in memory.
+          pt undo
+          ! grep -q 'status: done' "$project"
+
+          # Starting a protocol run writes its steps into the planner file.
+          pt scaffold type "Collagen sponge"
+          batch=$(pt scaffold add collagen-sponge 24 --json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).id))')
+          pt crosslink edc-nhs "$batch"
+          grep -q 'sourceKind: protocol' "$PROTRACKER_VAULT/planner.pt"
+          pt runs | grep -q 'EDC/NHS'
+
+          pt where

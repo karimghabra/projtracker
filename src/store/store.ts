@@ -1,11 +1,12 @@
 /**
  * The store: loading state from a vault, writing it back, and undo.
  *
- * Undo reverts the whole image. Because state is one small plain-data value,
- * a snapshot is just a clone, and undo is a pointer move — it cannot
- * desynchronise from the data the way an inverse-operation log can, and it
- * cannot half-apply. The cost is memory proportional to history depth, which
- * for a graph of a few thousand nodes is nothing worth optimising.
+ * Undo reverts the whole image. Because state is one small plain-data value, a
+ * snapshot is just a copy — undo cannot desynchronise from the data the way an
+ * inverse-operation log can, and it cannot half-apply.
+ *
+ * Snapshots live in the vault rather than in memory, so undo survives closing
+ * the app and works from the CLI, where every command is a new process.
  */
 
 import type { State } from '../core/model.ts';
@@ -58,9 +59,29 @@ export function saveState(vault: Vault, state: State): { written: string[]; remo
   return { written, removed };
 }
 
-export interface HistoryEntry {
-  label: string;
-  state: State;
+/**
+ * Where the undo stack lives.
+ *
+ * History is persisted because the CLI is a fresh process every invocation — an
+ * in-memory stack would make `pt undo` mean "undo nothing", which is worse than
+ * not offering it. It also means closing the app no longer throws away the
+ * ability to take something back.
+ *
+ * These files are a cache, not truth: deleting the directory loses the ability
+ * to undo and nothing else, which is why they are JSON rather than the vault's
+ * own format. Nothing reads them but this file.
+ */
+const HISTORY_DIR = '.history/';
+const HISTORY_INDEX = `${HISTORY_DIR}index.json`;
+
+interface HistoryIndex {
+  past: { label: string; file: string }[];
+  future: { label: string; file: string }[];
+  next: number;
+}
+
+function emptyIndex(): HistoryIndex {
+  return { past: [], future: [], next: 1 };
 }
 
 /**
@@ -71,8 +92,7 @@ export interface HistoryEntry {
  */
 export class Store {
   private current: State;
-  private past: HistoryEntry[] = [];
-  private future: HistoryEntry[] = [];
+  private index: HistoryIndex;
   /** Set while a transaction is open; every mutation lands on this draft. */
   private batch: State | null = null;
 
@@ -81,6 +101,54 @@ export class Store {
     initial?: State,
   ) {
     this.current = initial ?? loadState(vault);
+    this.index = this.readIndex();
+  }
+
+  private readIndex(): HistoryIndex {
+    const raw = this.vault.read(HISTORY_INDEX);
+    if (!raw) return emptyIndex();
+    try {
+      const parsed = JSON.parse(raw) as HistoryIndex;
+      if (!Array.isArray(parsed.past) || !Array.isArray(parsed.future)) return emptyIndex();
+      return parsed;
+    } catch {
+      // A corrupt history costs the undo stack, never the data.
+      return emptyIndex();
+    }
+  }
+
+  private writeIndex(): void {
+    this.vault.write(HISTORY_INDEX, `${JSON.stringify(this.index)}\n`);
+  }
+
+  private snapshotFile(state: State): string {
+    const file = `${HISTORY_DIR}${String(this.index.next).padStart(5, '0')}.json`;
+    this.index.next += 1;
+    this.vault.write(file, JSON.stringify(state));
+    return file;
+  }
+
+  private readSnapshot(file: string): State | null {
+    const raw = this.vault.read(file);
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw) as State;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Record the state we are leaving, and forget any redo branch. */
+  private pushHistory(label: string, previous: State): void {
+    for (const entry of this.index.future) this.vault.remove(entry.file);
+    this.index.future = [];
+    this.index.past.push({ label, file: this.snapshotFile(previous) });
+
+    while (this.index.past.length > HISTORY_LIMIT) {
+      const dropped = this.index.past.shift();
+      if (dropped) this.vault.remove(dropped.file);
+    }
+    this.writeIndex();
   }
 
   /**
@@ -97,20 +165,20 @@ export class Store {
   }
 
   get canUndo(): boolean {
-    return this.past.length > 0;
+    return this.index.past.length > 0;
   }
 
   get canRedo(): boolean {
-    return this.future.length > 0;
+    return this.index.future.length > 0;
   }
 
   /** What undo would revert, for a button label that says what it does. */
   get undoLabel(): string | null {
-    return this.past.at(-1)?.label ?? null;
+    return this.index.past.at(-1)?.label ?? null;
   }
 
   get redoLabel(): string | null {
-    return this.future.at(-1)?.label ?? null;
+    return this.index.future.at(-1)?.label ?? null;
   }
 
   /**
@@ -125,9 +193,7 @@ export class Store {
     const draft = cloneState(this.current);
     const result = fn(draft);
 
-    this.past.push({ label, state: this.current });
-    if (this.past.length > HISTORY_LIMIT) this.past.shift();
-    this.future = [];
+    this.pushHistory(label, this.current);
     this.current = draft;
     this.persist();
     return result;
@@ -152,9 +218,7 @@ export class Store {
       this.batch = null;
     }
 
-    this.past.push({ label, state: this.current });
-    if (this.past.length > HISTORY_LIMIT) this.past.shift();
-    this.future = [];
+    this.pushHistory(label, this.current);
     this.current = draft;
     this.persist();
     return result;
@@ -163,25 +227,43 @@ export class Store {
   /** Replace state without recording history. For loading and for tests. */
   reset(state: State, persist = false): void {
     this.current = state;
-    this.past = [];
-    this.future = [];
+    for (const entry of [...this.index.past, ...this.index.future]) this.vault.remove(entry.file);
+    this.index = emptyIndex();
+    this.writeIndex();
     if (persist) this.persist();
   }
 
   undo(): string | null {
-    const entry = this.past.pop();
+    const entry = this.index.past.pop();
     if (!entry) return null;
-    this.future.push({ label: entry.label, state: this.current });
-    this.current = entry.state;
+    const restored = this.readSnapshot(entry.file);
+    if (!restored) {
+      // The snapshot is gone; drop the entry rather than pretend it worked.
+      this.writeIndex();
+      return null;
+    }
+
+    this.index.future.push({ label: entry.label, file: this.snapshotFile(this.current) });
+    this.vault.remove(entry.file);
+    this.current = restored;
+    this.writeIndex();
     this.persist();
     return entry.label;
   }
 
   redo(): string | null {
-    const entry = this.future.pop();
+    const entry = this.index.future.pop();
     if (!entry) return null;
-    this.past.push({ label: entry.label, state: this.current });
-    this.current = entry.state;
+    const restored = this.readSnapshot(entry.file);
+    if (!restored) {
+      this.writeIndex();
+      return null;
+    }
+
+    this.index.past.push({ label: entry.label, file: this.snapshotFile(this.current) });
+    this.vault.remove(entry.file);
+    this.current = restored;
+    this.writeIndex();
     this.persist();
     return entry.label;
   }
@@ -189,8 +271,8 @@ export class Store {
   /** Labels of what undo and redo would do, newest first. For a history menu. */
   history(): { past: string[]; future: string[] } {
     return {
-      past: this.past.map((e) => e.label).reverse(),
-      future: this.future.map((e) => e.label).reverse(),
+      past: this.index.past.map((e) => e.label).reverse(),
+      future: this.index.future.map((e) => e.label).reverse(),
     };
   }
 

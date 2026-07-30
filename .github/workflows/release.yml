@@ -51,6 +51,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # A build can succeed and still ship a blank window. Launch the real
+      # executable and make sure it is still alive and quiet before publishing.
+      - name: Verify the packaged app starts
+        run: node scripts/verify-package.mjs release/win-unpacked/Protracker.exe 12
+
       - name: Name the tag
         id: name
         shell: bash

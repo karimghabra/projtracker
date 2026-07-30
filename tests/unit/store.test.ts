@@ -201,6 +201,45 @@ describe('undo reverts the whole image', () => {
     expect(() => h.app.undo()).toThrow(/Nothing to undo/);
   });
 
+  it('survives the process that made the change', () => {
+    // The CLI is a new process every invocation, so an in-memory stack would
+    // make "undo" mean "undo nothing".
+    const h = harness();
+    const project = h.app.addProject('Persisted').id;
+    h.app.updateNode(project, { name: 'Renamed' });
+
+    const reopened = h.reload();
+    expect(reopened.history().canUndo).toBe(true);
+    expect(reopened.history().past[0]).toBe('Edit "Persisted"');
+
+    reopened.undo();
+    expect(reopened.tree()[0]!.name).toBe('Persisted');
+
+    const third = h.reload();
+    expect(third.history().canRedo).toBe(true);
+    third.redo();
+    expect(third.tree()[0]!.name).toBe('Renamed');
+  });
+
+  it('keeps history out of the data files', () => {
+    const h = harness();
+    h.app.addProject('P');
+    // Snapshots live under their own prefix and never appear as projects.
+    expect(h.vault.list('projects/')).toEqual(['projects/p.pt']);
+    expect(h.vault.list('.history/').length).toBeGreaterThan(0);
+    expect(h.reload().tree()).toHaveLength(1);
+  });
+
+  it('loses only the ability to undo when history is corrupt', () => {
+    const h = harness();
+    h.app.addProject('P');
+    h.vault.write('.history/index.json', 'not json at all');
+
+    const reopened = h.reload();
+    expect(reopened.tree()[0]!.name).toBe('P');
+    expect(reopened.history().canUndo).toBe(false);
+  });
+
   it('caps history without corrupting the newest entries', () => {
     const vault = new MemoryVault();
     const store = new Store(vault);
