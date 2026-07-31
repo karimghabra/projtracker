@@ -22,6 +22,7 @@ declare global {
       theirs: { title: string; rows: string[][] }[];
       edited?: boolean;
       pushes: number;
+      spreadsheetId?: string;
     };
   }
 }
@@ -40,10 +41,18 @@ window.protracker = {
       auto: window.__sheets.auto,
       everyMinutes: window.__sheets.everyMinutes,
       lastPushAt: window.__sheets.lastPushAt,
+      spreadsheetId: window.__sheets.spreadsheetId ?? '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms',
       vault: window.__sheets.vault,
     }),
     chooseKey: async () => ({ configured: true, auto: false, everyMinutes: 30 }),
-    setSpreadsheet: async () => ({ configured: true, auto: false, everyMinutes: 30 }),
+    setSpreadsheet: async (link) => {
+      window.__sheets.spreadsheetId = link;
+      // A different spreadsheet knows nothing about this board.
+      window.__sheets.baseline = [];
+      window.__sheets.theirs = [];
+      window.__sheets.edited = false;
+      return { configured: true, auto: false, everyMinutes: 30, spreadsheetId: link };
+    },
     setAuto: async (auto, everyMinutes) => {
       window.__sheets.auto = auto;
       if (everyMinutes) window.__sheets.everyMinutes = everyMinutes;
@@ -245,6 +254,30 @@ test.describe('reading edits back from the spreadsheet', () => {
     await openBackup(page);
     await expect(page.getByTestId('sheets-auto')).toBeChecked();
     await expect(page.getByTestId('sheets-interval')).toHaveValue('60');
+  });
+
+  test('says which spreadsheet it is pointing at, and can be pointed elsewhere', async ({ h }) => {
+    const { page } = h;
+    await board(page);
+    await openBackup(page);
+
+    await expect(page.getByTestId('sheets-link-out')).toHaveAttribute(
+      'href',
+      /spreadsheets\/d\/1BxiMVs0XRA5/,
+    );
+
+    await page.getByTestId('sheets-change').click();
+    await page.getByTestId('sheets-link').fill('https://docs.google.com/spreadsheets/d/second-one/edit');
+    await page.getByTestId('sheets-use').click();
+
+    // Pointed at the new one, and the board was sent to it straight away —
+    // otherwise the first "check for changes" would compare against a baseline
+    // belonging to a different spreadsheet entirely.
+    await expect(page.getByTestId('sheets-link-out')).toHaveAttribute('href', /second-one/);
+    await expect(page.getByText(/Backed up/)).toBeVisible();
+
+    await page.getByTestId('sheets-check').click();
+    await expect(page.getByTestId('sheets-no-changes')).toBeVisible();
   });
 
   test('keeps restoring visibly apart from merging', async ({ h }) => {

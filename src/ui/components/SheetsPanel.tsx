@@ -51,6 +51,8 @@ export function SheetsPanel({
   const { app, run, store } = useApp();
   const [blockedBy, setBlockedBy] = useState<string[] | null>(null);
   const [review, setReview] = useState<Review | null>(null);
+  const [changing, setChanging] = useState(false);
+  const [link, setLink] = useState('');
 
   const guard = async (label: string, work: () => Promise<void>) => {
     setBusy(label);
@@ -148,6 +150,69 @@ export function SheetsPanel({
             : 'Never backed up yet'}
         </div>
       </div>
+
+      {/*
+        Which spreadsheet this is pointing at, and how to point it somewhere
+        else. Obvious, and missing from the first version of this panel: the
+        only way to change it was to forget the credentials and set the whole
+        thing up again, key file and all.
+      */}
+      <div className="inline wrap" style={{ marginTop: 6, gap: 8 }}>
+        <a
+          className="mono"
+          style={{ fontSize: 12 }}
+          href={`https://docs.google.com/spreadsheets/d/${status.spreadsheetId}`}
+          target="_blank"
+          rel="noreferrer"
+          data-testid="sheets-link-out"
+        >
+          Open the spreadsheet
+        </a>
+        <button
+          className="btn subtle sm"
+          onClick={() => setChanging((open) => !open)}
+          data-testid="sheets-change"
+        >
+          {changing ? 'Keep this one' : 'Use a different spreadsheet…'}
+        </button>
+      </div>
+
+      {changing && (
+        <>
+          <div className="inline" style={{ marginTop: 8 }}>
+            <input
+              className="input grow"
+              placeholder="https://docs.google.com/spreadsheets/d/…"
+              value={link}
+              aria-label="Spreadsheet link"
+              data-testid="sheets-link"
+              onChange={(event) => setLink(event.target.value)}
+            />
+            <button
+              className="btn"
+              disabled={busy !== null || !link.trim()}
+              data-testid="sheets-use"
+              onClick={() =>
+                void guard('link', async () => {
+                  onStatus(await bridge.setSpreadsheet(link));
+                  setLink('');
+                  setChanging(false);
+                  // The new spreadsheet knows nothing about this board, so the
+                  // old baseline would make every row look like somebody else's
+                  // edit. Send the board out fresh instead.
+                  await backUp(true);
+                })
+              }
+            >
+              Use this spreadsheet
+            </button>
+          </div>
+          <span className="hint">
+            Paste the link from the address bar. Share it with the address above as an{' '}
+            <b>Editor</b> first, or the first backup will say it cannot reach it.
+          </span>
+        </>
+      )}
 
       {blockedBy && (
         <div className="callout danger" data-testid="sheets-blocked">
