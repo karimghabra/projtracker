@@ -29,10 +29,11 @@ async function fixture(): Promise<ImportPlan> {
   doneRow.getCell(4).font = { strike: true };
   main.addRow([2, '', '', 'Peer review']);
   const risky = main.addRow([3, '', '', 'Export STL', '', new Date(2026, 7, 14), 'cad, urgent']);
+  // Red in the lab's legend: will not be done this quarter.
   risky.getCell(4).fill = {
     type: 'pattern',
     pattern: 'solid',
-    fgColor: { argb: 'FFFFC000' },
+    fgColor: { argb: 'FFE06666' },
   };
   main.addRow([2, '', 'Print and finish', '']);
   main.addRow([1, '', '', 'Slice model']);

@@ -316,13 +316,33 @@ export function reconcile(input: ReconcileInput): { changes: SheetChange[]; prob
     }
 
     // ------------------------------------------------------------ new rows
+    //
+    // The ancestor columns are a staircase: a milestone names itself once and
+    // the rows beneath it leave the column empty. So the last name seen while
+    // scanning downwards is the one a blank cell means, and somebody typing a
+    // task straight under a goal — which is the obvious thing to do — leaves
+    // both cells blank and still lands in the right place. Rows are visited in
+    // sheet order, which is what makes this sound.
+    let lastMilestone = '';
+    let lastGoal = '';
+
     for (const { row, index } of them.body) {
+      const ownMilestone = cell(row, them.layout.at.Milestone);
+      const ownGoal = cell(row, them.layout.at.Goal);
+      if (ownMilestone && ownMilestone !== lastMilestone) {
+        lastMilestone = ownMilestone;
+        // A new milestone opens a fresh goal scope, or a task could inherit a
+        // goal belonging to the milestone above it.
+        lastGoal = '';
+      }
+      if (ownGoal) lastGoal = ownGoal;
+
       if (cell(row, them.layout.at.ID)) continue;
       const name = cell(row, them.layout.at.Task);
       if (!name) continue; // a spacer, or a container row, which has no task
 
-      const milestone = cell(row, them.layout.at.Milestone);
-      const goal = cell(row, them.layout.at.Goal);
+      const milestone = ownMilestone || lastMilestone;
+      const goal = ownGoal || lastGoal;
       const parent = findGoal(state, them, grid, milestone, goal);
       if (!parent) {
         changes.push({
@@ -374,7 +394,7 @@ export function reconcile(input: ReconcileInput): { changes: SheetChange[]; prob
         where: pathNameOf(state, id),
         from: node.name,
         nodeId: id,
-        reason: `Its row is no longer in the spreadsheet. Deleting takes ${
+        reason: `Its row is no longer in the Google spreadsheet. Deleting takes ${
           countInside(state, id) || 'nothing'
         } with it.`,
       });

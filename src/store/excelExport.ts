@@ -28,11 +28,27 @@ import { encodePeriod } from '../core/periods.ts';
 import type { BackupMeta, VaultFiles } from './backup.ts';
 import { BACKUP_HEADERS, BACKUP_SHEET, backupGrid } from './backup.ts';
 
+/**
+ * The lab's own colour legend, which the workbook is expected to match:
+ *
+ *   green   on track for the deadline
+ *   yellow  not begun, but will be done this quarter
+ *   red     will not be done this quarter
+ *   blue    off track
+ *
+ * with strikethrough for completed — so green struck through is "finished on
+ * time" and blue struck through is "finished, but it went badly". That is the
+ * pairing the two axes exist for: `health` is the colour and `status` is the
+ * strike, and neither is derivable from the other.
+ *
+ * `healthFromColour` in store/excel.ts reads these back. The two must agree, or
+ * a workbook stops surviving its own round trip.
+ */
 const HEALTH_FILL: Record<Health, string | undefined> = {
-  not_begun: undefined,
+  not_begun: 'FFFFD966',
   on_track: 'FF63BE7B',
-  at_risk: 'FFFFC000',
-  off_track: 'FFFF6B6B',
+  at_risk: 'FFE06666',
+  off_track: 'FF6FA8DC',
 };
 
 const HEADER_FILL = 'FFEFEFF3';
@@ -195,6 +211,43 @@ export function summaryRows(index: GraphIndex, today: string): BodyRow[] {
   return out;
 }
 
+/**
+ * What the colours mean, written into the workbook itself.
+ *
+ * A colour-coded sheet with no key is a sheet only its author can read, and this
+ * one gets sent to people who were not in the room. Both strikethrough rows are
+ * spelled out because "finished, but it went badly" is the pairing that most
+ * often gets read as a mistake.
+ */
+function writeLegend(sheet: Sheetish): void {
+  sheet.addRow([]);
+  const heading = sheet.addRow(['Legend']);
+  heading.getCell(1).font = { bold: true };
+
+  const entries: { health: Health; strike: boolean; text: string }[] = [
+    { health: 'on_track', strike: false, text: 'On track for the deadline' },
+    // Deliberately not "…and will be done this quarter". Yellow is where a task
+    // starts, and nothing here has worked out whether it will land in time —
+    // saying so would be a forecast the app has no basis for.
+    { health: 'not_begun', strike: false, text: 'Not begun' },
+    { health: 'at_risk', strike: false, text: 'Will not be done this quarter' },
+    { health: 'off_track', strike: false, text: 'Off track' },
+    { health: 'on_track', strike: true, text: 'Completed, by the deadline' },
+    { health: 'off_track', strike: true, text: 'Completed, but it went off track' },
+  ];
+
+  for (const entry of entries) {
+    const row = sheet.addRow(['', entry.text]);
+    const swatch = row.getCell(1);
+    const fill = HEALTH_FILL[entry.health];
+    if (fill) swatch.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill } };
+    if (entry.strike) {
+      swatch.value = 'done';
+      swatch.font = { strike: true };
+    }
+  }
+}
+
 function writeSummary(book: Bookish, index: GraphIndex, today: string): void {
   const sheet = book.addWorksheet('Summary');
   const title = sheet.addRow([`${SUMMARY_MARKER} — generated ${today}`]);
@@ -216,6 +269,8 @@ function writeSummary(book: Bookish, index: GraphIndex, today: string): void {
     const fill = HEALTH_FILL[body.node.health];
     if (fill) row.getCell(7).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill } };
   }
+
+  writeLegend(sheet);
 
   sheet.columns = [
     { width: 42 },
@@ -240,30 +295,30 @@ function writeSummary(book: Bookish, index: GraphIndex, today: string): void {
  * vault.
  */
 /**
- * Every row of one project's sheet, hierarchy filled down.
+ * Every row of one project's sheet, as a staircase.
  *
- * Filled down rather than left as a staircase: a manager who sorts or filters
- * in Excel should not end up with a row that says "Peer review" and nothing
- * about which project it belongs to. It is safe for the round trip because the
- * importer emits a level only when the name *changes*, so a repeated value
- * reads as continuation rather than a second milestone of the same name.
+ * Each name is written once, on its own row, and the rows beneath it leave that
+ * column empty — so the hierarchy reads as indentation rather than as the same
+ * milestone repeated down forty rows. It survives the round trip because the
+ * importer only starts a new level when it sees a name, and treats an empty
+ * cell as "still the one above" (see the milestone/goal tracking in
+ * `readWorkbook`). `reconcile` carries the last-seen names forward for the same
+ * reason, so a task typed straight under a goal still finds its parent.
  */
 export function projectRows(index: GraphIndex, project: Node): BodyRow[] {
   const out: BodyRow[] = [];
 
-  const write = (nodeId: string, milestone: string, goal: string) => {
+  const write = (nodeId: string) => {
     for (const child of childrenOf(index.state, nodeId)) {
       const isMilestone = child.kind === 'milestone';
       const isGoal = child.kind === 'goal';
-      const milestoneName = isMilestone ? child.name : milestone;
-      const goalName = isGoal ? child.name : isMilestone ? '' : goal;
       const progress = isContainerKind(child.kind) ? progressOf(index, child.id) : null;
 
       out.push({
         values: [
           child.seq,
-          milestoneName,
-          goalName,
+          isMilestone ? child.name : '',
+          isGoal ? child.name : '',
           isContainerKind(child.kind) ? '' : child.name,
           child.status === 'done' ? 'Done' : child.status === 'dropped' ? 'Dropped' : '',
           child.doneAt ? encodePeriod(child.doneAt.slice(0, 10), child.donePrecision ?? 'day') : '',
@@ -286,11 +341,11 @@ export function projectRows(index: GraphIndex, project: Node): BodyRow[] {
         banded: isMilestone,
       });
 
-      write(child.id, milestoneName, goalName);
+      write(child.id);
     }
   };
 
-  write(project.id, '', '');
+  write(project.id);
   return out;
 }
 

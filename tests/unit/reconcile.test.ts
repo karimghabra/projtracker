@@ -315,6 +315,38 @@ describe('rows that were not there before', () => {
     });
   });
 
+  /**
+   * The one the indented layout would otherwise have broken silently.
+   *
+   * With each level named once, a person adding a task under a goal types the
+   * task and leaves the Milestone and Goal cells alone — they are blank on every
+   * row down there. Reading the parent off that row alone finds nothing, and
+   * every hand-typed row becomes "unsupported" with the suite still green,
+   * because the two tests around this one fill those cells in by hand.
+   */
+  it('adds a task typed under a goal with the ancestor cells left blank', () => {
+    const { h, goal } = board();
+    const base = grids(h);
+    const grid = projectTab(copy(base));
+    const header = grid.rows[2]!;
+
+    // Insert directly beneath the last row belonging to that goal, the way
+    // somebody typing into the sheet would.
+    const row = new Array(header.length).fill('');
+    row[columnOf(grid, 'Seq')] = '3';
+    row[columnOf(grid, 'Task')] = 'Image the fibres';
+    grid.rows.push(row);
+
+    const { changes } = run(h, base, [{ title: grid.title, rows: grid.rows }]);
+    expect(changes).toHaveLength(1);
+    expect(changes[0]).toMatchObject({
+      sort: 'added',
+      recommended: true,
+      label: 'Image the fibres',
+      create: { parentId: goal, kind: 'task', name: 'Image the fibres', seq: 3 },
+    });
+  });
+
   it('refuses a new row with nowhere to go, rather than inventing a home', () => {
     const { h } = board();
     const base = grids(h);
@@ -355,7 +387,7 @@ describe('rows that have gone', () => {
       nodeId: crosslink,
       label: 'Crosslink',
     });
-    expect(changes[0]!.reason).toMatch(/no longer in the spreadsheet/);
+    expect(changes[0]!.reason).toMatch(/no longer in the Google spreadsheet/);
   });
 
   it('says nothing about something deleted in the app instead', () => {

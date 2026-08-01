@@ -188,9 +188,18 @@ function normalise(value: unknown): string {
 /**
  * Fill colour is a *health* axis, never a status.
  *
- * The legend in the original workbook pairs both green and blue with
- * strikethrough — "off track but completed" is a real combination — so colour
- * cannot be allowed to decide whether something is done.
+ * The legend pairs both green and blue with strikethrough — "off track but
+ * completed" is a real combination — so colour cannot be allowed to decide
+ * whether something is done.
+ *
+ * The legend itself, which `HEALTH_FILL` in store/excelExport.ts writes and this
+ * reads back:
+ *
+ *   green   on track            yellow  not begun, but will make the quarter
+ *   blue    off track           red     will not be done this quarter
+ *
+ * Classified by which channel leads rather than by matching exact colours,
+ * because a workbook filled in by hand over two years has a dozen greens in it.
  */
 function healthFromColour(argb: string | undefined): Health {
   if (!argb) return 'not_begun';
@@ -204,10 +213,11 @@ function healthFromColour(argb: string | undefined): Health {
   const min = Math.min(r, g, b);
   if (max - min < 24) return 'not_begun'; // grey or white: no statement made
 
+  if (b === max && b > r) return 'off_track';
   if (g === max && g > r) return 'on_track';
-  if (r === max && g > b) return max - min > 90 && g > 150 ? 'at_risk' : 'off_track';
-  if (r === max) return 'off_track';
-  if (b === max) return 'at_risk';
+  // Red leads. Yellow and amber carry a strong green channel too; a red that
+  // does not is the "will not be done" red.
+  if (r === max) return g >= r * 0.55 && b < r * 0.5 ? 'not_begun' : 'at_risk';
   return 'not_begun';
 }
 
@@ -215,9 +225,16 @@ function healthFromText(text: string): Health | undefined {
   const value = normalise(text);
   if (!value) return undefined;
   if (value.includes('ontrack') || value === 'green' || value === 'good') return 'on_track';
-  if (value.includes('atrisk') || value === 'amber' || value === 'yellow') return 'at_risk';
-  if (value.includes('offtrack') || value === 'red' || value.includes('wontfinish')) return 'off_track';
-  if (value.includes('notbegun') || value.includes('notstarted')) return 'not_begun';
+  if (value.includes('offtrack') || value === 'blue') return 'off_track';
+  if (value.includes('atrisk') || value === 'red' || value.includes('wontfinish')) return 'at_risk';
+  if (
+    value.includes('notbegun') ||
+    value.includes('notstarted') ||
+    value === 'yellow' ||
+    value === 'amber'
+  ) {
+    return 'not_begun';
+  }
   return undefined;
 }
 

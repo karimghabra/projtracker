@@ -118,7 +118,7 @@ describe('writing a workbook', () => {
     expect(found).toBe(true);
   });
 
-  it('fills the hierarchy down so a filtered row still says where it belongs', async () => {
+  it('names each level once and indents beneath it, rather than repeating it', async () => {
     const h = harness();
     sampleBoard(h);
 
@@ -126,17 +126,37 @@ describe('writing a workbook', () => {
     await book.xlsx.load((await exportWorkbook(h.app.state, '2026-07-30')).buffer as ArrayBuffer);
     const sheet = projectSheets(book)[0]!;
 
-    // The first thing anyone does with a spreadsheet is sort or filter it, and
-    // a staircase layout strands every row that is not a heading.
-    let checked = false;
-    sheet.eachRow((row, n) => {
-      if (n < 4) return;
-      if (String(row.getCell(4).value ?? '') !== 'Peer review') return;
-      checked = true;
-      expect(row.getCell(2).value).toBe('Fabrication');
-      expect(row.getCell(3).value).toBe('CAD design');
-    });
-    expect(checked).toBe(true);
+    const cellsOf = (name: string) => {
+      let found: [unknown, unknown] | undefined;
+      sheet.eachRow((row, n) => {
+        if (n < 4) return;
+        if (String(row.getCell(4).value ?? '') !== name) return;
+        found = [row.getCell(2).value, row.getCell(3).value];
+      });
+      return found;
+    };
+
+    // A task carries its own name and nothing else: the milestone and goal are
+    // named on their own rows above it, which is what makes the sheet read as a
+    // hierarchy instead of a wall of repeated text.
+    const [milestone, goal] = cellsOf('Peer review')!;
+    expect(milestone ?? '').toBe('');
+    expect(goal ?? '').toBe('');
+
+    // And the levels themselves are each written exactly once.
+    const namesIn = (column: number) => {
+      const seen: string[] = [];
+      sheet.eachRow((row, n) => {
+        if (n < 4) return;
+        const value = String(row.getCell(column).value ?? '');
+        if (value) seen.push(value);
+      });
+      return seen;
+    };
+    expect(namesIn(2)).toEqual([...new Set(namesIn(2))]);
+    expect(namesIn(2)).toContain('Fabrication');
+    expect(namesIn(3)).toContain('CAD design');
+
     expect(sheet.autoFilter).toBeTruthy();
   });
 
@@ -201,11 +221,51 @@ describe('writing a workbook', () => {
     });
 
     // Done is struck. Completing it also set it on-track, so it is green too —
-    // the two axes are independent and both survive.
+    // green struck through is "finished by the deadline", the legend's own row.
     expect(byName.get('Draft geometry')).toEqual({ strike: true, fill: 'FF63BE7B' });
-    // At risk is coloured and emphatically not struck: colour never means done.
-    expect(byName.get('Peer review')).toEqual({ strike: false, fill: 'FFFFC000' });
-    expect(byName.get('Export STL')).toEqual({ strike: false, fill: undefined });
+    // "Will not be done this quarter" is red, and emphatically not struck:
+    // colour never means done.
+    expect(byName.get('Peer review')).toEqual({ strike: false, fill: 'FFE06666' });
+    // Not begun is yellow — a stated position, not an absence of one.
+    expect(byName.get('Export STL')).toEqual({ strike: false, fill: 'FFFFD966' });
+  });
+
+  it('writes the whole colour legend, and reads every colour back as itself', async () => {
+    const h = harness();
+    const b = sampleBoard(h);
+
+    // One row per colour in the legend, plus the two struck-through pairings.
+    h.app.updateNode(b.draft, { health: 'on_track' });
+    h.app.complete(b.draft);
+    h.app.updateNode(b.review, { health: 'off_track' });
+    h.app.complete(b.review);
+    h.app.updateNode(b.exportStl, { health: 'at_risk' });
+
+    const bytes = (await exportWorkbook(h.app.state, '2026-07-30')).buffer as ArrayBuffer;
+
+    const book = new ExcelJS.Workbook();
+    await book.xlsx.load(bytes);
+    const summary = book.getWorksheet('Summary')!;
+    let legend = '';
+    summary.eachRow((row) => {
+      const first = String(row.getCell(1).value ?? '');
+      const second = String(row.getCell(2).value ?? '');
+      if (first === 'Legend' || second) legend += `${first}|${second}\n`;
+    });
+    expect(legend).toContain('On track for the deadline');
+    expect(legend).toContain('Will not be done this quarter');
+    expect(legend).toContain('Completed, but it went off track');
+
+    // The round trip: what the export paints, the import reads back unchanged.
+    // Colour survives as health, strikethrough as completion, and the two never
+    // contaminate each other — a struck blue row is done AND off track.
+    const plan = readWorkbook(book as never);
+    const rows = plan.sheets.flatMap((s) => s.rows);
+    const row = (name: string) => rows.find((r) => r.name === name);
+
+    expect(row('Draft geometry')).toMatchObject({ health: 'on_track', done: true });
+    expect(row('Peer review')).toMatchObject({ health: 'off_track', done: true });
+    expect(row('Export STL')).toMatchObject({ health: 'at_risk', done: false });
   });
 
   it('names the file after the day it was written', () => {
