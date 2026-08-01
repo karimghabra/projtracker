@@ -50,7 +50,11 @@ export interface DesktopBridge {
   listFiles(prefix: string): string[];
   removeFile(path: string): void;
   vaultPath(): string;
-  chooseVault(): string | null;
+  /** Something worth saying about the vault's location, or null. */
+  vaultNotice(): string | null;
+  /** Null when cancelled; `refused` when the folder could not be used. */
+  chooseVault(): Promise<{ path: string; refused?: string } | null>;
+  revealVault(): Promise<boolean>;
   /** Absent in the browser build, which has no key and no socket. */
   sheets?: SheetsBridge;
 }

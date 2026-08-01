@@ -15,6 +15,14 @@ import type { Fingerprints, Grid } from '../sync/backupSync.ts';
 import { pullBackup, pushBackup, readReadableTabs, untouchedSince } from '../sync/backupSync.ts';
 import type { ServiceAccount } from '../sync/sheets.ts';
 import { GoogleSheets, parseServiceAccount, parseSpreadsheetId } from '../sync/sheets.ts';
+import {
+  copyVaultInto,
+  ensureVault,
+  judgeTarget,
+  readStoredVault,
+  startupVault,
+  writeStoredVault,
+} from './vaultLocation.ts';
 
 /**
  * The directory this file was loaded from.
@@ -29,13 +37,24 @@ const isDev = !app.isPackaged;
 
 let vaultRoot = '';
 
+/**
+ * One sentence about where the vault is, when there is something to say: the
+ * chosen folder had gone, or it has just been moved. Held in the main process
+ * so it survives the renderer reload that follows a move — which is precisely
+ * the moment the user most wants to be told what happened to their files.
+ */
+let vaultNotice: string | null = null;
+
 function defaultVault(): string {
   return join(app.getPath('userData'), 'vault');
 }
 
-function ensureVault(path: string): string {
-  mkdirSync(path, { recursive: true });
-  return path;
+/**
+ * The chosen vault path, beside the app rather than inside the vault — a vault
+ * cannot hold the address of where it is.
+ */
+function vaultLocationFile(): string {
+  return join(app.getPath('userData'), 'vault-location.json');
 }
 
 /**
@@ -293,6 +312,17 @@ function registerHandlers(): void {
     event.returnValue = vaultRoot;
   });
 
+  ipcMain.on('pt:vaultNotice', (event) => {
+    event.returnValue = vaultNotice;
+  });
+
+  /**
+   * Point the app at a different folder.
+   *
+   * A refusal comes back as data rather than as a thrown error: `ipcMain.handle`
+   * wraps a throw in "Error invoking remote method …" before the renderer sees
+   * it, and these messages are written to be read by the user as they are.
+   */
   ipcMain.handle('pt:chooseVault', async () => {
     const result = await dialog.showOpenDialog({
       title: 'Choose a folder for your Protracker vault',
@@ -300,8 +330,26 @@ function registerHandlers(): void {
       defaultPath: vaultRoot,
     });
     if (result.canceled || !result.filePaths[0]) return null;
-    vaultRoot = ensureVault(result.filePaths[0]);
-    return vaultRoot;
+
+    const target = resolve(result.filePaths[0]);
+    const verdict = judgeTarget(vaultRoot, target);
+    if (verdict.kind === 'refuse') return { path: vaultRoot, refused: verdict.message };
+
+    const from = vaultRoot;
+    ensureVault(target);
+    const copied = verdict.kind === 'copy' ? copyVaultInto(from, target) : [];
+
+    // Written before the switch: if this throws, the app is still pointing at a
+    // folder whose path is the one on disk, rather than at one it will forget.
+    writeStoredVault(vaultLocationFile(), target);
+    vaultRoot = target;
+
+    vaultNotice =
+      verdict.kind === 'copy'
+        ? `Your vault is now ${target}. ${copied.length} ${copied.length === 1 ? 'file was' : 'files were'} copied there. Nothing was deleted — the old folder, ${from}, is exactly as it was. Delete it yourself once you are happy everything arrived.`
+        : `Your vault is now ${target}, which already held one, so nothing was copied. The folder you were using, ${from}, has not been touched.`;
+
+    return { path: target, refused: undefined };
   });
 
   ipcMain.handle('pt:revealVault', async () => {
@@ -356,7 +404,18 @@ if (!single) {
   });
 
   void app.whenReady().then(() => {
-    vaultRoot = ensureVault(defaultVault());
+    // The folder the user chose last time, if it is still there. A stored path
+    // that has gone — an unplugged drive, a folder renamed from underneath us —
+    // falls back to the default and says so, rather than opening an empty vault
+    // and looking exactly like it lost two years of work.
+    const chosen = startupVault(readStoredVault(vaultLocationFile()), defaultVault());
+    vaultRoot = ensureVault(chosen.path);
+    if (chosen.missing) {
+      vaultNotice =
+        `${chosen.missing} is not there any more, so Protracker has opened the default folder, ` +
+        `${vaultRoot}. Your work is still in the other folder — reconnect the drive, or point ` +
+        'Protracker back at it from Settings.';
+    }
     registerHandlers();
     registerSheetsHandlers();
     createWindow();

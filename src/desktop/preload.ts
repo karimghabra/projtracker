@@ -33,7 +33,20 @@ contextBridge.exposeInMainWorld('protracker', {
     ipcRenderer.sendSync('pt:remove', path);
   },
   vaultPath: (): string => ipcRenderer.sendSync('pt:vaultPath'),
-  chooseVault: (): Promise<string | null> => ipcRenderer.invoke('pt:chooseVault'),
+  /**
+   * One sentence about where the vault is, when there is something to say —
+   * survives the reload that follows a move, which is exactly when the user
+   * wants telling what happened to their files.
+   */
+  vaultNotice: (): string | null => ipcRenderer.sendSync('pt:vaultNotice'),
+  /**
+   * Null when the picker was cancelled. Otherwise the path now in use, and
+   * `refused` when the folder could not be taken — a refusal comes back as data
+   * because a thrown error reaches the renderer wrapped in scaffolding, and
+   * these messages are written to be read as they are.
+   */
+  chooseVault: (): Promise<{ path: string; refused?: string } | null> =>
+    ipcRenderer.invoke('pt:chooseVault'),
   revealVault: (): Promise<boolean> => ipcRenderer.invoke('pt:revealVault'),
 
   sheets: {
