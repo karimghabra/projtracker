@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { describeExperiment, endDateOf, experimentStatus, stagesOf, validateExperiment } from '@core/experiments.ts';
 import { formatOffset, scheduleRun, totalHours } from '@core/protocols.ts';
-import { harness, sampleBoard } from './helpers.ts';
+import { expectThrows, harness, sampleBoard } from './helpers.ts';
 
 describe('experiment timelines', () => {
   const def = {
@@ -170,6 +170,130 @@ describe('protocol scheduling', () => {
   });
 });
 
+/**
+ * Protocols as records, rather than as the timetable the block above tests.
+ * The CLI and the UI both build a protocol the same way — create it empty, then
+ * hand the whole step list back for every edit — so these cover the verbs at
+ * the ends of that: making one, deleting one, and adding or removing a single
+ * step without disturbing the ids a live run is keyed against.
+ */
+describe('protocols as records', () => {
+  /** One batch, so a run can be started against a protocol. */
+  function batch(h: ReturnType<typeof harness>): string {
+    const { id: type } = h.app.addScaffoldType('Collagen sponge');
+    return h.app.addBatch(type, 6).id;
+  }
+
+  it('names a new protocol after itself and starts it empty', () => {
+    const h = harness();
+    const { id } = h.app.addProtocol('  Gentle EDC  ', ' EDC/NHS ', [], 'Half strength.');
+
+    expect(id).toBe('gentle-edc');
+    const made = h.app.state.protocols.find((p) => p.id === id)!;
+    expect(made).toMatchObject({ name: 'Gentle EDC', agent: 'EDC/NHS', notes: 'Half strength.' });
+    expect(made.steps).toEqual([]);
+    // An empty protocol is a heading, not a plan, and says so rather than
+    // starting a run with nothing in it.
+    expect(() => h.app.startRun(id, [batch(h)])).toThrow(/no steps yet/);
+  });
+
+  it('numbers the steps it is handed, and keeps them through a reload', () => {
+    const h = harness();
+    const { id } = h.app.addProtocol('Two step', 'Genipin', [
+      { name: 'Immerse', offsetHours: 0 },
+      { name: 'Wash', offsetHours: 4, durationHours: 1 },
+    ]);
+    expect(h.app.state.protocols.find((p) => p.id === id)!.steps.map((s) => s.id)).toEqual(['s1', 's2']);
+
+    expect(h.reload().state.protocols.find((p) => p.id === id)!.steps[1]).toMatchObject({
+      id: 's2',
+      name: 'Wash',
+      offsetHours: 4,
+      durationHours: 1,
+    });
+  });
+
+  it('refuses a nameless protocol, and never reuses a name as an id', () => {
+    const h = harness();
+    expect(() => h.app.addProtocol('   ', 'EDC/NHS')).toThrow(/needs a name/);
+    expect(h.app.addProtocol('Ethanol series', 'Ethanol').id).toBe('ethanol-series');
+    expect(h.app.addProtocol('Ethanol series', 'Ethanol').id).toBe('ethanol-series-2');
+  });
+
+  it('is one undo step, like every other verb', () => {
+    const h = harness();
+    const before = h.app.state.protocols.length;
+    h.app.addProtocol('Scratch', 'None');
+    h.app.undo();
+    expect(h.app.state.protocols).toHaveLength(before);
+  });
+
+  it('deletes one nothing is using', () => {
+    const h = harness();
+    const { id } = h.app.addProtocol('Scratch', 'None', [{ name: 'Immerse', offsetHours: 0 }]);
+    expect(h.app.deleteProtocol(id).message).toBe('Deleted "Scratch".');
+    expect(h.app.state.protocols.find((p) => p.id === id)).toBeUndefined();
+    expect(h.reload().state.protocols.find((p) => p.id === id)).toBeUndefined();
+  });
+
+  it('will not delete one out from under a live run', () => {
+    const h = harness('2026-07-30T09:00');
+    const run = h.app.startRun('edc-nhs', [batch(h)]).id;
+
+    const failure = expectThrows(() => h.app.deleteProtocol('edc-nhs'));
+    expect(failure.code).toBe('conflict');
+    expect(failure.message).toContain('1 run(s) are using "EDC/NHS crosslinking".');
+    // Refusing changed nothing: the run still has every step to tick.
+    expect(h.app.inventory().runs[0]!.total).toBe(8);
+
+    // Cancelled is not live, so the protocol goes.
+    h.app.cancelRun(run);
+    expect(() => h.app.deleteProtocol('edc-nhs')).not.toThrow();
+  });
+
+  it('refuses an id it does not have rather than deleting nothing quietly', () => {
+    const h = harness();
+    expect(expectThrows(() => h.app.deleteProtocol('no-such-protocol')).code).toBe('not-found');
+  });
+
+  it('appends a step without renumbering the ones already there', () => {
+    const h = harness('2026-07-30T09:00');
+    const run = h.app.startRun('edc-nhs', [batch(h)]).id;
+    h.app.tickRunStep(run, 's3', true);
+
+    const steps = h.app.state.protocols.find((p) => p.id === 'edc-nhs')!.steps;
+    h.app.updateProtocol('edc-nhs', { steps: [...steps, { name: 'Second rinse', offsetHours: 7 }] });
+
+    const after = h.app.state.protocols.find((p) => p.id === 'edc-nhs')!;
+    const byId = new Map(after.steps.map((s) => [s.id, s.name]));
+    for (const old of steps) expect(byId.get(old.id)).toBe(old.name);
+    // It sorts into the middle by its offset but takes an id above every one
+    // used so far, not the position it landed in.
+    expect(after.steps.map((s) => s.name).indexOf('Second rinse')).toBe(6);
+    expect(after.steps.find((s) => s.name === 'Second rinse')!.id).toBe('s9');
+    expect(h.app.state.runs.find((r) => r.id === run)!.completedStepIds).toEqual(['s3']);
+  });
+
+  it('removes one step by id and leaves every other step keyed as it was', () => {
+    const h = harness('2026-07-30T09:00');
+    const run = h.app.startRun('edc-nhs', [batch(h)]).id;
+    h.app.tickRunStep(run, 's3', true);
+
+    const steps = h.app.state.protocols.find((p) => p.id === 'edc-nhs')!.steps;
+    h.app.updateProtocol('edc-nhs', { steps: steps.filter((s) => s.id !== 's2') });
+
+    const after = h.app.state.protocols.find((p) => p.id === 'edc-nhs')!;
+    expect(after.steps.map((s) => s.id)).toEqual(['s1', 's3', 's4', 's5', 's6', 's7', 's8']);
+    // The tick stayed on the step it was put on, and the run lost one step.
+    expect(h.app.state.runs.find((r) => r.id === run)!.completedStepIds).toEqual(['s3']);
+    const scheduled = h.app.inventory().runs[0]!;
+    expect(scheduled.total).toBe(7);
+    expect(scheduled.steps.filter((s) => s.done).map((s) => s.name)).toEqual([
+      steps.find((s) => s.id === 's3')!.name,
+    ]);
+  });
+});
+
 describe('scaffold inventory', () => {
   it('tracks fabrication and stock', () => {
     const h = harness('2026-07-30T09:00');
@@ -235,6 +359,17 @@ describe('crosslinking runs', () => {
     expect(h.app.todayList().items.map((i) => i.title)).toContain('Lyophilise');
   });
 
+  it('dates a run typed up afterwards from when it actually started', () => {
+    const { h, a } = setup(); // the clock says 09:00 on the 30th.
+    h.app.startRun('edc-nhs', [a], '2026-07-29T06:00');
+
+    const run = h.app.inventory().runs[0]!;
+    expect(run.startedAt).toBe('2026-07-29T06:00');
+    expect(run.steps[0]!.at).toBe('2026-07-29T06:00');
+    // Yesterday's steps are due, not quietly gone.
+    expect(run.steps.filter((s) => s.overdue).length).toBeGreaterThan(0);
+  });
+
   it('moves the batches through their lifecycle', () => {
     const { h, a, b } = setup();
     const run = h.app.startRun('genipin', [a, b]).id;
@@ -297,6 +432,50 @@ describe('crosslinking runs', () => {
     });
     expect(h.app.inventory().runs[0]!.steps).toHaveLength(2);
     expect(before).not.toBe(2);
+  });
+
+  it('keeps a ticked step ticked when the protocol is edited around it', () => {
+    const { h, a } = setup();
+    const run = h.app.startRun('edc-nhs', [a]).id;
+    const steps = h.app.state.protocols.find((p) => p.id === 'edc-nhs')!.steps;
+    const second = steps[1]!;
+    h.app.tickRunStep(run, second.id, true);
+
+    // Drop the first step. Positional renumbering would slide the tick onto
+    // whichever step inherited the id, which is somebody's real scaffolds.
+    h.app.updateProtocol('edc-nhs', { steps: steps.slice(1) });
+
+    const after = h.app.state.runs.find((r) => r.id === run)!;
+    expect(after.completedStepIds).toEqual([second.id]);
+    const scheduled = h.app.inventory().runs[0]!.steps;
+    expect(scheduled.filter((s) => s.done).map((s) => s.name)).toEqual([second.name]);
+  });
+
+  it('never hands a deleted step id to a new one', () => {
+    const { h } = setup();
+    const original = h.app.state.protocols.find((p) => p.id === 'edc-nhs')!.steps;
+    const keep = original.slice(0, 2);
+
+    h.app.updateProtocol('edc-nhs', {
+      steps: [...keep, { name: 'A brand new step', offsetHours: 99 }],
+    });
+
+    const after = h.app.state.protocols.find((p) => p.id === 'edc-nhs')!.steps;
+    const fresh = after.find((s) => s.name === 'A brand new step')!;
+    expect(original.map((s) => s.id)).not.toContain(fresh.id);
+    expect(new Set(after.map((s) => s.id)).size).toBe(after.length);
+  });
+
+  it('saving an unchanged protocol changes nothing at all', () => {
+    const { h, a } = setup();
+    const run = h.app.startRun('edc-nhs', [a]).id;
+    h.app.tickRunStep(run, 's3', true);
+    const before = h.app.state.protocols.find((p) => p.id === 'edc-nhs')!.steps;
+
+    h.app.updateProtocol('edc-nhs', { steps: before });
+
+    expect(h.app.state.protocols.find((p) => p.id === 'edc-nhs')!.steps).toEqual(before);
+    expect(h.app.state.runs.find((r) => r.id === run)!.completedStepIds).toEqual(['s3']);
   });
 
   it('starts with editable defaults for both agents', () => {

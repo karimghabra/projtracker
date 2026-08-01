@@ -12,7 +12,7 @@
  */
 
 import type { Clock, DateOnly, Stamp } from '../core/dates.ts';
-import { addDays, dateOf, isDateOnly, systemClock } from '../core/dates.ts';
+import { addDays, dateOf, isDateOnly, isStamp, systemClock } from '../core/dates.ts';
 import type {
   ExperimentDef,
   Health,
@@ -79,6 +79,20 @@ import {
 } from './views.ts';
 
 export type ImportAction = 'create' | 'merge' | 'skip';
+
+/**
+ * A step as an editor hands it back. An `id` means "this is the step you gave
+ * me"; its absence means "this one is new". Anything else would make an edit
+ * indistinguishable from a delete plus a create, which is what runs record
+ * their progress against.
+ */
+export type ProtocolStepPatch = Omit<ProtocolStep, 'id'> & { id?: string };
+
+/** The numeric half of an `s<n>` step id, or 0 for anything unrecognised. */
+function stepNumber(id: string): number {
+  const n = Number(/^s(\d+)$/.exec(id)?.[1]);
+  return Number.isFinite(n) ? n : 0;
+}
 
 export interface ImportPreview {
   sheets: {
@@ -571,6 +585,45 @@ export class App {
     });
   }
 
+  /**
+   * Close out a container by finishing the work inside it.
+   *
+   * A project is not a thing that can be ticked on its own: §2.4 makes a
+   * container's completion derived from its contents, which is what stops "done"
+   * from being a claim nobody checked. So this writes nothing onto the container
+   * — it completes every unfinished leaf beneath it and lets the container
+   * follow. One decision by the user, so one undo step.
+   */
+  completeSubtree(id: NodeId, when?: string): Delta & { completed: number } {
+    const node = this.state.nodes[id];
+    if (!node) throw notFound('node', id);
+    if (!isContainerKind(node.kind)) {
+      throw notAllowed(`"${node.name}" is a ${node.kind}; complete it directly.`);
+    }
+
+    const leaves = descendantsOf(this.state, id).filter(
+      (n) => !isContainerKind(n.kind) && n.status !== 'dropped',
+    );
+    if (!leaves.length) {
+      throw invalid(`"${node.name}" has nothing in it to complete.`);
+    }
+
+    const open = leaves.filter((n) => n.status !== 'done');
+    if (!open.length) throw invalid(`"${node.name}" is already complete.`);
+
+    return this.transaction(`Complete "${node.name}"`, (app) => {
+      for (const leaf of open) app.complete(leaf.id, when);
+      return {
+        ok: true as const,
+        message:
+          open.length === 1
+            ? `Completed "${open[0]!.name}", which finishes "${node.name}".`
+            : `Completed ${open.length} items, which finishes "${node.name}".`,
+        completed: open.length,
+      };
+    });
+  }
+
   private setStatus(id: NodeId, status: StoredStatus, verb: string): Delta {
     const node = this.state.nodes[id];
     if (!node) throw notFound('node', id);
@@ -594,10 +647,6 @@ export class App {
     });
   }
 
-  /**
-   * Complete a task, and report what it freed. The count is the point: it turns
-   * ticking something off from bookkeeping into feedback.
-   */
   /**
    * Complete a task, and report what it freed. The count is the point: it turns
    * ticking something off from bookkeeping into feedback.
@@ -1175,7 +1224,7 @@ export class App {
     });
   }
 
-  updateProtocol(id: string, patch: { name?: string; agent?: string; notes?: string; steps?: Omit<ProtocolStep, 'id'>[] }): Delta {
+  updateProtocol(id: string, patch: { name?: string; agent?: string; notes?: string; steps?: ProtocolStepPatch[] }): Delta {
     const protocol = this.state.protocols.find((p) => p.id === id);
     if (!protocol) throw notFound('protocol', id);
 
@@ -1190,10 +1239,25 @@ export class App {
       if (patch.steps !== undefined) {
         if (patch.steps.some((s) => !s.name.trim())) throw invalid('Every step needs a name.');
         if (patch.steps.some((s) => s.offsetHours < 0)) throw invalid('Step offsets cannot be negative.');
+
+        // A step id is an identity, not a position. Runs record which steps are
+        // done by id, and reminders are keyed `run-<runId>-<stepId>`, so
+        // renumbering by position would silently hand one step's completion to
+        // whichever step landed in its slot.
+        const known = new Set(target.steps.map((s) => s.id));
+        let nextStep = target.steps.reduce((max, s) => Math.max(max, stepNumber(s.id)), 0);
+        const taken = new Set<string>();
+
         target.steps = patch.steps
-          .map((step, i) => ({ ...step, name: step.name.trim(), id: `s${i + 1}` }))
-          .sort((a, b) => a.offsetHours - b.offsetHours)
-          .map((step, i) => ({ ...step, id: `s${i + 1}` }));
+          .map((step) => {
+            const keep = step.id !== undefined && known.has(step.id) && !taken.has(step.id);
+            // A fresh id is allocated above every id this protocol has used, so
+            // a deleted step's id is never handed to its replacement.
+            const stepId = keep ? step.id! : `s${++nextStep}`;
+            taken.add(stepId);
+            return { ...step, name: step.name.trim(), id: stepId };
+          })
+          .sort((a, b) => a.offsetHours - b.offsetHours);
       }
       return { ok: true as const, message: 'Protocol updated.' };
     });
@@ -1212,15 +1276,34 @@ export class App {
   }
 
   /**
-   * Start a crosslinking run. This is the moment the reminder system earns its
-   * keep: every step of the protocol becomes a dated item in the to-do list,
-   * automatically, and the batches move to `crosslinking`.
+   * Start a run. This is the moment the reminder system earns its keep: every
+   * step of the protocol becomes a dated item in the to-do list, automatically.
+   *
+   * A run acts on scaffold batches, or on a task, or on both. Crosslinking is
+   * the batch case and moves them to `crosslinking`; a dialysis or a thread
+   * preparation names the task it is part of and touches no inventory at all.
+   * One of the two is required, because a run belonging to nothing is a set of
+   * reminders nobody can trace back.
    */
-  startRun(protocolId: string, batchIds: string[], startedAt?: Stamp): Delta & { id: string; reminders: number } {
+  startRun(
+    protocolId: string,
+    batchIds: string[],
+    startedAt?: Stamp,
+    nodeId?: NodeId,
+  ): Delta & { id: string; reminders: number } {
     const protocol = this.state.protocols.find((p) => p.id === protocolId);
     if (!protocol) throw notFound('protocol', protocolId);
     if (!protocol.steps.length) throw invalid(`"${protocol.name}" has no steps yet.`);
-    if (!batchIds.length) throw invalid('Select at least one batch to crosslink.');
+    if (!batchIds.length && !nodeId) {
+      throw invalid('Pick some scaffolds to run this on, or start it from a task.');
+    }
+    if (nodeId && !this.state.nodes[nodeId]) throw notFound('node', nodeId);
+    // Every step's time is this plus an offset, so unreadable text here does not
+    // fail — it writes a run whose every reminder is dated NaN. The UI cannot
+    // produce one (it uses a picker); the CLI's --at can.
+    if (startedAt !== undefined && !isStamp(startedAt)) {
+      throw invalid(`Cannot read "${startedAt}" as a time. Use YYYY-MM-DDTHH:MM.`);
+    }
 
     for (const batchId of batchIds) {
       const batch = this.state.batches.find((b) => b.id === batchId);
@@ -1236,7 +1319,14 @@ export class App {
 
     return this.mutate(`Start ${protocol.name}`, (draft) => {
       const id = allocateId(draft, 'x');
-      draft.runs.push({ id, protocolId, batchIds: [...batchIds], startedAt: start, completedStepIds: [] });
+      draft.runs.push({
+        id,
+        protocolId,
+        batchIds: [...batchIds],
+        nodeId,
+        startedAt: start,
+        completedStepIds: [],
+      });
       for (const batchId of batchIds) {
         const batch = draft.batches.find((b) => b.id === batchId)!;
         batch.state = 'crosslinking';
@@ -1696,6 +1786,9 @@ export function syncGeneratedReminders(draft: State, now: Stamp): void {
         date: dateOf(scheduled.at),
         time: scheduled.at.slice(11, 16),
         source: { kind: 'protocol', runId: run.id, stepId: scheduled.step.id },
+        // The task the run is part of, when it names one, so its steps take
+        // that project's colour on the calendar instead of having none.
+        nodeId: run.nodeId && draft.nodes[run.nodeId] ? run.nodeId : undefined,
         done: scheduled.done,
         doneAt: scheduled.done ? (existing?.doneAt ?? now) : undefined,
         notes: batchSummary || undefined,

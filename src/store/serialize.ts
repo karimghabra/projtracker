@@ -346,7 +346,9 @@ export function serializeInventory(state: State): string {
   for (const p of [...state.protocols].sort(byId)) {
     const b = block('protocol', p.id, {
       name: p.name,
-      agent: p.agent,
+      // Omitted when blank: not every protocol has a reagent. A dialysis or a
+      // thread-preparation protocol is a sequence of timed steps and nothing else.
+      agent: p.agent || undefined,
       notes: p.notes,
       builtin: p.builtin ? 'true' : undefined,
     });
@@ -368,6 +370,9 @@ export function serializeInventory(state: State): string {
       block('run', run.id, {
         protocol: run.protocolId,
         batches: encodeList(run.batchIds),
+        // Omitted when absent, so a vault written before runs could name a task
+        // is byte-identical to one written after.
+        node: run.nodeId,
         startedAt: run.startedAt,
         completedSteps: encodeList(run.completedStepIds),
         cancelledAt: run.cancelledAt,
@@ -551,6 +556,7 @@ export function deserialize(files: VaultFiles): State {
             id: b.slug,
             protocolId: requireField(b, 'protocol'),
             batchIds: listField(b, 'batches'),
+            nodeId: field(b, 'node'),
             startedAt: field(b, 'startedAt') ?? '1970-01-01T00:00',
             completedStepIds: listField(b, 'completedSteps'),
             cancelledAt: field(b, 'cancelledAt'),

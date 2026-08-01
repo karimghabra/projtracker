@@ -769,12 +769,16 @@ export function sheetView(index: GraphIndex, today: DateOnly): SheetRow[] {
     const leaf = isContainerKind(node.kind) ? undefined : node;
 
     const unfiled = node.parent === null && node.kind !== 'project';
+    // Each level names itself on its own row and leaves the columns above it
+    // empty, so the grid reads as a hierarchy rather than repeating a milestone
+    // beside every one of its tasks. The whole path is still one glance up the
+    // column, and the detail pane carries it in full.
     rows.push({
       id,
       kind: node.kind,
-      project: project?.name ?? (unfiled ? '(unfiled)' : ''),
-      milestone: milestone?.name ?? '',
-      goal: goal?.name ?? '',
+      project: node.kind === 'project' ? (project?.name ?? '') : unfiled ? '(unfiled)' : '',
+      milestone: node.kind === 'milestone' ? (milestone?.name ?? '') : '',
+      goal: node.kind === 'goal' ? (goal?.name ?? '') : '',
       task: leaf?.name ?? '',
       seq: node.seq,
       status: node.status,

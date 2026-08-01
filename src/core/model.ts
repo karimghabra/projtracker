@@ -305,7 +305,17 @@ export interface Protocol {
 export interface ProtocolRun {
   id: string;
   protocolId: string;
+  /** The scaffolds this run is acting on. Empty for a procedure that consumes none. */
   batchIds: string[];
+  /**
+   * The task this run is carrying out, when there is one.
+   *
+   * Display only: it gives the run's steps a project, and so a colour on the
+   * calendar and a place in the day's grouping. It is deliberately *not* a
+   * dependency — inventory stays out of the graph (§4), and a running protocol
+   * never decides whether a task is ready.
+   */
+  nodeId?: NodeId;
   startedAt: Stamp;
   completedStepIds: string[];
   cancelledAt?: Stamp;
