@@ -8,11 +8,12 @@
 
 import { useState } from 'react';
 import { formatDayMonth, formatRelativeDay } from '../../core/dates.ts';
+import { formatOffset } from '../../core/protocols.ts';
 import type { TodayItemView } from '../../commands/views.ts';
 import { useApp } from '../state/store.ts';
 import { Calendar, DayPanel } from '../components/Calendar.tsx';
 import { UpcomingPanel } from '../components/UpcomingPanel.tsx';
-import { Empty, ProgressBar, QuickAdd, StatusChip } from '../components/ui.tsx';
+import { Empty, Modal, ProgressBar, QuickAdd, StatusChip } from '../components/ui.tsx';
 import { NewProjectWizard } from './NewProject.tsx';
 import {
   IconCalendar,
@@ -37,13 +38,21 @@ export function HomeScreen({ onNavigate }: { onNavigate: (view: ViewName) => voi
   const hasProjects = app.tree().length > 0;
 
   return (
+    /*
+     * Two columns that scroll independently, so the page itself never does and
+     * Today is on screen the moment the app opens — which is the whole point of
+     * the screen. Nothing is capped or hidden to achieve it: a long day still
+     * lists every item, it just scrolls inside its own column rather than
+     * pushing the calendar and the projects off the bottom of the window.
+     */
     <div className="dash">
-      <div className="span-7 stack">
+      <div className="dash-col">
         <TodayPanel />
         <ReadyPanel />
+        <ProjectsPanel onNavigate={onNavigate} />
       </div>
 
-      <div className="span-5 stack">
+      <div className="dash-col">
         <div className="panel">
           <div className="panel-head">
             <IconCalendar size={15} />
@@ -60,13 +69,6 @@ export function HomeScreen({ onNavigate }: { onNavigate: (view: ViewName) => voi
 
         <UpcomingPanel />
         <CapturePanel />
-      </div>
-
-      <div className="span-7">
-        <ProjectsPanel onNavigate={onNavigate} />
-      </div>
-
-      <div className="span-5">
         <ProgressPanel empty={!hasProjects} />
       </div>
     </div>
@@ -207,6 +209,7 @@ function TodayRow({
   onMove?: (direction: -1 | 1) => void;
 }) {
   const { app, run } = useApp();
+  const [startingProtocol, setStartingProtocol] = useState(false);
 
   const toggle = () => {
     if (item.kind === 'reminder') {
@@ -271,14 +274,25 @@ function TodayRow({
           </>
         )}
         {item.kind === 'task' && !item.done && (
-          <button
-            className="btn ghost icon sm"
-            title={inProgress ? 'Pause' : 'Start'}
-            aria-label={inProgress ? `Pause ${item.title}` : `Start ${item.title}`}
-            onClick={() => run((a) => (inProgress ? a.pause(item.id) : a.start(item.id)))}
-          >
-            {inProgress ? <IconPause size={13} /> : <IconPlay size={13} />}
-          </button>
+          <>
+            <button
+              className="btn ghost icon sm"
+              title="Run a protocol for this"
+              aria-label={`Run a protocol for ${item.title}`}
+              data-testid={`run-protocol-${item.key}`}
+              onClick={() => setStartingProtocol(true)}
+            >
+              <IconFlask size={13} />
+            </button>
+            <button
+              className="btn ghost icon sm"
+              title={inProgress ? 'Pause' : 'Start'}
+              aria-label={inProgress ? `Pause ${item.title}` : `Start ${item.title}`}
+              onClick={() => run((a) => (inProgress ? a.pause(item.id) : a.start(item.id)))}
+            >
+              {inProgress ? <IconPause size={13} /> : <IconPlay size={13} />}
+            </button>
+          </>
         )}
         <button
           className="btn ghost icon sm"
@@ -289,7 +303,105 @@ function TodayRow({
           <IconClose size={13} />
         </button>
       </div>
+
+      {startingProtocol && (
+        <StartProtocolDialog
+          nodeId={item.id}
+          taskName={item.title}
+          onClose={() => setStartingProtocol(false)}
+        />
+      )}
     </div>
+  );
+}
+
+/**
+ * Starting a timed procedure against the task it belongs to.
+ *
+ * The start time is a field rather than "now" so a run written up after the
+ * fact still has the right timings — every step is that instant plus a fixed
+ * offset, and nothing here decides when anything should happen.
+ */
+function StartProtocolDialog({
+  nodeId,
+  taskName,
+  onClose,
+}: {
+  nodeId: string;
+  taskName: string;
+  onClose: () => void;
+}) {
+  const { app, run } = useApp();
+  const protocols = app.inventory().protocols.filter((p) => p.steps > 0);
+  const [protocolId, setProtocolId] = useState(protocols[0]?.id ?? '');
+  const [startAt, setStartAt] = useState(`${app.today}T09:00`);
+  const chosen = protocols.find((p) => p.id === protocolId);
+
+  return (
+    <Modal
+      title={`Run a protocol for "${taskName}"`}
+      onClose={onClose}
+      footer={
+        <>
+          <span className="spacer" />
+          <button className="btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            className="btn primary"
+            data-testid="confirm-run-protocol"
+            disabled={!protocolId}
+            onClick={() => {
+              if (run((a) => a.startRun(protocolId, [], startAt, nodeId))) onClose();
+            }}
+          >
+            Start
+          </button>
+        </>
+      }
+    >
+      {protocols.length === 0 ? (
+        <p style={{ marginTop: 0 }}>
+          No protocol has any steps yet. Add one under Scaffolds and its timings will land here.
+        </p>
+      ) : (
+        <>
+          <div className="field">
+            <label htmlFor="tp-protocol">Protocol</label>
+            <select
+              id="tp-protocol"
+              className="input"
+              value={protocolId}
+              onChange={(event) => setProtocolId(event.target.value)}
+            >
+              {protocols.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="field">
+            <label htmlFor="tp-start">Started at</label>
+            <input
+              id="tp-start"
+              className="input"
+              type="datetime-local"
+              value={startAt}
+              onChange={(event) => setStartAt(event.target.value)}
+            />
+          </div>
+
+          {chosen && (
+            <p className="faint" style={{ marginBottom: 0 }}>
+              {chosen.steps} steps over {formatOffset(chosen.hours).replace('+', '')}. Each one lands
+              on your list at its own time.
+            </p>
+          )}
+        </>
+      )}
+    </Modal>
   );
 }
 

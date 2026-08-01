@@ -67,7 +67,7 @@ export function AppShell() {
   const [showSettings, setShowSettings] = useState(false);
   const [showBackup, setShowBackup] = useState(false);
 
-  // Keeps the spreadsheet current by itself when that is switched on. A
+  // Keeps the Google spreadsheet in sync by itself when that is switched on. A
   // no-op in a browser, which is why it can live at the top of the shell.
   useAutoSync();
   const [showSearch, setShowSearch] = useState(false);
@@ -206,7 +206,17 @@ export function AppShell() {
           </button>
         </header>
 
-        <main className={view === 'graph' || view === 'sheet' ? 'screen flush' : 'screen'}>
+        <main
+          className={
+            view === 'graph' || view === 'sheet'
+              ? 'screen flush'
+              : // Home sizes itself to the window and scrolls per column, so
+                // the day's list is never below the fold.
+                view === 'home'
+                ? 'screen fits'
+                : 'screen'
+          }
+        >
           {view === 'home' && <HomeScreen onNavigate={go} />}
           {view === 'projects' && (
             <ProjectsScreen

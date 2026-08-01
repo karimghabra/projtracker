@@ -25,6 +25,11 @@
   --space-5: 24px;
   --space-6: 32px;
 
+  /* The topbar's height, declared once and enforced on `.topbar` below, so
+     anything sizing itself against the remaining viewport is measuring rather
+     than guessing. */
+  --topbar-h: 53px;
+
   --dur: 130ms;
   --ease: cubic-bezier(0.32, 0.72, 0, 1);
 }
@@ -292,6 +297,8 @@ button {
   border-bottom: 1px solid var(--border);
   background: var(--bg-raised);
   flex: none;
+  height: var(--topbar-h);
+  box-sizing: border-box;
 }
 
 .topbar h1 {
@@ -319,16 +326,47 @@ button {
   overflow: hidden;
 }
 
+/* Keeps its padding, but does not scroll: what is inside sizes to the window. */
+.screen.fits {
+  overflow: hidden;
+}
+
 /* ----------------------------------------------------------------- panels */
 
+/*
+ * The dashboard fits the window. Each column scrolls on its own, so Today is
+ * always the first thing on screen and the page never scrolls as a whole —
+ * "the today panel should not require any scrolling" is a layout problem, not a
+ * reason to start hiding dated work.
+ */
 .dash {
   display: grid;
   gap: var(--space-4);
-  grid-template-columns: repeat(12, 1fr);
-  align-items: start;
+  grid-template-columns: 7fr 5fr;
+  height: 100%;
+  min-height: 0;
   max-width: 1500px;
   margin: 0 auto;
 }
+
+.dash-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-height: 0;
+  overflow-y: auto;
+  /* Room for the last panel's shadow, and so the final row is not flush with
+     the window edge when the column is scrolled to the bottom. */
+  padding-bottom: 2px;
+}
+
+/*
+ * Panels keep their natural height. Without this they are flex items that
+ * shrink to fit the column, and since a panel clips its own overflow the day's
+ * last few items would simply vanish — the exact failure the scrolling column
+ * exists to avoid.
+ */
+.dash-col > * { flex: none; }
 
 .span-4 { grid-column: span 4; }
 .span-5 { grid-column: span 5; }
@@ -339,6 +377,12 @@ button {
 
 @media (max-width: 1180px) {
   .span-4, .span-5, .span-6, .span-7, .span-8 { grid-column: span 12; }
+
+  /* One column cannot hold both halves of the dashboard in a window this
+     narrow, so it goes back to being a page that scrolls. */
+  .dash { grid-template-columns: minmax(0, 1fr); height: auto; }
+  .dash-col { overflow-y: visible; }
+  .screen.fits { overflow-y: auto; }
 }
 
 .panel {
