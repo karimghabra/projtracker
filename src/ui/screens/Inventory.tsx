@@ -10,7 +10,7 @@
 import { useState } from 'react';
 import { formatDayMonth } from '../../core/dates.ts';
 import { formatOffset } from '../../core/protocols.ts';
-import type { ProtocolStep } from '../../core/model.ts';
+import type { ProtocolStepPatch } from '../../commands/app.ts';
 import { useApp } from '../state/store.ts';
 import { ConfirmDialog, Empty, Modal, ProgressBar } from '../components/ui.tsx';
 import { IconBox, IconFlask, IconPlus, IconTrash } from '../components/icons.tsx';
@@ -400,35 +400,104 @@ function TypesPanel({ inventory }: { inventory: Inventory }) {
 // -------------------------------------------------------------- protocols
 
 function ProtocolsPanel({ inventory }: { inventory: Inventory }) {
+  const { run } = useApp();
   const [editing, setEditing] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState('');
+  const [agent, setAgent] = useState('');
 
   return (
     <section className="panel" data-testid="protocols-panel">
       <div className="panel-head">
-        <h2>Crosslinking protocols</h2>
+        <h2>Protocols</h2>
+        <span className="spacer" />
+        <button className="btn sm" onClick={() => setAdding(!adding)} data-testid="add-protocol">
+          <IconPlus size={13} /> Protocol
+        </button>
       </div>
       <div className="panel-body tight">
+        {adding && (
+          <form
+            className="stack tight"
+            style={{ padding: 8 }}
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!name.trim()) return;
+              const made = run((a) => a.addProtocol(name, agent));
+              if (made) {
+                setName('');
+                setAgent('');
+                setAdding(false);
+                // Straight into the editor: a protocol with no steps is not yet
+                // a protocol, and this is where the steps get typed.
+                setEditing(made.id);
+              }
+            }}
+          >
+            <input
+              className="input"
+              autoFocus
+              value={name}
+              placeholder="Dialysis for ELAC thread prep"
+              aria-label="Protocol name"
+              data-testid="protocol-name"
+              onChange={(event) => setName(event.target.value)}
+            />
+            <input
+              className="input"
+              value={agent}
+              placeholder="Reagent (optional)"
+              aria-label="Reagent"
+              onChange={(event) => setAgent(event.target.value)}
+            />
+            <div className="inline">
+              <button className="btn primary sm" type="submit" data-testid="save-new-protocol">
+                Add
+              </button>
+              <button className="btn sm ghost" type="button" onClick={() => setAdding(false)}>
+                Cancel
+              </button>
+            </div>
+          </form>
+        )}
+
         <div className="list">
           {inventory.protocols.map((protocol) => (
-            <button
-              key={protocol.id}
-              className="row"
-              style={{ border: 0, background: 'transparent', textAlign: 'left', cursor: 'pointer' }}
-              onClick={() => setEditing(protocol.id)}
-              data-testid={`protocol-${protocol.id}`}
-            >
-              <div className="grow" style={{ minWidth: 0 }}>
+            <div className="row" key={protocol.id}>
+              <button
+                className="grow"
+                style={{
+                  border: 0,
+                  background: 'transparent',
+                  textAlign: 'left',
+                  cursor: 'pointer',
+                  minWidth: 0,
+                }}
+                onClick={() => setEditing(protocol.id)}
+                data-testid={`protocol-${protocol.id}`}
+              >
                 <div className="row-title">{protocol.name}</div>
                 <div className="row-sub">
-                  {protocol.steps} steps over {formatOffset(protocol.hours).replace('+', '')}
+                  {protocol.steps === 0
+                    ? 'No steps yet'
+                    : `${protocol.steps} steps over ${formatOffset(protocol.hours).replace('+', '')}`}
                 </div>
-              </div>
-              <span className="chip">{protocol.agent}</span>
-            </button>
+              </button>
+              {protocol.agent && <span className="chip">{protocol.agent}</span>}
+              <button
+                className="btn ghost icon sm"
+                aria-label={`Delete protocol ${protocol.name}`}
+                data-testid={`delete-protocol-${protocol.id}`}
+                onClick={() => run((a) => a.deleteProtocol(protocol.id))}
+              >
+                <IconTrash size={12} />
+              </button>
+            </div>
           ))}
         </div>
         <p className="faint" style={{ padding: '4px 8px', margin: 0 }}>
-          Timings are a starting point. Edit them to match your own protocol.
+          Anything stepwise and timed belongs here, not just crosslinking. Shipped timings are a
+          starting point — edit them to match your own.
         </p>
       </div>
 
@@ -442,8 +511,12 @@ function ProtocolEditor({ id, onClose }: { id: string; onClose: () => void }) {
   const protocol = app.state.protocols.find((p) => p.id === id)!;
   const [name, setName] = useState(protocol.name);
   const [agent, setAgent] = useState(protocol.agent);
-  const [steps, setSteps] = useState<Omit<ProtocolStep, 'id'>[]>(
-    protocol.steps.map(({ name: n, offsetHours, durationHours, notes }) => ({
+  const [notes, setNotes] = useState(protocol.notes ?? '');
+  // Ids are carried through the form untouched. A run records which steps it has
+  // finished by id, so dropping them here would re-key every step on save.
+  const [steps, setSteps] = useState<ProtocolStepPatch[]>(
+    protocol.steps.map(({ id: stepId, name: n, offsetHours, durationHours, notes }) => ({
+      id: stepId,
       name: n,
       offsetHours,
       durationHours,
@@ -466,7 +539,7 @@ function ProtocolEditor({ id, onClose }: { id: string; onClose: () => void }) {
             className="btn primary"
             data-testid="save-protocol"
             onClick={() => {
-              if (run((a) => a.updateProtocol(id, { name, agent, steps }))) onClose();
+              if (run((a) => a.updateProtocol(id, { name, agent, notes, steps }))) onClose();
             }}
           >
             Save
@@ -480,9 +553,26 @@ function ProtocolEditor({ id, onClose }: { id: string; onClose: () => void }) {
           <input id="p-name" className="input" value={name} onChange={(e) => setName(e.target.value)} />
         </div>
         <div className="field">
-          <label htmlFor="p-agent">Agent</label>
-          <input id="p-agent" className="input" value={agent} onChange={(e) => setAgent(e.target.value)} />
+          <label htmlFor="p-agent">Reagent</label>
+          <input
+            id="p-agent"
+            className="input"
+            value={agent}
+            placeholder="optional"
+            onChange={(e) => setAgent(e.target.value)}
+          />
         </div>
+      </div>
+
+      <div className="field">
+        <label htmlFor="p-notes">Notes</label>
+        <textarea
+          id="p-notes"
+          className="input"
+          rows={2}
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+        />
       </div>
 
       <div className="field">

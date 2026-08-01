@@ -13,8 +13,9 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { App } from '../commands/app.ts';
-import { toCommandError } from '../commands/errors.ts';
+import { notFound, toCommandError } from '../commands/errors.ts';
 import { formatDayMonth, systemClock } from '../core/dates.ts';
+import type { Protocol } from '../core/model.ts';
 import { formatOffset } from '../core/protocols.ts';
 import { readBackupFile, readWorkbookFile } from '../store/excel.ts';
 import { exportWorkbook } from '../store/excelExport.ts';
@@ -63,8 +64,12 @@ usage: pt [--vault DIR] [--json] <command> [args]
     scaffolds                 inventory summary
     scaffold type <name>      add a scaffold type
     scaffold add <type> <n>   record a fabricated batch
-    protocols                 list crosslinking protocols
-    crosslink <protocol> <batch-id...>
+    protocols                 list crosslinking protocols and their steps
+    protocol add <name> [--agent NAME] [--notes TEXT]
+    protocol rm <id>
+    protocol step add <protocol-id> <name> --at HOURS [--for HOURS]
+    protocol step rm <protocol-id> <step-id>
+    crosslink <protocol> <batch-id...> [--at YYYY-MM-DDTHH:MM]
     runs                      live crosslinking runs
     step <run-id> <step-id>   tick a protocol step
 
@@ -358,13 +363,59 @@ async function run(
       const inventory = app.inventory();
       if (json) return out(inventory.protocols), 0;
       for (const protocol of inventory.protocols) {
-        out(`${protocol.id.padEnd(12)} ${protocol.name}  ${dim(`${protocol.steps} steps over ${formatOffset(protocol.hours).replace('+', '')}`)}`);
+        // "0 steps over start" is what a protocol reads as between being made
+        // and being filled in, which is now an ordinary place to be.
+        const summary = protocol.steps
+          ? `${protocol.steps} step${protocol.steps === 1 ? '' : 's'} over ${formatOffset(protocol.hours).replace('+', '')}`
+          : 'no steps yet';
+        out(`${protocol.id.padEnd(12)} ${protocol.name}  ${dim(summary)}`);
+        // The step ids are printed because "protocol step rm" asks for one, and
+        // an id nothing shows is an id nobody can type.
+        for (const step of protocolOf(app, protocol.id).steps) {
+          const span = step.durationHours ? ` for ${formatOffset(step.durationHours).replace('+', '')}` : '';
+          out(`  ${step.id.padEnd(4)} ${formatOffset(step.offsetHours).padEnd(10)} ${step.name}${dim(span)}`);
+        }
       }
       return 0;
     }
 
-    case 'crosslink':
-      return say(app.startRun(rest[0]!, rest.slice(1))), 0;
+    case 'protocol': {
+      if (rest[0] === 'add') {
+        const agent = typeof flags['agent'] === 'string' ? flags['agent'] : '';
+        const notes = typeof flags['notes'] === 'string' ? flags['notes'] : undefined;
+        const made = app.addProtocol(rest.slice(1).join(' '), agent, [], notes);
+        if (json) return out(made), 0;
+        return out(`${made.id.padEnd(12)} ${made.message}`), 0;
+      }
+      if (rest[0] === 'rm') return say(app.deleteProtocol(rest[1] ?? '')), 0;
+
+      // Both step verbs hand the whole list back, ids and all. An id says "this
+      // is the step you gave me"; sending one without would re-key it, and a
+      // live run records what it has done against those ids.
+      if (rest[0] === 'step' && rest[1] === 'add') {
+        const protocol = protocolOf(app, rest[2]);
+        const at = hours(flags['at'], 'When? Pass --at HOURS after the run starts.');
+        const span = flags['for'] === undefined ? undefined : hours(flags['for'], 'How long? Pass --for HOURS.');
+        return say(app.updateProtocol(protocol.id, {
+          steps: [...protocol.steps, { name: rest.slice(3).join(' '), offsetHours: at, durationHours: span }],
+        })), 0;
+      }
+      if (rest[0] === 'step' && rest[1] === 'rm') {
+        const protocol = protocolOf(app, rest[2]);
+        const steps = protocol.steps.filter((s) => s.id !== rest[3]);
+        if (steps.length === protocol.steps.length) throw notFound(`step of "${protocol.name}"`, rest[3] ?? '');
+        return say(app.updateProtocol(protocol.id, { steps })), 0;
+      }
+      throw new Error('Use "protocol add <name>", "protocol rm <id>" or "protocol step add|rm".');
+    }
+
+    case 'crosslink': {
+      // A run typed up after the fact started when it started: every step's
+      // time is counted from here, so the default of "now" would date them all
+      // to the moment of typing.
+      const at = typeof flags['at'] === 'string' ? flags['at'] : undefined;
+      return say(app.startRun(rest[0]!, rest.slice(1), at)), 0;
+    }
 
     case 'runs': {
       const inventory = app.inventory();
@@ -478,6 +529,23 @@ async function run(
     default:
       throw new Error(`Unknown command "${command}". Run "pt help" for the list.`);
   }
+}
+
+/**
+ * The protocol a command names. Editing one step means handing the command
+ * layer the others back untouched, so the client has to see them first.
+ */
+function protocolOf(app: App, token: string | undefined): Protocol {
+  const found = app.state.protocols.find((p) => p.id === token);
+  if (!found) throw notFound('protocol', token ?? '');
+  return found;
+}
+
+/** A flag that has to be a number of hours, or the question it did not answer. */
+function hours(value: string | boolean | undefined, question: string): number {
+  const n = Number(value);
+  if (typeof value !== 'string' || !Number.isFinite(n)) throw new Error(question);
+  return n;
 }
 
 /** Dim text, but only when a terminal is going to interpret it. */
