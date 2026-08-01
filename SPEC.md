@@ -194,6 +194,19 @@ inference.
 Physical stock, deliberately **not** part of the dependency graph — a scaffold
 is an object, not a step.
 
+Protocols are **not only crosslinking**. The model was always generic — an
+ordered list of steps, each an offset and a duration — and the restriction was
+only ever in the naming and in the fact that a run had to act on scaffold
+batches. A run may now name a **task** instead, which is what makes a dialysis
+or an ELAC thread preparation expressible: a procedure that is stepwise and
+timed but consumes no inventory. That reference is for display only — it gives
+the steps a project, and so a colour on the calendar and a place in the day's
+grouping. It is deliberately **not** a dependency: inventory stays out of the
+graph, and a running protocol never decides whether a task is ready.
+
+A run must name batches, a task, or both. One belonging to nothing is a set of
+reminders that cannot be traced back to why they exist.
+
 - **Scaffold types** are user-managed (name, material, geometry, notes).
 - **Batches** are created by "I fabricated *n* of type *t* on date *d*". Each
   batch carries a lifecycle state: `fabricated` → `crosslinking` →
@@ -420,6 +433,36 @@ header name so sparse files are valid. Import previews what it will do before
 writing anything. Strikethrough means done; fill colour maps to the health
 axis, never to status.
 
+**The hierarchy is a staircase, not a fill-down.** Each level names itself once,
+on its own row, and the rows beneath leave that column empty. The importer only
+starts a new level when it sees a name and reads an empty cell as "still the one
+above", so the round trip is unaffected — and `reconcile` carries the last-seen
+names forward for the same reason, or a task typed straight under a goal in the
+spreadsheet would have nowhere to go.
+
+**The colour legend is the lab's, and it is canonical:**
+
+| | |
+|---|---|
+| green | on track for the deadline |
+| yellow | not begun |
+| red | will not be done this quarter |
+| blue | off track |
+| *struck through* | completed — so green struck is "finished on time", blue struck is "finished, but it went badly" |
+
+Colour is `health` and the strike is `status`; neither is derivable from the
+other, which is the whole reason they are separate axes. The export writes this
+legend into the Summary sheet, and `healthFromColour` reads the same four back —
+by which channel leads rather than by exact match, because a workbook filled in
+by hand over two years has a dozen greens in it. The two must be changed
+together or a workbook stops surviving its own round trip.
+
+Two entries of the original legend say *"and will be completed by the quarter"*
+and *"will not be done this quarter"*. Nothing computes those: no node carries a
+deadline, and having the app forecast whether work will land would be exactly
+the judgement §1.1 rules out. They are positions the user states. Yellow is
+therefore labelled "not begun" and nothing more.
+
 ---
 
 ## 10. Testing
@@ -442,3 +485,26 @@ Three layers, all required to be green before anything is called finished.
 Windows installer (NSIS, via electron-builder) built and published by GitHub
 Actions on tag. No Rust toolchain, no Python sidecar, no native modules — the
 previous build's most persistent source of breakage is designed out.
+
+**Upgrading replaces; uninstalling keeps the data.** Installing over an existing
+version removes the old one automatically, and `deleteAppDataOnUninstall: false`
+means neither that nor a deliberate uninstall touches the vault, which lives in
+`userData` and not in the install directory. That one line is the only thing
+standing between an uninstall and somebody's work, so it is asserted by a test
+rather than left to review.
+
+The NSIS **`guid` is pinned**. Left unset, electron-builder derives it from
+`appId`, so editing `appId` would silently fork the product: the new installer
+could not see the old installation, would not remove it, and Add/Remove Programs
+would grow a second entry that never goes away. Pinned to the value already in
+every existing install's registry, `appId` is free to change. The test
+recomputes it rather than copying it, so it proves the pin is the right value
+and not merely present.
+
+**Where the vault lives is the user's choice, and it is remembered.** The chosen
+path is stored beside the app, not in the vault — a vault cannot hold the address
+of where it is. Pointing at a folder that already holds a vault opens it;
+pointing at an empty one **copies** the current vault in, history included, and
+never deletes anything from the old location. A stored path that has gone falls
+back to the default and says which folder went missing, because opening an empty
+vault silently is indistinguishable from having lost everything.

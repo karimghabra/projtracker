@@ -107,19 +107,23 @@ There is no database. Open the files in any editor, put them in git, sync them
 however you like. Serialization is canonical — the same state always produces
 the same bytes — so diffs mean something.
 
-## Backing it up
+## Backing it up, and syncing it
 
-Plain text on one disk is not a backup. **Settings → Back up or restore** gives
-you two ways to keep a copy somewhere else, and both restore the vault *exactly*
-— dependencies, journal, protocol runs, node ids and all.
+Plain text on one disk is not a backup. **Settings → Back up, sync or restore**
+gives you two ways to keep a copy somewhere else, and both restore the vault
+*exactly* — dependencies, journal, protocol runs, node ids and all. They are not
+the same kind of thing, though, and the app no longer pretends they are.
 
-- **A backup file.** A spreadsheet with the readable sheets on top and the whole
-  vault hidden inside it. Nothing to set up, works offline.
-- **A Google spreadsheet.** The same content somewhere that is not this laptop,
-  with a readable tab per project you can share with whoever you like.
+- **A backup file.** An `.xlsx` workbook with the readable sheets on top and the
+  whole vault hidden inside it. Nothing to set up, works offline. Written and
+  put away; nothing ever comes back out of it except a restore.
+- **A Google spreadsheet.** A two-way *sync*, not a backup: the board goes out
+  to a readable tab per project — share it with whoever you like — and edits
+  made there come back in. It carries the same hidden vault, so it can be
+  restored from as well.
 
-An ordinary **Export** is not a backup and does not pretend to be: it is a
-report, and it has no columns for half of what the vault holds.
+An ordinary **Export** is neither, and does not pretend to be: it is a report,
+and it has no columns for half of what the vault holds.
 
 Every file in the backup carries a checksum. A cell that has been edited fails
 it and is refused by name rather than quietly restored, and a restore replaces
@@ -127,30 +131,36 @@ everything — including deleting what the backup does not have — so you never
 up with a hybrid of two points in time.
 
 Google Sheets needs a one-time setup, spelled out in the dialog: a service
-account key you download from Google, and a spreadsheet shared with that
+account key you download from Google, and a Google spreadsheet shared with that
 account's address. The key stays on your machine and never goes in the vault —
 the vault is the thing you share.
 
-### Editing in the spreadsheet
+**Start again from a backup** stays where it is, at the bottom, under its own
+name. Restoring replaces the whole vault from the hidden `Vault` tab; syncing
+merges reviewed cells from the readable tabs. Those are different enough that
+they will never share a word here.
+
+### Editing in the Google spreadsheet
 
 Tick something done on your phone, rename a task, add a row under a goal, type
-a completion period — then **Check for changes** in the Backup dialog and take
-what you want, one tick box at a time.
+a completion period — then **Check for changes** in the Backup and sync dialog
+and take what you want, one tick box at a time. (This is the Google spreadsheet,
+not the app's own **Spreadsheet** screen, which edits the board directly.)
 
 It works out *whose* change is whose by comparing three things: what was last
-sent, what the board says now, and what the spreadsheet holds. A cell changed
-only in the sheet is proposed; one changed only in the app is left alone,
-because the next backup carries it; one changed in both is called a conflict
-and never resolved for you. Deletions are reported and never ticked by default
-— a row goes missing because somebody meant it, or because they dragged over it
-while sorting, and those look identical from here.
+sent, what the board says now, and what the Google spreadsheet holds. A cell
+changed only in the sheet is proposed; one changed only in the app is left
+alone, because the next sync carries it; one changed in both is called a
+conflict and never resolved for you. Deletions are reported and never ticked by
+default — a row goes missing because somebody meant it, or because they dragged
+over it while sorting, and those look identical from here.
 
 Everything you accept applies as one undo step.
 
-**Keep the spreadsheet up to date automatically** pushes on a timer, but only
-when something has actually changed — and never over an edit made in the
-spreadsheet. If somebody has typed in it, the backup stops and says so instead
-of overwriting them.
+**Keep the Google spreadsheet in sync automatically** pushes on a timer, but
+only when something has actually changed — and never over an edit made there.
+If somebody has typed in it, the sync stops and says so instead of overwriting
+them.
 
 ## The command line
 
@@ -196,8 +206,8 @@ is itself a statement that the row is done.
 ```bash
 npm install
 npm run dev          # the app in a browser, no Electron needed
-npm test             # 166 unit tests, including 60 simulated days of use
-npm run test:e2e     # 170 end-to-end tests
+npm test             # 329 unit tests, including 60 simulated days of use
+npm run test:e2e     # 230 end-to-end tests
 npm run icon         # regenerate the app icon
 npm run pack         # a Windows installer in release/
 ```
