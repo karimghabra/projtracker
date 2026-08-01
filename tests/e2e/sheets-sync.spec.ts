@@ -89,7 +89,7 @@ async function board(page: Page): Promise<void> {
 async function openBackup(page: Page): Promise<void> {
   await page.getByTestId('nav-settings').click();
   await page.getByTestId('open-backup').click();
-  await expect(page.getByRole('heading', { name: 'Backup' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Backup and sync' })).toBeVisible();
 }
 
 /** Edit a cell of the fake spreadsheet, the way a person would in a browser. */
@@ -107,7 +107,7 @@ async function editSheet(page: Page, task: string, header: string, value: string
   );
 }
 
-test.describe('reading edits back from the spreadsheet', () => {
+test.describe('reading edits back from the Google spreadsheet', () => {
   test.beforeEach(async ({ h }) => {
     await h.page.addInitScript({ content: FAKE_BRIDGE });
     // A real reload, not another goto: the fixture already navigated to this
@@ -117,7 +117,7 @@ test.describe('reading edits back from the spreadsheet', () => {
     await h.page.waitForSelector('.shell');
   });
 
-  test('offers the sync controls once a spreadsheet is set up', async ({ h }) => {
+  test('offers the sync controls once a Google spreadsheet is set up', async ({ h }) => {
     await board(h.page);
     await openBackup(h.page);
 
@@ -133,7 +133,7 @@ test.describe('reading edits back from the spreadsheet', () => {
     await openBackup(page);
 
     await page.getByTestId('sheets-push').click();
-    await expect(page.getByText(/Backed up/)).toBeVisible();
+    await expect(page.getByText(/Synced/)).toBeVisible();
     await page.getByTestId('sheets-check').click();
 
     await expect(page.getByTestId('sheets-no-changes')).toBeVisible();
@@ -144,13 +144,13 @@ test.describe('reading edits back from the spreadsheet', () => {
     await board(page);
     await openBackup(page);
     await page.getByTestId('sheets-push').click();
-    await expect(page.getByText(/Backed up/)).toBeVisible();
+    await expect(page.getByText(/Synced/)).toBeVisible();
 
     await editSheet(page, 'Electrospin', 'Notes', 'Ran at 18 kV, not 15');
     await page.getByTestId('sheets-check').click();
 
     const review = page.getByTestId('sheets-review');
-    await expect(review).toContainText('Changed in the spreadsheet');
+    await expect(review).toContainText('Changed in the Google spreadsheet');
     await expect(review).toContainText('Ran at 18 kV, not 15');
     await page.getByTestId('sheets-apply').click();
     await expect(page.getByTestId('sheets-review')).toHaveCount(0);
@@ -161,12 +161,12 @@ test.describe('reading edits back from the spreadsheet', () => {
     await expect(page.locator('#d-notes')).toHaveValue('Ran at 18 kV, not 15');
   });
 
-  test('ticking something done in the spreadsheet completes it here', async ({ h }) => {
+  test('ticking something done in the Google spreadsheet completes it here', async ({ h }) => {
     const { page } = h;
     await board(page);
     await openBackup(page);
     await page.getByTestId('sheets-push').click();
-    await expect(page.getByText(/Backed up/)).toBeVisible();
+    await expect(page.getByText(/Synced/)).toBeVisible();
 
     await editSheet(page, 'Crosslink', 'Completed', '2026-Q1');
     await page.getByTestId('sheets-check').click();
@@ -185,7 +185,7 @@ test.describe('reading edits back from the spreadsheet', () => {
     await board(page);
     await openBackup(page);
     await page.getByTestId('sheets-push').click();
-    await expect(page.getByText(/Backed up/)).toBeVisible();
+    await expect(page.getByText(/Synced/)).toBeVisible();
 
     await editSheet(page, 'Electrospin', 'Notes', 'first note');
     await editSheet(page, 'Crosslink', 'Notes', 'second note');
@@ -201,12 +201,12 @@ test.describe('reading edits back from the spreadsheet', () => {
     await expect(page.locator('.sheet')).not.toContainText('second note');
   });
 
-  test('refuses to back up over an edit, and offers to read it instead', async ({ h }) => {
+  test('refuses to sync over an edit, and offers to read it instead', async ({ h }) => {
     const { page } = h;
     await board(page);
     await openBackup(page);
     await page.getByTestId('sheets-push').click();
-    await expect(page.getByText(/Backed up/)).toBeVisible();
+    await expect(page.getByText(/Synced/)).toBeVisible();
 
     await editSheet(page, 'Electrospin', 'Notes', 'typed on a phone');
     await page.getByTestId('sheets-push').click();
@@ -224,7 +224,7 @@ test.describe('reading edits back from the spreadsheet', () => {
     await board(page);
     await openBackup(page);
     await page.getByTestId('sheets-push').click();
-    await expect(page.getByText(/Backed up/)).toBeVisible();
+    await expect(page.getByText(/Synced/)).toBeVisible();
 
     await page.evaluate(() => {
       const grid = window.__sheets.theirs.find((g) => g.title !== 'Summary')!;
@@ -236,12 +236,12 @@ test.describe('reading edits back from the spreadsheet', () => {
 
     await page.getByTestId('sheets-check').click();
     const review = page.getByTestId('sheets-review');
-    await expect(review).toContainText('Removed from the spreadsheet');
+    await expect(review).toContainText('Removed from the Google spreadsheet');
     // Nothing is selected, so there is nothing to apply until somebody says so.
     await expect(page.getByTestId('sheets-apply')).toBeDisabled();
   });
 
-  test('remembers that automatic backup was switched on', async ({ h }) => {
+  test('remembers that automatic sync was switched on', async ({ h }) => {
     const { page } = h;
     await board(page);
     await openBackup(page);
@@ -256,7 +256,7 @@ test.describe('reading edits back from the spreadsheet', () => {
     await expect(page.getByTestId('sheets-interval')).toHaveValue('60');
   });
 
-  test('says which spreadsheet it is pointing at, and can be pointed elsewhere', async ({ h }) => {
+  test('says which Google spreadsheet it is pointing at, and can be pointed elsewhere', async ({ h }) => {
     const { page } = h;
     await board(page);
     await openBackup(page);
@@ -274,7 +274,7 @@ test.describe('reading edits back from the spreadsheet', () => {
     // otherwise the first "check for changes" would compare against a baseline
     // belonging to a different spreadsheet entirely.
     await expect(page.getByTestId('sheets-link-out')).toHaveAttribute('href', /second-one/);
-    await expect(page.getByText(/Backed up/)).toBeVisible();
+    await expect(page.getByText(/Synced/)).toBeVisible();
 
     await page.getByTestId('sheets-check').click();
     await expect(page.getByTestId('sheets-no-changes')).toBeVisible();
@@ -289,5 +289,11 @@ test.describe('reading edits back from the spreadsheet', () => {
     await expect(page.getByText('Start again from a backup')).toBeVisible();
     await expect(page.getByTestId('sheets-pull')).toBeVisible();
     await expect(page.getByText(/Replaces everything in the vault/)).toBeVisible();
+
+    // The Google half is called a sync; this half is still called a restore.
+    // Giving them one shared word is the bug this test exists to catch.
+    await expect(page.getByTestId('sheets-push')).toHaveText(/Sync now/);
+    await expect(page.getByTestId('sheets-pull')).toHaveText(/Restore from the Google spreadsheet/);
+    await expect(page.getByTestId('sheets-pull')).not.toHaveText(/[Ss]ync/);
   });
 });

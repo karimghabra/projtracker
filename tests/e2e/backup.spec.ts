@@ -25,7 +25,7 @@ async function board(page: Page): Promise<void> {
 async function openBackup(page: Page): Promise<void> {
   await page.getByTestId('nav-settings').click();
   await page.getByTestId('open-backup').click();
-  await expect(page.getByRole('heading', { name: 'Backup' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Backup and sync' })).toBeVisible();
 }
 
 test.describe('backup and restore', () => {

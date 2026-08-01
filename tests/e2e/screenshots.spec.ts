@@ -119,7 +119,7 @@ test.describe('screenshots', () => {
 
       await page.getByTestId('nav-settings').click();
       await page.getByTestId('open-backup').click();
-      await expect(page.getByRole('heading', { name: 'Backup' })).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'Backup and sync' })).toBeVisible();
       await page.waitForTimeout(200);
       await page.screenshot({ path: `screenshots/${theme}-backup.png`, animations: 'disabled' });
       await page.keyboard.press('Escape');

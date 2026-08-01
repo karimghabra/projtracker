@@ -1,11 +1,12 @@
 /**
- * The Google Sheets half of the Backup dialog.
+ * The Google Sheets half of the Backup and sync dialog.
  *
+ * This is a two-way sync, not a backup: the board goes out and edits come back.
  * Three things happen here and they must never be confused for one another:
  *
- * - **Back up** writes the board out. It refuses if somebody has typed in the
- *   spreadsheet since we last wrote it, because overwriting their edit is the
- *   one failure this whole feature exists to avoid.
+ * - **Sync** writes the board out. It refuses if somebody has typed in the
+ *   Google spreadsheet since we last wrote it, because overwriting their edit is
+ *   the one failure this whole feature exists to avoid.
  * - **Check for changes** reads their edits and proposes them, one tick box at
  *   a time. Conflicts and deletions are never ticked for you.
  * - **Restore** — which lives in the parent dialog, deliberately apart —
@@ -13,6 +14,8 @@
  *
  * A merge and a replace sitting next to each other with similar labels would be
  * the worst bug in the feature, so they do not look alike and do not read alike.
+ * Everything here says "the Google spreadsheet" rather than "the spreadsheet",
+ * because the app already has a screen of its own by that name.
  */
 
 import { useState } from 'react';
@@ -76,7 +79,7 @@ export function SheetsPanel({
     };
   };
 
-  const backUp = (force = false) =>
+  const syncOut = (force = false) =>
     guard('push', async () => {
       const outcome = await bridge.push({ ...payload(), force });
       if (outcome.blocked) {
@@ -85,7 +88,7 @@ export function SheetsPanel({
       }
       setBlockedBy(null);
       store.toast(
-        `Backed up ${outcome.files} file(s) to "${outcome.spreadsheet}"${
+        `Synced ${outcome.files} file(s) to "${outcome.spreadsheet}"${
           outcome.removed?.length ? `, removing ${outcome.removed.length} stale tab(s)` : ''
         }.`,
       );
@@ -115,8 +118,8 @@ export function SheetsPanel({
     for (const failure of delta.failed) store.toast(failure, 'error');
     setReview(null);
     setBlockedBy(null);
-    // The board has moved; the spreadsheet is now the stale one.
-    void backUp(true);
+    // The board has moved; the Google spreadsheet is now the stale one.
+    void syncOut(true);
   };
 
   if (review) {
@@ -138,24 +141,25 @@ export function SheetsPanel({
   return (
     <>
       <span className="hint">
-        Backing up rewrites the readable tabs and the hidden <code>Vault</code> tab. Share the
-        spreadsheet with whoever you like — and edits they make there can be read back in.
+        A two-way sync. Syncing rewrites the readable tabs and the hidden <code>Vault</code> tab.
+        Share the Google spreadsheet with whoever you like — and edits they make there can be read
+        back in.
       </span>
 
       <div className="stack tight faint mono" style={{ marginTop: 6, fontSize: 12 }}>
         <div data-testid="sheets-account">{status.clientEmail}</div>
         <div data-testid="sheets-last">
           {status.lastPushAt
-            ? `Last backed up ${status.lastPushAt.replace('T', ' ')}`
-            : 'Never backed up yet'}
+            ? `Last synced ${status.lastPushAt.replace('T', ' ')}`
+            : 'Never synced yet'}
         </div>
       </div>
 
       {/*
-        Which spreadsheet this is pointing at, and how to point it somewhere
-        else. Obvious, and missing from the first version of this panel: the
-        only way to change it was to forget the credentials and set the whole
-        thing up again, key file and all.
+        Which Google spreadsheet this is pointing at, and how to point it
+        somewhere else. Obvious, and missing from the first version of this
+        panel: the only way to change it was to forget the credentials and set
+        the whole thing up again, key file and all.
       */}
       <div className="inline wrap" style={{ marginTop: 6, gap: 8 }}>
         <a
@@ -166,14 +170,14 @@ export function SheetsPanel({
           rel="noreferrer"
           data-testid="sheets-link-out"
         >
-          Open the spreadsheet
+          Open the Google spreadsheet
         </a>
         <button
           className="btn subtle sm"
           onClick={() => setChanging((open) => !open)}
           data-testid="sheets-change"
         >
-          {changing ? 'Keep this one' : 'Use a different spreadsheet…'}
+          {changing ? 'Keep this one' : 'Use a different Google spreadsheet…'}
         </button>
       </div>
 
@@ -184,7 +188,7 @@ export function SheetsPanel({
               className="input grow"
               placeholder="https://docs.google.com/spreadsheets/d/…"
               value={link}
-              aria-label="Spreadsheet link"
+              aria-label="Google spreadsheet link"
               data-testid="sheets-link"
               onChange={(event) => setLink(event.target.value)}
             />
@@ -200,7 +204,7 @@ export function SheetsPanel({
                   // The new spreadsheet knows nothing about this board, so the
                   // old baseline would make every row look like somebody else's
                   // edit. Send the board out fresh instead.
-                  await backUp(true);
+                  await syncOut(true);
                 })
               }
             >
@@ -209,7 +213,7 @@ export function SheetsPanel({
           </div>
           <span className="hint">
             Paste the link from the address bar. Share it with the address above as an{' '}
-            <b>Editor</b> first, or the first backup will say it cannot reach it.
+            <b>Editor</b> first, or the first sync will say it cannot reach it.
           </span>
         </>
       )}
@@ -218,15 +222,15 @@ export function SheetsPanel({
         <div className="callout danger" data-testid="sheets-blocked">
           <IconWarning size={14} />
           <div>
-            <b>Nothing was written.</b> {blockedBy.join(', ')} changed in the spreadsheet since the
-            last backup, and overwriting would throw those edits away. Read them in first — or
-            overwrite them if they were not wanted.
+            <b>Nothing was written.</b> {blockedBy.join(', ')} changed in the Google spreadsheet
+            since the last sync, and overwriting would throw those edits away. Read them in first —
+            or overwrite them if they were not wanted.
             <div className="inline" style={{ marginTop: 8 }}>
               <button className="btn sm" onClick={check} data-testid="sheets-review-blocked">
                 Check the changes
               </button>
-              <button className="btn sm subtle" onClick={() => void backUp(true)}>
-                Overwrite the spreadsheet
+              <button className="btn sm subtle" onClick={() => void syncOut(true)}>
+                Overwrite the Google spreadsheet
               </button>
             </div>
           </div>
@@ -236,11 +240,11 @@ export function SheetsPanel({
       <div className="inline wrap" style={{ marginTop: 8 }}>
         <button
           className="btn primary"
-          onClick={() => void backUp()}
+          onClick={() => void syncOut()}
           disabled={busy !== null}
           data-testid="sheets-push"
         >
-          {busy === 'push' ? 'Backing up…' : 'Back up now'}
+          {busy === 'push' ? 'Syncing…' : 'Sync now'}
         </button>
         <button
           className="btn"
@@ -263,13 +267,13 @@ export function SheetsPanel({
             )
           }
         />
-        <span>Keep the spreadsheet up to date automatically</span>
+        <span>Keep the Google spreadsheet in sync automatically</span>
         <select
           className="select"
           style={{ width: 'auto' }}
           value={status.everyMinutes}
           disabled={!status.auto}
-          aria-label="How often to back up"
+          aria-label="How often to sync"
           data-testid="sheets-interval"
           onChange={(event) =>
             void guard('auto', async () =>
@@ -285,8 +289,8 @@ export function SheetsPanel({
         </select>
       </label>
       <span className="hint">
-        Only when something has actually changed, and never over an edit made in the spreadsheet —
-        it stops and tells you instead.
+        Only when something has actually changed, and never over an edit made in the Google
+        spreadsheet — it stops and tells you instead.
       </span>
 
       <div className="inline" style={{ marginTop: 10 }}>
@@ -305,9 +309,9 @@ export function SheetsPanel({
 
 const SORT_LABEL: Record<SheetChange['sort'], string> = {
   conflict: 'Changed in both',
-  edit: 'Changed in the spreadsheet',
-  added: 'Added in the spreadsheet',
-  missing: 'Removed from the spreadsheet',
+  edit: 'Changed in the Google spreadsheet',
+  added: 'Added in the Google spreadsheet',
+  missing: 'Removed from the Google spreadsheet',
   unsupported: 'Cannot be applied',
 };
 
@@ -338,7 +342,7 @@ function ReviewList({
 
       {groups.length === 0 && review.problems.length === 0 && (
         <p className="faint" data-testid="sheets-no-changes" style={{ marginTop: 0 }}>
-          Nothing has changed in the spreadsheet since the last backup.
+          Nothing has changed in the Google spreadsheet since the last sync.
         </p>
       )}
 

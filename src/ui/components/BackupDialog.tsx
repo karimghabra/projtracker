@@ -1,11 +1,17 @@
 /**
- * Backing up, and getting it back.
+ * Backing up, syncing, and getting it back.
  *
- * Two routes to the same thing. A backup file is a workbook with the whole
- * vault hidden inside it — nothing to set up, works offline, and the readable
- * sheets are right there. A Google spreadsheet is the same content kept
- * somewhere that is not this laptop, which is the only version of "backup"
- * that survives losing the laptop.
+ * Two routes out, and they are not the same kind of thing. A **backup file** is
+ * a workbook with the whole vault hidden inside it — nothing to set up, works
+ * offline, written once and never read from again unless something goes wrong.
+ * A **Google spreadsheet** is a two-way sync: the board goes out on demand or
+ * on a timer, and what somebody types in the readable tabs comes back. It is
+ * called a sync because that is what it does; calling it a backup hid the half
+ * that reads edits in.
+ *
+ * The sync carries a `Vault` tab as well, so it can also be restored from —
+ * which is why "Start again from a backup" lists it. That is the only place the
+ * two meet, and it stays down at the bottom on its own.
  *
  * Restoring is deliberately unfriendly: it names what it is about to replace,
  * refuses a damaged backup rather than restoring most of it, and cannot be
@@ -130,7 +136,7 @@ export function BackupDialog({ onClose }: { onClose: () => void }) {
   return (
     <>
       <Modal
-        title="Backup"
+        title="Backup and sync"
         wide
         onClose={onClose}
         footer={
@@ -155,9 +161,9 @@ export function BackupDialog({ onClose }: { onClose: () => void }) {
         <div className="field">
           <label>A backup file</label>
           <span className="hint">
-            A spreadsheet with the readable sheets on top and the whole vault hidden inside it.
-            Nothing to set up, works offline. An ordinary export is not this: it is a report, and
-            it cannot be restored from.
+            An <code>.xlsx</code> workbook with the readable sheets on top and the whole vault
+            hidden inside it. Nothing to set up, works offline. An ordinary export is not this: it
+            is a report, and it cannot be restored from.
           </span>
           <div className="inline wrap" style={{ marginTop: 8 }}>
             <button
@@ -176,10 +182,10 @@ export function BackupDialog({ onClose }: { onClose: () => void }) {
 
         {/* ----------------------------------------------- google sheets */}
         <div className="field">
-          <label>Google Sheets</label>
+          <label>Sync with a Google spreadsheet</label>
           {!bridge ? (
             <span className="hint" data-testid="sheets-desktop-only">
-              Backing up to Google Sheets needs the desktop app — a browser tab has nowhere safe to
+              Syncing with Google Sheets needs the desktop app — a browser tab has nowhere safe to
               keep the key.
             </span>
           ) : status?.configured ? (
@@ -208,16 +214,19 @@ export function BackupDialog({ onClose }: { onClose: () => void }) {
         <hr className="sep" />
 
         {/*
-          Recovery, on its own and last. Everything above adds to a backup or
-          merges a change; everything here throws the current vault away. They
-          are kept apart because a merge and a replace with similar labels sitting
-          side by side is the worst mistake this dialog could invite.
+          Recovery, on its own and last. Everything above writes a backup or
+          syncs a change; everything here throws the current vault away. They are
+          kept apart because a merge and a replace with similar labels sitting
+          side by side is the worst mistake this dialog could invite — which is
+          also why this section did not become "sync" when the section above it
+          did. Restoring is a restore, and it says so.
         */}
         <div className="field">
           <label>Start again from a backup</label>
           <span className="hint">
             Replaces everything in the vault. Not a merge, and not undoable — this is the button
-            for when something has already gone wrong.
+            for when something has already gone wrong. The Google spreadsheet is read from its
+            hidden <code>Vault</code> tab, never from the tabs you can edit.
           </span>
           <div className="inline wrap" style={{ marginTop: 8 }}>
             <label className="btn" htmlFor="backup-file">
@@ -242,7 +251,7 @@ export function BackupDialog({ onClose }: { onClose: () => void }) {
                 disabled={busy !== null}
                 data-testid="sheets-pull"
               >
-                {busy === 'pull' ? 'Reading…' : 'Restore from the spreadsheet…'}
+                {busy === 'pull' ? 'Reading…' : 'Restore from the Google spreadsheet…'}
               </button>
             )}
           </div>
@@ -308,8 +317,8 @@ function SheetsSetup({
         </li>
         <li>Choose that key file below.</li>
         <li>
-          Make a spreadsheet, share it with the robot's address as an <b>Editor</b>, and paste its
-          link below.
+          Make a Google spreadsheet, share it with the robot's address as an <b>Editor</b>, and
+          paste its link below.
         </li>
       </ol>
 

@@ -1,5 +1,5 @@
 /**
- * Keeping the spreadsheet current without being asked.
+ * Keeping the Google spreadsheet in sync without being asked.
  *
  * Driven from the renderer rather than the Electron shell, so the domain layer
  * stays where it belongs and this whole file is a no-op in a browser tab.
@@ -53,7 +53,7 @@ export function useAutoSync(): void {
         }
 
         // Wait for the vault to stop moving. Pushing in the middle of somebody
-        // typing means a spreadsheet full of half-finished names.
+        // typing means a Google spreadsheet full of half-finished names.
         if (settling !== vault) {
           settling = vault;
           return;
@@ -70,12 +70,12 @@ export function useAutoSync(): void {
 
         if (outcome.blocked) {
           // Deliberately not retried and not forced. Somebody typed in the
-          // spreadsheet; overwriting it is exactly the thing this feature
+          // Google spreadsheet; overwriting it is exactly the thing this feature
           // exists to avoid, so it stops and says so once.
           if (!warned) {
             warned = true;
             store.toast(
-              `Not backed up: ${(outcome.edited ?? []).join(', ')} changed in the spreadsheet. Open Backup and check the changes.`,
+              `Not synced: ${(outcome.edited ?? []).join(', ')} changed in the Google spreadsheet. Open Backup and sync to check the changes.`,
               'error',
             );
           }
@@ -85,8 +85,8 @@ export function useAutoSync(): void {
         warned = false;
       } catch {
         // Offline, asleep, or Google having a moment. The next tick tries
-        // again; a backup that shouts about every dropped connection is a
-        // backup people turn off.
+        // again; a sync that shouts about every dropped connection is a sync
+        // people turn off.
       }
     };
 

@@ -190,10 +190,10 @@ export class GoogleSheets implements SheetsTransport {
    */
   private explain(status: number, message?: string): string {
     if (status === 403) {
-      return `The spreadsheet has not been shared with ${this.account.clientEmail}. Open it in Google Sheets, press Share, and give that address Editor access.`;
+      return `The Google spreadsheet has not been shared with ${this.account.clientEmail}. Open it in Google Sheets, press Share, and give that address Editor access.`;
     }
     if (status === 404) {
-      return 'No spreadsheet with that link. Check the link, or that it has not been deleted.';
+      return 'No Google spreadsheet with that link. Check the link, or that it has not been deleted.';
     }
     if (status === 429) return 'Google is rate-limiting this account. Wait a minute and try again.';
     return message ? `Google Sheets said: ${message}` : `Google Sheets returned HTTP ${status}.`;
