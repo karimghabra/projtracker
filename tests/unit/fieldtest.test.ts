@@ -266,7 +266,12 @@ describe('sixty days of use', () => {
           expect(owner, `reminder ${reminder.id} has no run`).toBeDefined();
           expect(owner!.cancelledAt).toBeUndefined();
           const protocol = app.state.protocols.find((p) => p.id === owner!.protocolId);
-          expect(protocol!.steps.some((s) => s.id === stepId)).toBe(true);
+          const step = protocol!.steps.find((s) => s.id === stepId);
+          expect(step, `reminder ${reminder.id} has no step`).toBeDefined();
+          // Not merely that *a* step holds the id — that the reminder still
+          // names the step it was generated from. A positional re-key keeps
+          // every id present while moving them all onto different work.
+          expect(reminder.title).toBe(`${protocol!.name}: ${step!.name}`);
         }
         if (reminder.source.kind === 'experiment') {
           expect(app.state.nodes[reminder.source.nodeId]?.experiment).toBeDefined();

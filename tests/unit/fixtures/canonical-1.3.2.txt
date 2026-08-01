@@ -1,0 +1,146 @@
+### deps.pt
+dep d10
+  from: n3
+  to: n8
+  createdAt: 2026-07-30T09:30
+
+### inventory.pt
+scaffoldtype collagen-sponge
+  name: Collagen sponge
+  material: Type I collagen
+  createdAt: 2026-07-30T09:00
+batch b12
+  type: collagen-sponge
+  count: 24
+  fabricatedOn: 2026-07-29
+  state: crosslinking
+  run: x13
+  event e0
+    state: fabricated
+    at: 2026-07-29T14:00
+  event e1
+    state: crosslinking
+    at: 2026-07-30T09:15
+protocol edc-nhs
+  name: EDC/NHS crosslinking
+  agent: EDC/NHS
+  builtin: true
+  pstep s1
+    name: Prepare MES buffer
+    offsetHours: 0
+    durationHours: 0.5
+  pstep s2
+    name: Immerse scaffolds
+    offsetHours: 0.5
+run x13
+  protocol: edc-nhs
+  batches: b12
+  startedAt: 2026-07-30T09:15
+  completedSteps: s1
+
+### journal/2026-07.pt
+note j20
+  at: 2026-07-30T10:05
+  node: n4
+  text: warped at 60 C
+
+### meta.pt
+meta vault
+  version: 1
+  nextId: 14
+
+### planner.pt
+today e00000
+  date: 2026-07-30
+  node: n4
+  order: 0
+  outcome: completed
+today e00001
+  date: 2026-07-30
+  node: n5
+  order: 1
+reminder r11
+  title: Order collagen
+  date: 2026-08-04
+  spanDays: 3
+  sourceKind: manual
+
+### projects/tendon-study.pt
+project tendon-study
+  id: n1
+  name: Tendon Scaffold Study
+  seq: 1
+  createdAt: 2026-07-30T09:00
+  notes: the real one
+  milestone fabrication
+    id: n2
+    name: Fabrication
+    seq: 1
+    createdAt: 2026-07-30T09:00
+    goal cad-design
+      id: n3
+      name: CAD design
+      seq: 1
+      createdAt: 2026-07-30T09:00
+      task draft-geometry
+        id: n4
+        name: Draft geometry
+        seq: 1
+        status: done
+        health: on_track
+        createdAt: 2026-07-30T09:00
+        doneAt: 2026-07-30T11:20
+        tags: cad, urgent
+      task peer-review
+        id: n5
+        name: Peer review
+        seq: 2
+        seqSource: assumed
+        createdAt: 2026-07-30T09:00
+        plannedFor: 2026-08-14
+        waitingReason: Sam is away
+        waitingUntil: 2026-08-10
+        link l0
+          label: the CAD file
+          href: https://example.com/cad
+        step s1
+          text: read the drawing
+          done: true
+        step s2
+          text: check tolerances
+      experiment osteogenic-culture
+        id: n6
+        name: Osteogenic culture
+        seq: 3
+        createdAt: 2026-07-30T09:00
+        culture spec
+          sampleCount: 24
+          cellsPerScaffold: 50000
+          cellLine: hMSC
+          seedingDate: 2026-08-03
+          durationDays: 21
+          mediaChangeEveryDays: 2
+          endpoint: Fix and stain
+          stagesDone: seed
+          phase p0
+            name: Proliferation
+            startDay: 0
+          phase p1
+            name: Differentiation
+            startDay: 7
+  milestone characterisation
+    id: n7
+    name: Characterisation
+    seq: 2
+    createdAt: 2026-07-30T09:00
+    goal mechanical
+      id: n8
+      name: Mechanical testing
+      seq: 1
+      ordering: parallel
+      createdAt: 2026-07-30T09:00
+      task tensile
+        id: n9
+        name: Tensile to failure
+        seq: 1
+        createdAt: 2026-07-30T09:00

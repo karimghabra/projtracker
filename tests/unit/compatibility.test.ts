@@ -11,6 +11,8 @@
  * frozen, and that the current code can still read it.
  */
 
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { App } from '@commands/app.ts';
 import { fixedClock } from '@core/dates.ts';
@@ -187,6 +189,39 @@ function vaultAsShipped(): MemoryVault {
   return vault;
 }
 
+/**
+ * The canonical bytes the current build writes for the vault above, one
+ * `### <path>` section per file. Kept beside the test rather than inline so a
+ * change to what reaches disk shows up as a reviewable diff on its own.
+ */
+function canonicalFixture(): Record<string, string> {
+  const text = readFileSync(
+    fileURLToPath(new URL('./fixtures/canonical-1.3.2.txt', import.meta.url)),
+    'utf8',
+  ).replace(/\r\n/g, '\n');
+
+  const files: Record<string, string> = {};
+  let path = '';
+  let body: string[] = [];
+  const flush = () => {
+    if (path) files[path] = `${body.join('\n')}\n`;
+  };
+  for (const line of text.split('\n')) {
+    if (line.startsWith('### ')) {
+      flush();
+      path = line.slice(4).trim();
+      body = [];
+    } else if (path) {
+      body.push(line);
+    }
+  }
+  flush();
+  // Each section ends with the blank line that separates it from the next, which
+  // is the file's own trailing newline. Drop the extra the split leaves behind.
+  for (const key of Object.keys(files)) files[key] = files[key]!.replace(/\n\n$/, '\n');
+  return files;
+}
+
 const CLOCK = fixedClock('2026-08-05T09:00');
 
 describe('a vault written by 1.3.2', () => {
@@ -286,6 +321,43 @@ describe('a vault written by 1.3.2', () => {
     expect(reloaded.batches).toEqual(state.batches);
     expect(reloaded.runs).toEqual(state.runs);
     expect(reloaded.notes).toEqual(state.notes);
+    expect(reloaded.protocols).toEqual(state.protocols);
+  });
+
+  /**
+   * The one that makes invariant 7 mean what it says.
+   *
+   * Comparing parsed state to parsed state cannot see a serializer that starts
+   * writing one extra field to every node: both sides gain it and agree. Only
+   * bytes catch that, and the cost of missing it is every file in a live vault
+   * rewritten on first launch, with the whole suite still green.
+   *
+   * `fixtures/canonical-1.3.2.txt` is what the current build writes when it saves
+   * the vault above. If this goes red you have changed what reaches disk. That
+   * may well be intended — but confirm that it is, and only then regenerate the
+   * fixture, because every user's files are about to be rewritten the same way.
+   */
+  it('writes the 1.3.2 vault back as exactly the bytes we have frozen', () => {
+    const rewritten = new MemoryVault();
+    saveState(rewritten, loadState(vaultAsShipped()));
+
+    const expected = canonicalFixture();
+    expect(rewritten.list('')).toEqual(Object.keys(expected));
+    for (const [path, text] of Object.entries(expected)) {
+      expect(rewritten.read(path), path).toBe(text);
+    }
+  });
+
+  /** Saving what was just saved changes nothing: canonical form is a fixed point. */
+  it('is a fixed point', () => {
+    const once = new MemoryVault();
+    saveState(once, loadState(vaultAsShipped()));
+    const twice = new MemoryVault();
+    saveState(twice, loadState(once));
+
+    for (const path of once.list('')) {
+      expect(twice.read(path), path).toBe(once.read(path));
+    }
   });
 
   it('survives being edited by the new build', () => {
