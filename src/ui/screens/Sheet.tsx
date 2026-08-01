@@ -115,9 +115,16 @@ export function SheetScreen() {
           break;
         }
         case 'status': {
-          if (value === 'done') run((a) => a.complete(row.id), { silent: true });
-          else if (value === 'in_progress') run((a) => a.start(row.id), { silent: true });
-          else if (value === 'dropped') run((a) => a.drop(row.id), { silent: true });
+          const leaf = row.kind === 'task' || row.kind === 'experiment';
+          // A container takes its status from its contents, so only the two that
+          // mean something on one are offered — the others used to be accepted
+          // by the cell and then refused by the command layer.
+          if (value === 'done') {
+            if (leaf) run((a) => a.complete(row.id), { silent: true });
+            else run((a) => a.completeSubtree(row.id), { silent: true });
+          } else if (value === 'in_progress') {
+            if (leaf) run((a) => a.start(row.id), { silent: true });
+          } else if (value === 'dropped') run((a) => a.drop(row.id), { silent: true });
           else run((a) => a.reopen(row.id), { silent: true });
           break;
         }
@@ -245,8 +252,12 @@ export function SheetScreen() {
               className={[
                 'sheet-row',
                 row.startsProject ? 'starts-project' : '',
-                row.status === 'done' ? 'is-done' : '',
+                // Derived, not stored: a milestone whose every task is done is
+                // done, and used to read "done" in its Status cell while being
+                // styled as though it were still open.
+                row.derived === 'done' ? 'is-done' : '',
                 row.status === 'dropped' ? 'is-dropped' : '',
+                `health-${row.health}`,
               ].filter(Boolean).join(' ')}
               role="row"
               data-testid={`sheet-row-${row.id}`}
@@ -272,6 +283,10 @@ export function SheetScreen() {
                       active ? 'active' : '',
                       editable ? '' : 'readonly',
                       own ? 'own-name' : '',
+                      // No swatch for "not begun": it is where everything
+                      // starts, and a column of identical squares says nothing
+                      // while making the ones that matter harder to see.
+                      col.id === 'health' && row.health !== 'not_begun' ? 'health-cell' : '',
                     ].filter(Boolean).join(' ')}
                     style={{ width: col.width }}
                     data-testid={`cell-${row.id}-${col.id}`}
@@ -343,8 +358,9 @@ function display(row: SheetRow, col: Column): string {
     case 'milestone':
     case 'goal':
     case 'task':
-      // Ancestors are shown faintly for context but belong to another row.
-      return own ? (row[col.id] as string) : (row[col.id] as string);
+      // Each level names itself on its own row; the columns above a row are
+      // empty, which is what makes the grid read as a hierarchy.
+      return own ? (row[col.id] as string) : '';
     case 'status':
       return row.derived.replace('_', ' ');
     case 'completed':

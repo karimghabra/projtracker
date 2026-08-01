@@ -201,6 +201,7 @@ function TreeRow({
   const setOpen = (next: boolean) => setState({ nonce: bulk.nonce, open: next });
   const [adding, setAdding] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmComplete, setConfirmComplete] = useState(false);
   const childKind = childKindOf(node.kind);
 
   return (
@@ -223,6 +224,8 @@ function TreeRow({
         >
           {open ? <IconChevronDown size={13} /> : <IconChevronRight size={13} />}
         </button>
+
+        <CompleteBox node={node} onBulk={() => setConfirmComplete(true)} />
 
         <input
           className="input seq-input"
@@ -328,7 +331,68 @@ function TreeRow({
           onClose={() => setConfirmDelete(false)}
         />
       )}
+
+      {confirmComplete && (
+        <ConfirmDialog
+          title={`Finish "${node.name}"?`}
+          body={
+            <>
+              <p style={{ marginTop: 0 }}>
+                This completes everything still open inside it, dated today.
+              </p>
+              <p className="faint" style={{ marginBottom: 0 }}>
+                A {node.kind} is finished when its contents are, so that is what this ticks. One
+                undo puts it all back.
+              </p>
+            </>
+          }
+          confirmLabel="Finish"
+          destructive={false}
+          onConfirm={() => run((a) => a.completeSubtree(node.id))}
+          onClose={() => setConfirmComplete(false)}
+        />
+      )}
     </>
+  );
+}
+
+/**
+ * Ticking something off without opening the detail pane.
+ *
+ * A leaf completes directly. A container has no completion of its own — it is
+ * finished when its contents are (§2.4) — so its box asks the command layer to
+ * finish the work inside instead, behind a confirmation, and reads as checked
+ * once that has happened.
+ */
+function CompleteBox({ node, onBulk }: { node: TreeNode; onBulk: () => void }) {
+  const { run } = useApp();
+  const done = node.derived === 'done';
+  const container = node.kind !== 'task' && node.kind !== 'experiment';
+
+  const label = done
+    ? `Reopen ${node.name}`
+    : container
+      ? `Finish everything in ${node.name}`
+      : `Complete ${node.name}`;
+
+  return (
+    <input
+      type="checkbox"
+      className="check"
+      checked={done}
+      disabled={container && done}
+      aria-label={label}
+      title={
+        container && done ? `Finished because everything inside it is.` : label
+      }
+      data-testid={`complete-${node.id}`}
+      onClick={(event) => event.stopPropagation()}
+      onChange={() => {
+        if (container) onBulk();
+        else if (done) run((a) => a.reopen(node.id));
+        else run((a) => a.complete(node.id));
+      }}
+    />
   );
 }
 

@@ -34,7 +34,6 @@ import {
   IconGraph,
   IconMinus,
   IconPause,
-  IconPlay,
   IconPlus,
 } from '../components/icons.tsx';
 
@@ -729,13 +728,21 @@ function GraphInspector({
           aria-label="Name"
           onChange={(event) => run((a) => a.updateNode(id, { name: event.target.value }), { silent: true })}
         />
-        <button className="btn sm" onClick={() => run((a) => a.start(id))} aria-label="Start">
-          <IconPlay size={12} />
-        </button>
+        {/*
+          The graph draws only containers, and a container cannot be started or
+          completed in its own right. Start would throw every time it was
+          pressed, so it is not offered; Complete finishes the work inside,
+          which is the only sense in which a milestone is ever "done".
+        */}
         <button className="btn sm" onClick={() => run((a) => a.pause(id))} aria-label="Pause">
           <IconPause size={12} />
         </button>
-        <button className="btn sm primary" onClick={() => run((a) => a.complete(id))} aria-label="Complete">
+        <button
+          className="btn sm primary"
+          onClick={() => run((a) => a.completeSubtree(id))}
+          aria-label="Complete"
+          title={`Complete everything still open in ${node.name}`}
+        >
           <IconCheck size={12} />
         </button>
       </div>
