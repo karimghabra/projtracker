@@ -12,6 +12,7 @@ import type { NodeView, TreeNode } from '../../commands/views.ts';
 import { useApp } from '../state/store.ts';
 import { ConfirmDialog, Empty, HealthChip, InlineEdit, ProgressBar, StatusChip } from '../components/ui.tsx';
 import { NodeDetail } from '../components/NodeDetail.tsx';
+import { PlanButton } from '../components/PlanDialog.tsx';
 import { NewProjectWizard } from './NewProject.tsx';
 import { ImportButton, ImportDialog } from '../components/ImportDialog.tsx';
 import { ExportButton } from '../components/ExportButton.tsx';
@@ -265,6 +266,9 @@ function TreeRow({
         <StatusChip status={node.derived} />
 
         <span className="tree-actions" onClick={(event) => event.stopPropagation()}>
+          {(node.kind === 'task' || node.kind === 'experiment') && (
+            <PlanButton nodeId={node.id} name={node.name} plannedFor={node.plannedFor} />
+          )}
           {childKind && (
             <button
               className="btn ghost icon sm"

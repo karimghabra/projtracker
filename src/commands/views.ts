@@ -213,6 +213,8 @@ export interface TodayItemView {
   node?: NodeView;
   reminderTime?: string;
   reminderNotes?: string;
+  /** The day it is currently set for, so "move it" can open on that day. */
+  reminderDate?: DateOnly;
   /** Set when the item came from a protocol or experiment, for a small badge. */
   origin?: 'protocol' | 'experiment' | 'manual';
   /**
@@ -238,6 +240,7 @@ export function todayView(index: GraphIndex, date: DateOnly): TodayView {
     node: item.node ? nodeView(index, item.node.id, date) : undefined,
     reminderTime: item.reminder?.time,
     reminderNotes: item.reminder?.notes,
+    reminderDate: item.reminder?.date,
     origin: item.reminder?.source.kind,
     group: item.reminder ? groupOf(index.state, item.reminder) : undefined,
   }));

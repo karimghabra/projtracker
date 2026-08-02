@@ -254,6 +254,21 @@ export class App {
     return todayView(this.index, date);
   }
 
+  /**
+   * The days a "put this off until…" control offers as shortcuts.
+   *
+   * Here rather than in a component because a client computes nothing about
+   * dates — and because "next week" is a decision about what the phrase means,
+   * which belongs where the rest of the calendar arithmetic lives.
+   */
+  plannerDates(): { today: DateOnly; tomorrow: DateOnly; nextWeek: DateOnly } {
+    return {
+      today: this.today,
+      tomorrow: addDays(this.today, 1),
+      nextWeek: addDays(this.today, 7),
+    };
+  }
+
   calendar(month: DateOnly = this.today): CalendarDay[] {
     return calendarView(this.index, month, this.today);
   }
@@ -968,6 +983,45 @@ export class App {
       }
 
       return { ok: true as const, message: done ? `Done: ${target.title}` : `Reopened: ${target.title}` };
+    });
+  }
+
+  /**
+   * Move a reminder to another day.
+   *
+   * Only a manual one. A protocol step's date is its run's start plus a fixed
+   * offset, and an experiment stage's is its seeding date plus a day count —
+   * both are regenerated on every mutation, so a new date written here would be
+   * overwritten within the second and the user would watch it snap back. Worse,
+   * moving one step of a protocol without the rest would be a claim about the
+   * chemistry that nobody made. Move the run or the seeding date and the whole
+   * timeline follows, which is the honest version of the same wish.
+   */
+  moveReminder(id: string, date: DateOnly): Delta {
+    const reminder = this.state.reminders.find((r) => r.id === id);
+    if (!reminder) throw notFound('reminder', id);
+    if (!isDateOnly(date)) throw invalid(`"${date}" is not a date (expected YYYY-MM-DD).`);
+    if (reminder.source.kind === 'protocol') {
+      throw notAllowed(
+        `"${reminder.title}" is timed from when its protocol run started. Move the run, and every step moves with it.`,
+      );
+    }
+    if (reminder.source.kind === 'experiment') {
+      throw notAllowed(
+        `"${reminder.title}" is timed from the experiment's seeding date. Change that, and the whole timeline follows.`,
+      );
+    }
+
+    return this.mutate(`Move "${reminder.title}" to ${date}`, (draft) => {
+      const target = draft.reminders.find((r) => r.id === id)!;
+      target.date = date;
+      // A reminder that had been ticked and is now moved to a future day is
+      // being asked for again, not being un-ticked by accident.
+      if (target.done && date > dateOf(this.now)) {
+        target.done = false;
+        target.doneAt = undefined;
+      }
+      return { ok: true as const, message: `Moved "${target.title}" to ${date}.` };
     });
   }
 

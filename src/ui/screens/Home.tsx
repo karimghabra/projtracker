@@ -14,6 +14,7 @@ import { useApp } from '../state/store.ts';
 import { Calendar, DayPanel } from '../components/Calendar.tsx';
 import { UpcomingPanel } from '../components/UpcomingPanel.tsx';
 import { Empty, Modal, ProgressBar, QuickAdd, StatusChip } from '../components/ui.tsx';
+import { PlanButton, PlanDialog } from '../components/PlanDialog.tsx';
 import { NewProjectWizard } from './NewProject.tsx';
 import {
   IconCalendar,
@@ -210,6 +211,7 @@ function TodayRow({
 }) {
   const { app, run } = useApp();
   const [startingProtocol, setStartingProtocol] = useState(false);
+  const [moving, setMoving] = useState(false);
 
   const toggle = () => {
     if (item.kind === 'reminder') {
@@ -273,6 +275,37 @@ function TodayRow({
             </button>
           </>
         )}
+        {/*
+          Putting something off is a first-class act, not a failure to do it.
+          A task moves by its planned date; a manual reminder moves its own day.
+          A generated one is refused by the command layer with the reason, since
+          its date is arithmetic over a run or an experiment.
+        */}
+        {!item.done && item.kind === 'task' && (
+          <PlanButton nodeId={item.id} name={item.title} plannedFor={item.node?.plannedFor} />
+        )}
+        {!item.done && item.kind === 'reminder' && (
+          <>
+            <button
+              className="btn ghost icon sm"
+              title="Move this to another day"
+              aria-label={`Move ${item.title} to another day`}
+              data-testid={`move-${item.key}`}
+              onClick={() => setMoving(true)}
+            >
+              <IconClock size={13} />
+            </button>
+            {moving && (
+              <PlanDialog
+                title={item.title}
+                current={item.reminderDate}
+                onPick={(date) => run((a) => a.moveReminder(item.id, date))}
+                onClose={() => setMoving(false)}
+              />
+            )}
+          </>
+        )}
+
         {item.kind === 'task' && !item.done && (
           <>
             <button
@@ -442,6 +475,14 @@ function ReadyPanel() {
                     {row.stepsDone}/{row.stepsTotal}
                   </span>
                 )}
+                {/* When it is already spoken for, say so: "not yet" and "nobody
+                    has thought about it" are different answers. */}
+                {row.plannedFor && (
+                  <span className="chip accent" data-testid={`ready-planned-${row.id}`}>
+                    {formatRelativeDay(row.plannedFor, app.today)}
+                  </span>
+                )}
+                <PlanButton nodeId={row.id} name={row.name} plannedFor={row.plannedFor} />
                 <button
                   className="btn sm"
                   onClick={() => run((a) => a.todayAdd(row.id))}

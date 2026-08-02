@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { harness, sampleBoard, todayTitles } from './helpers.ts';
+import { expectThrows, harness, sampleBoard, todayTitles } from './helpers.ts';
 
 describe('the day list', () => {
   it('starts empty and takes what you pull into it', () => {
@@ -186,6 +186,81 @@ describe('planning for a specific day', () => {
     const h = harness();
     const b = sampleBoard(h);
     expect(() => h.app.planFor(b.draft, '3 August')).toThrow(/not a date/);
+  });
+
+  it('offers today, tomorrow and next week as the shortcut days', () => {
+    const h = harness('2026-07-30T09:00');
+    expect(h.app.plannerDates()).toEqual({
+      today: '2026-07-30',
+      tomorrow: '2026-07-31',
+      nextWeek: '2026-08-06',
+    });
+  });
+});
+
+describe('putting a reminder off until another day', () => {
+  it('moves a manual reminder, and it turns up on the new day', () => {
+    const h = harness('2026-07-30T09:00');
+    const { id } = h.app.addReminder('Order collagen', '2026-07-30');
+    expect(todayTitles(h.app)).toEqual(['Order collagen']);
+
+    h.app.moveReminder(id, '2026-08-04');
+    expect(h.app.todayList().items).toEqual([]);
+
+    h.clock.set('2026-08-04T09:00');
+    expect(todayTitles(h.app)).toEqual(['Order collagen']);
+  });
+
+  it('asks again for something already ticked when it is moved to a later day', () => {
+    const h = harness('2026-07-30T09:00');
+    const { id } = h.app.addReminder('Water the cells', '2026-07-30');
+    h.app.completeReminder(id);
+    expect(h.app.state.reminders.find((r) => r.id === id)!.done).toBe(true);
+
+    h.app.moveReminder(id, '2026-08-04');
+    const moved = h.app.state.reminders.find((r) => r.id === id)!;
+    expect(moved.done).toBe(false);
+    expect(moved.doneAt).toBeUndefined();
+  });
+
+  /**
+   * The date of a generated reminder is arithmetic over its source, and
+   * `syncGeneratedReminders` recomputes it on every mutation — so a new date
+   * written here would be overwritten within the second and the user would
+   * watch it snap back. Refusing, with the reason, is the honest answer.
+   */
+  it('refuses to move a protocol step, and says to move the run instead', () => {
+    const h = harness('2026-07-30T09:00');
+    const { id: type } = h.app.addScaffoldType('Collagen sponge');
+    const batch = h.app.addBatch(type, 12).id;
+    h.app.startRun('edc-nhs', [batch]);
+
+    const step = h.app.state.reminders.find((r) => r.source.kind === 'protocol')!;
+    const failure = expectThrows(() => h.app.moveReminder(step.id, '2026-08-04'));
+    expect(failure.message).toMatch(/protocol run started/);
+
+    // And nothing moved.
+    expect(h.app.state.reminders.find((r) => r.id === step.id)!.date).toBe(step.date);
+  });
+
+  it('refuses to move an experiment stage, and points at the seeding date', () => {
+    const h = harness('2026-07-30T09:00');
+    const b = sampleBoard(h);
+    h.app.setExperiment(b.experiment, {
+      sampleCount: 6,
+      seedingDate: '2026-08-03',
+      durationDays: 7,
+    });
+
+    const stage = h.app.state.reminders.find((r) => r.source.kind === 'experiment')!;
+    const failure = expectThrows(() => h.app.moveReminder(stage.id, '2026-09-01'));
+    expect(failure.message).toMatch(/seeding date/);
+  });
+
+  it('rejects a date that is not one', () => {
+    const h = harness();
+    const { id } = h.app.addReminder('Order collagen', '2026-07-30');
+    expect(() => h.app.moveReminder(id, 'next Tuesday')).toThrow(/not a date/);
   });
 });
 
