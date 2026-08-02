@@ -59,6 +59,39 @@ describe('rollover', () => {
     expect(item!.ageDays).toBe(3);
   });
 
+  /**
+   * There used to be a 120-day horizon past which a carried task simply stopped
+   * being offered — no announcement, no "still owed" state, and the planner
+   * entry still sitting in the vault with no outcome. Nobody specified it; it
+   * arrived unremarked in the rewrite. These two pin its absence, because the
+   * failure it caused is invisible: nothing goes red, the item is just gone.
+   */
+  it('carries a task forward past any horizon, and still says how late it is', () => {
+    const h = harness('2026-01-01T09:00');
+    const b = sampleBoard(h);
+    h.app.todayAdd(b.draft);
+
+    // A year and a day later. Well past the old cap, and past a naive "one
+    // year" replacement for it too.
+    h.clock.set('2027-01-02T09:00');
+    const [item] = h.app.todayList().items;
+    expect(item!.title).toBe('Draft geometry');
+    expect(item!.source).toBe('rolled-over');
+    expect(item!.rolledFrom).toBe('2026-01-01');
+    expect(item!.ageDays).toBe(366);
+  });
+
+  it('keeps offering a reminder nobody dealt with, however long ago it was due', () => {
+    const h = harness('2026-01-01T09:00');
+    h.app.addReminder('Return the borrowed micrometer', '2026-01-01');
+
+    h.clock.set('2027-01-02T09:00');
+    const [item] = h.app.todayList().items;
+    expect(item!.title).toBe('Return the borrowed micrometer');
+    expect(item!.source).toBe('rolled-over');
+    expect(item!.ageDays).toBe(366);
+  });
+
   it('does not carry forward what was finished', () => {
     const h = harness('2026-07-30T09:00');
     const b = sampleBoard(h);
@@ -95,14 +128,6 @@ describe('rollover', () => {
     h.app.todayList();
     h.app.todayList();
     expect(h.app.state).toEqual(before);
-  });
-
-  it('stops carrying things forward after four months', () => {
-    const h = harness('2026-01-01T09:00');
-    const b = sampleBoard(h);
-    h.app.todayAdd(b.draft);
-    h.clock.set('2026-07-30T09:00');
-    expect(h.app.todayList().items).toEqual([]);
   });
 
   it('re-adding something dismissed earlier today brings it back', () => {

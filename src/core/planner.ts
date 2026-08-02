@@ -43,8 +43,6 @@ export interface TodayItem {
   done: boolean;
 }
 
-const ROLLOVER_LIMIT_DAYS = 120;
-
 /**
  * Entries the user acted on today, so no other source re-offers them. An
  * outcome of any kind — done, dropped, or explicitly removed — settles it.
@@ -117,7 +115,7 @@ export function todayItems(state: State, index: GraphIndex, date: DateOnly): Tod
     // a conference that is over is over. Everything else is a thing to be
     // done, and rolls forward until it is.
     const expires = reminder.spanDays !== undefined && reminder.spanDays > 1;
-    if (late > 0 && (reminder.done || expires || late > ROLLOVER_LIMIT_DAYS)) continue;
+    if (late > 0 && (reminder.done || expires)) continue;
 
     const key = `reminder:${reminder.id}`;
     if (seen.has(key) || settled.has(reminder.id)) continue;
@@ -136,10 +134,13 @@ export function todayItems(state: State, index: GraphIndex, date: DateOnly): Tod
     });
   }
 
-  // Anything left open on an earlier day carries forward.
+  // Anything left open on an earlier day carries forward, for as long as it
+  // takes. There is no horizon past which something stops being owed: a task
+  // still sitting there after a year is a fact about the work, and quietly
+  // dropping it would be the app deciding on the user's behalf that it no
+  // longer matters. Dropping it is their gesture, not the calendar's.
   const carried = state.planner
     .filter((e) => !e.outcome && dayNumber(e.date) < dayNumber(date))
-    .filter((e) => dayNumber(date) - dayNumber(e.date) <= ROLLOVER_LIMIT_DAYS)
     .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.order - b.order));
 
   for (const entry of carried) {

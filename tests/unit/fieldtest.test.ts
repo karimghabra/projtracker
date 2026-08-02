@@ -388,4 +388,60 @@ describe('sixty days of use', () => {
     expect(refused).toBeGreaterThan(0);
     void wouldCreateCycle;
   }, 120_000);
+
+  /**
+   * A year of neglect.
+   *
+   * The sixty-day run above never reaches far enough to notice a horizon, which
+   * is exactly how a 120-day cap on rollover survived in the planner unnoticed:
+   * past four months, anything still owed simply stopped being offered, with the
+   * planner entry still sitting in the vault with no outcome and nothing to
+   * indicate it had been dropped.
+   *
+   * That is the shape of bug this file exists for — invisible, and only reachable
+   * by letting time pass — so time passes here. Nothing is completed, nothing is
+   * dismissed, and every day the same things must still be owed and must still
+   * say how late they are.
+   */
+  it('still owes you, a year later, what you never dealt with', () => {
+    const h = harness(START);
+    const { app, clock } = h;
+
+    buildBoard(app);
+    // Any leaf will do; this is about time passing, not about which task.
+    const abandoned = app.ready()[0]!;
+    const first = abandoned.name;
+
+    // Day one: put a task on the list, and set a reminder. Then never touch
+    // either of them again.
+    app.todayAdd(abandoned.id);
+    app.addReminder('Return the borrowed micrometer', dateOf(clock.now()));
+
+    const startDate = dateOf(clock.now());
+    let checks = 0;
+
+    // Step a week at a time for a little over a year, well past any horizon
+    // somebody might be tempted to reintroduce.
+    for (let week = 1; week <= 53; week++) {
+      clock.advanceDays(7);
+      const today = app.todayList().items;
+
+      const task = today.find((i) => i.title === first);
+      expect(task, `week ${week}: the task stopped being owed`).toBeDefined();
+      expect(task!.source).toBe('rolled-over');
+      expect(task!.rolledFrom).toBe(startDate);
+      expect(task!.ageDays).toBe(week * 7);
+
+      const reminder = today.find((i) => i.title === 'Return the borrowed micrometer');
+      expect(reminder, `week ${week}: the reminder stopped being owed`).toBeDefined();
+      expect(reminder!.ageDays).toBe(week * 7);
+
+      checks += 1;
+    }
+
+    expect(checks).toBe(53);
+
+    // And it is still there after a reload from text, not merely in memory.
+    expect(h.reload().todayList().items.map((i) => i.title)).toContain(first);
+  }, 120_000);
 });
