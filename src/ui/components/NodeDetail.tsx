@@ -19,6 +19,7 @@ import {
   IconCheck,
   IconClock,
   IconClose,
+  IconEdit,
   IconLink,
   IconPause,
   IconPlay,
@@ -209,7 +210,13 @@ export function NodeDetail({
             value={node.notes ?? ''}
             onChange={(event) => run((a) => a.updateNode(node.id, { notes: event.target.value }), { silent: true })}
           />
+          <span className="hint">
+            What this is. For what happened, use the notebook below.
+          </span>
         </div>
+
+        {/* --------------------------------------------------- notebook */}
+        {isLeaf && <NotebookSection node={node} />}
 
         <div className="field-row">
           <div className="field">
@@ -460,6 +467,121 @@ function StepsSection({ node }: { node: NodeView }) {
         </button>
       </form>
       <span className="hint">Checklist items are not tasks — no dates, no dependencies.</span>
+    </div>
+  );
+}
+
+/**
+ * The lab notebook for one task: what happened, as it happened.
+ *
+ * A stream rather than a field, because "what this is" and "what happened on
+ * Tuesday" are different questions and one text box cannot answer both. Entries
+ * keep the time they were written — that is when the observation happened — but
+ * the text can be corrected afterwards, because readings get written down wrong
+ * and a conclusion can turn out to be the opposite of itself.
+ *
+ * These are the same records the Journal shows by day. A note that knows which
+ * task it is about is not a different kind of thing from one that does not.
+ */
+function NotebookSection({ node }: { node: NodeView }) {
+  const { app, run } = useApp();
+  const entries = app.notebook(node.id);
+  const [text, setText] = useState('');
+  const [editing, setEditing] = useState<string | null>(null);
+  const [draft, setDraft] = useState('');
+
+  const save = () => {
+    if (!text.trim()) return;
+    if (run((a) => a.capture(text, node.id), { silent: true })) setText('');
+  };
+
+  return (
+    <div className="field" data-testid="notebook">
+      <label htmlFor="d-notebook">Notebook</label>
+
+      <form
+        className="inline"
+        onSubmit={(event) => {
+          event.preventDefault();
+          save();
+        }}
+      >
+        <input
+          id="d-notebook"
+          className="input"
+          value={text}
+          placeholder="What happened?"
+          aria-label={`Add a note to ${node.name}`}
+          data-testid="notebook-add"
+          onChange={(event) => setText(event.target.value)}
+        />
+        <button className="btn sm" type="submit" disabled={!text.trim()} aria-label="Save the note">
+          <IconPlus size={12} />
+        </button>
+      </form>
+
+      <div className="stack tight" style={{ marginTop: 8 }}>
+        {entries.map((entry) => (
+          <div className="row" key={entry.id} data-testid={`notebook-${entry.id}`}>
+            {editing === entry.id ? (
+              <form
+                className="inline grow"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (run((a) => a.editNote(entry.id, draft), { silent: true })) setEditing(null);
+                }}
+              >
+                <input
+                  className="input"
+                  autoFocus
+                  value={draft}
+                  aria-label="Edit the note"
+                  data-testid="notebook-edit-field"
+                  onChange={(event) => setDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Escape') setEditing(null);
+                  }}
+                />
+                <button className="btn sm primary" type="submit" data-testid="notebook-save-edit">
+                  Save
+                </button>
+              </form>
+            ) : (
+              <>
+                <span className="mono faint nowrap" title={entry.at}>
+                  {formatDayMonth(entry.at.slice(0, 10))}
+                </span>
+                <span className="grow" style={{ minWidth: 0, whiteSpace: 'pre-wrap' }}>
+                  {entry.text}
+                </span>
+                <button
+                  className="btn ghost icon sm"
+                  aria-label={`Edit the note from ${entry.at.slice(0, 10)}`}
+                  data-testid={`notebook-edit-${entry.id}`}
+                  onClick={() => {
+                    setDraft(entry.text);
+                    setEditing(entry.id);
+                  }}
+                >
+                  <IconEdit size={12} />
+                </button>
+                <button
+                  className="btn ghost icon sm"
+                  aria-label={`Delete the note from ${entry.at.slice(0, 10)}`}
+                  onClick={() => run((a) => a.deleteNote(entry.id), { silent: true })}
+                >
+                  <IconTrash size={12} />
+                </button>
+              </>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <span className="hint">
+        Written as it happens, and editable afterwards. Everything here also shows in the Journal,
+        on the day it was written.
+      </span>
     </div>
   );
 }

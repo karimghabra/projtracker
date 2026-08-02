@@ -1052,6 +1052,46 @@ export class App {
     });
   }
 
+  /**
+   * Change what a note says, however long ago it was written.
+   *
+   * A lab notebook gets amended — a reading recorded wrong, a conclusion that
+   * turned out to be the opposite. The entry keeps its `at`, because that is
+   * when the observation happened and rewriting it would misplace the note in
+   * its own day; only the text moves. Editing an old one rewrites that month's
+   * journal file, which canonical serialization already handles.
+   *
+   * No previous version is kept. Undo is a whole-image snapshot and survives a
+   * restart, which covers a mistake; storing every draft would double the
+   * journal to answer a question nobody has asked.
+   */
+  editNote(id: string, text: string): Delta {
+    const note = this.state.notes.find((n) => n.id === id);
+    if (!note) throw notFound('note', id);
+    const clean = text.trim();
+    if (!clean) throw invalid('A note cannot be empty. Delete it instead.');
+
+    return this.mutate('Edit note', (draft) => {
+      draft.notes.find((n) => n.id === id)!.text = clean;
+      return { ok: true as const, message: 'Note updated.' };
+    });
+  }
+
+  /**
+   * One task's notebook: everything written about it, newest first.
+   *
+   * The same records the Journal shows by day. A note attached to a node is not
+   * a different kind of thing from one that is not; it just knows what it is
+   * about.
+   */
+  notebook(nodeId: NodeId): { id: string; at: Stamp; text: string }[] {
+    if (!this.state.nodes[nodeId]) throw notFound('node', nodeId);
+    return this.state.notes
+      .filter((n) => n.nodeId === nodeId)
+      .sort((a, b) => (a.at < b.at ? 1 : -1))
+      .map((n) => ({ id: n.id, at: n.at, text: n.text }));
+  }
+
   deleteNote(id: string): Delta {
     if (!this.state.notes.some((n) => n.id === id)) throw notFound('note', id);
     return this.mutate('Delete note', (draft) => {

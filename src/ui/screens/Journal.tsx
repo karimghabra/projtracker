@@ -2,13 +2,15 @@ import { useState } from 'react';
 import { MONTH_NAMES, addMonths, formatRelativeDay, startOfMonth } from '../../core/dates.ts';
 import { useApp } from '../state/store.ts';
 import { Empty } from '../components/ui.tsx';
-import { IconChevronLeft, IconChevronRight, IconJournal, IconTrash } from '../components/icons.tsx';
+import { IconChevronLeft, IconChevronRight, IconEdit, IconJournal, IconTrash } from '../components/icons.tsx';
 
 export function JournalScreen() {
   const { app, run } = useApp();
   const [cursor, setCursor] = useState(() => startOfMonth(app.today));
   const [query, setQuery] = useState('');
   const [text, setText] = useState('');
+  const [editing, setEditing] = useState<string | null>(null);
+  const [draft, setDraft] = useState('');
 
   const month = cursor.slice(0, 7);
   const notes = query.trim()
@@ -59,8 +61,8 @@ export function JournalScreen() {
         <div className="panel-body">
           {notes.length === 0 ? (
             <Empty title={query.trim() ? 'Nothing matches' : 'No notes this month'} icon={<IconJournal size={20} />}>
-              Notes are an append-only stream. Write whatever is worth keeping; nothing parses them
-              or turns them into tasks.
+              Write whatever is worth keeping, as it happens — and correct it later if it needs
+              correcting. Nothing parses a note or turns it into a task.
             </Empty>
           ) : (
             <div className="stack">
@@ -72,21 +74,61 @@ export function JournalScreen() {
                       <div className="journal-note" key={note.id}>
                         <div className="inline" style={{ alignItems: 'flex-start' }}>
                           <span className="mono faint nowrap">{note.at.slice(11, 16)}</span>
-                          <div className="grow" style={{ whiteSpace: 'pre-wrap' }}>
-                            {note.text}
-                            {note.nodeName && (
-                              <div>
-                                <span className="chip accent">{note.nodeName}</span>
+                          {editing === note.id ? (
+                            <form
+                              className="inline grow"
+                              onSubmit={(event) => {
+                                event.preventDefault();
+                                if (run((a) => a.editNote(note.id, draft), { silent: true })) {
+                                  setEditing(null);
+                                }
+                              }}
+                            >
+                              <input
+                                className="input"
+                                autoFocus
+                                value={draft}
+                                aria-label="Edit the note"
+                                data-testid="journal-edit-field"
+                                onChange={(event) => setDraft(event.target.value)}
+                                onKeyDown={(event) => {
+                                  if (event.key === 'Escape') setEditing(null);
+                                }}
+                              />
+                              <button className="btn sm primary" type="submit">
+                                Save
+                              </button>
+                            </form>
+                          ) : (
+                            <>
+                              <div className="grow" style={{ whiteSpace: 'pre-wrap' }}>
+                                {note.text}
+                                {note.nodeName && (
+                                  <div>
+                                    <span className="chip accent">{note.nodeName}</span>
+                                  </div>
+                                )}
                               </div>
-                            )}
-                          </div>
-                          <button
-                            className="btn ghost icon sm"
-                            aria-label="Delete note"
-                            onClick={() => run((a) => a.deleteNote(note.id))}
-                          >
-                            <IconTrash size={13} />
-                          </button>
+                              <button
+                                className="btn ghost icon sm"
+                                aria-label={`Edit the note from ${note.at.slice(11, 16)}`}
+                                data-testid={`journal-edit-${note.id}`}
+                                onClick={() => {
+                                  setDraft(note.text);
+                                  setEditing(note.id);
+                                }}
+                              >
+                                <IconEdit size={13} />
+                              </button>
+                              <button
+                                className="btn ghost icon sm"
+                                aria-label="Delete note"
+                                onClick={() => run((a) => a.deleteNote(note.id))}
+                              >
+                                <IconTrash size={13} />
+                              </button>
+                            </>
+                          )}
                         </div>
                       </div>
                     ))}

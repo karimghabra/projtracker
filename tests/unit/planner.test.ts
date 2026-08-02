@@ -384,6 +384,66 @@ describe('the journal', () => {
     expect(h.app.journal()[0]!.nodeName).toBe('Draft geometry');
   });
 
+  it('gives a task its own notebook, newest first', () => {
+    const h = harness('2026-07-30T09:00');
+    const b = sampleBoard(h);
+
+    h.app.capture('Warped at 60 °C', b.draft);
+    h.clock.set('2026-07-30T14:00');
+    h.app.capture('Reprinted at 55 °C, better', b.draft);
+    h.app.capture('Unrelated thought');
+    h.app.capture('About the other one', b.review);
+
+    expect(h.app.notebook(b.draft).map((n) => n.text)).toEqual([
+      'Reprinted at 55 °C, better',
+      'Warped at 60 °C',
+    ]);
+    // The Journal still shows all four; a notebook is a view, not a silo.
+    expect(h.app.journal()).toHaveLength(4);
+  });
+
+  it('amends a note written days ago, keeping when it was written', () => {
+    const h = harness('2026-07-30T09:00');
+    const b = sampleBoard(h);
+    const { id } = h.app.capture('Gel looked cloudy', b.draft);
+
+    h.clock.set('2026-08-06T11:00');
+    h.app.editNote(id, 'Gel looked cloudy — it was the buffer, not the gel');
+
+    const [entry] = h.app.notebook(b.draft);
+    expect(entry!.text).toBe('Gel looked cloudy — it was the buffer, not the gel');
+    // The observation still belongs to the day it was made.
+    expect(entry!.at.slice(0, 10)).toBe('2026-07-30');
+    expect(h.app.journal('2026-07')).toHaveLength(1);
+    expect(h.app.journal('2026-08')).toHaveLength(0);
+  });
+
+  it('survives a reload, and the amendment is what is on disk', () => {
+    const h = harness('2026-07-30T09:00');
+    const b = sampleBoard(h);
+    const { id } = h.app.capture('First reading: 4.2', b.draft);
+    h.app.editNote(id, 'First reading: 4.8 (misread the scale)');
+
+    expect(h.reload().notebook(b.draft)[0]!.text).toBe('First reading: 4.8 (misread the scale)');
+  });
+
+  it('one undo puts back what a note used to say', () => {
+    const h = harness();
+    const b = sampleBoard(h);
+    const { id } = h.app.capture('Original', b.draft);
+    h.app.editNote(id, 'Changed my mind');
+
+    h.app.undo();
+    expect(h.app.notebook(b.draft)[0]!.text).toBe('Original');
+  });
+
+  it('refuses to empty a note, because that is a deletion', () => {
+    const h = harness();
+    const b = sampleBoard(h);
+    const { id } = h.app.capture('Something', b.draft);
+    expect(() => h.app.editNote(id, '   ')).toThrow(/Delete it instead/);
+  });
+
   it('does not parse or mutate anything from a note', () => {
     const h = harness();
     const before = structuredClone(h.app.state.nodes);

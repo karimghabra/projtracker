@@ -232,8 +232,34 @@ deleting one is how you say no.
 **Calendar** — a month view of planned tasks, reminders, experiment stages, and
 experiment end dates.
 
-**Journal** — an append-only stream of quick thoughts, browsable by day,
-searchable, optionally attached to a node. Notes are notes; nothing parses them.
+**Journal** — a stream of quick thoughts, browsable by day, searchable,
+optionally attached to a node. Notes are notes; nothing parses them.
+
+**Notebook** — the same records, seen from the other end. A note that names a
+node is that node's notebook entry; a task's notebook is every note about it,
+newest first. They are deliberately one store rather than two: a lab note is
+not a different kind of thing depending on whether it happens to know which
+task it concerns, and two stores would mean two things to search, back up and
+keep in step.
+
+Entries are **written as they happen and editable afterwards**. A reading gets
+written down wrong and a conclusion turns out to be its own opposite, so the
+text can be corrected however long ago it was written — but the timestamp does
+not move, because that is when the observation happened and rewriting it would
+file the note under the wrong day. No previous version is kept: undo is a
+whole-image snapshot and survives a restart, which covers a mistake, and storing
+every draft would double the journal to answer a question nobody has asked.
+
+A node's `notes` field is a different thing and stays: it says what the task
+*is*. The notebook says what *happened*. One text box cannot answer both.
+
+**Attachments are not in the vault.** The canonical state is UTF-8 text (§1.4)
+and `Vault.read` returns a string, so a photo or a workbook cannot live inside a
+`.pt` file — and must never be base64'd into one, because undo clones the whole
+image and a few megabytes inlined would be copied into every snapshot and end
+canonical diffing. When attachments arrive they will be files beside the text,
+referenced by a note's stable id, and the backup gate (`isBackedUp`, which
+admits only `.pt`) will need a deliberate decision rather than an accident.
 
 **Progress** — which projects have gone quiet, from completion timestamps.
 
