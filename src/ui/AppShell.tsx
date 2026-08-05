@@ -11,6 +11,8 @@ import { formatRelativeDay, MONTH_NAMES, WEEKDAY_NAMES, weekdayIndex } from '../
 import { useApp } from './state/store.ts';
 import { Toasts } from './components/ui.tsx';
 import {
+  IconChevronLeft,
+  IconChevronRight,
   IconFlask,
   IconGraph,
   IconHome,
@@ -66,6 +68,9 @@ export function AppShell() {
   const [theme, setTheme] = useState(() => document.documentElement.dataset['theme'] ?? 'system');
   const [showSettings, setShowSettings] = useState(false);
   const [showBackup, setShowBackup] = useState(false);
+  const [collapsed, setCollapsed] = useState(
+    () => window.localStorage.getItem('protracker:sidebar') === 'collapsed',
+  );
 
   // Keeps the Google spreadsheet in sync by itself when that is switched on. A
   // no-op in a browser, which is why it can live at the top of the shell.
@@ -140,12 +145,12 @@ export function AppShell() {
 
   return (
     <div className="shell">
-      <nav className="sidebar" aria-label="Main">
+      <nav className={collapsed ? 'sidebar collapsed' : 'sidebar'} aria-label="Main">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true">
             P
           </span>
-          <span>Protracker</span>
+          <span className="brand-word">Protracker</span>
         </div>
 
         {VIEWS.map(({ id, label, Icon }) => (
@@ -153,20 +158,44 @@ export function AppShell() {
             key={id}
             className="nav-item"
             aria-current={view === id ? 'page' : undefined}
+            // Collapsed the words are hidden, not removed, so the button keeps
+            // the same accessible name either way — and a tooltip stands in for
+            // what the eye can no longer read.
+            title={collapsed ? label : undefined}
             onClick={() => go(id)}
             data-testid={`nav-${id}`}
           >
             <Icon size={16} />
-            <span>{label}</span>
+            <span className="nav-label">{label}</span>
             {id === 'home' && openToday > 0 && <span className="count">{openToday}</span>}
           </button>
         ))}
 
         <div className="sidebar-spacer" />
 
-        <button className="nav-item" onClick={() => setShowSettings(true)} data-testid="nav-settings">
+        <button
+          className="nav-item"
+          title={collapsed ? 'Settings' : undefined}
+          onClick={() => setShowSettings(true)}
+          data-testid="nav-settings"
+        >
           <IconSettings size={16} />
-          <span>Settings</span>
+          <span className="nav-label">Settings</span>
+        </button>
+
+        <button
+          className="sidebar-toggle"
+          onClick={() => {
+            const next = !collapsed;
+            setCollapsed(next);
+            window.localStorage.setItem('protracker:sidebar', next ? 'collapsed' : 'open');
+          }}
+          title={collapsed ? 'Expand the sidebar' : 'Collapse the sidebar'}
+          aria-label={collapsed ? 'Expand the sidebar' : 'Collapse the sidebar'}
+          aria-expanded={!collapsed}
+          data-testid="sidebar-toggle"
+        >
+          {collapsed ? <IconChevronRight size={15} /> : <IconChevronLeft size={15} />}
         </button>
       </nav>
 

@@ -212,9 +212,59 @@ button {
   overflow-y: auto;
 }
 
+/*
+ * Collapsed: icons only. The grid track is `auto`, so narrowing the sidebar is
+ * the whole layout change — the main column takes the space back on its own.
+ */
 .sidebar.collapsed {
   width: 56px;
   align-items: center;
+}
+
+.sidebar.collapsed .nav-item {
+  justify-content: center;
+  padding: 7px 0;
+  width: 32px;
+}
+
+/* The words go, the icons stay. `hidden` rather than display so the accessible
+   name still comes from the text and screen readers read the same label. */
+.sidebar.collapsed .nav-label,
+.sidebar.collapsed .brand-word {
+  display: none;
+}
+
+.sidebar.collapsed .brand {
+  padding: var(--space-2) 0 var(--space-4);
+  justify-content: center;
+}
+
+/* `margin-left: auto` has nothing to push against at 56px, so the badge sits
+   on the icon instead of beside it. */
+.sidebar.collapsed .nav-item .count {
+  position: absolute;
+  transform: translate(11px, -10px);
+  margin-left: 0;
+  padding: 0 4px;
+  font-size: 10px;
+}
+
+.sidebar-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: var(--space-2);
+  padding: 4px;
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.sidebar-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text);
 }
 
 .brand {
@@ -265,6 +315,10 @@ button {
   background: var(--bg-raised);
   color: var(--text);
   box-shadow: var(--shadow-sm);
+}
+
+.nav-item {
+  position: relative;
 }
 
 .nav-item .count {
