@@ -208,6 +208,18 @@ export function monthGrid(anyDayInMonth: DateOnly): DateOnly[] {
   return Array.from({ length: 42 }, (_, i) => addDays(start, i));
 }
 
+/**
+ * The seven days of the week `anyDay` falls in, Monday first.
+ *
+ * A month is six weeks of grid whether or not anything is in them, which is a
+ * lot of the screen to give to a fortnight's work. This is the same shape, one
+ * row of it.
+ */
+export function weekGrid(anyDay: DateOnly): DateOnly[] {
+  const start = addDays(anyDay, -weekdayIndex(anyDay));
+  return Array.from({ length: 7 }, (_, i) => addDays(start, i));
+}
+
 export function sameMonth(a: DateOnly, b: DateOnly): boolean {
   return a.slice(0, 7) === b.slice(0, 7);
 }

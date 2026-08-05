@@ -9,7 +9,7 @@
  */
 
 import type { DateOnly } from '../core/dates.ts';
-import { addDays, dateOf, diffDays, monthGrid, startOfMonth } from '../core/dates.ts';
+import { addDays, dateOf, diffDays, monthGrid, startOfMonth, weekGrid } from '../core/dates.ts';
 import type {
   DerivedStatus,
   Health,
@@ -328,9 +328,17 @@ export interface CalendarDay {
   events: CalendarEvent[];
 }
 
-export function calendarView(index: GraphIndex, month: DateOnly, today: DateOnly): CalendarDay[] {
+/** How much calendar to draw. A month is six weeks; a week is one row of it. */
+export type CalendarSpan = 'month' | 'week';
+
+export function calendarView(
+  index: GraphIndex,
+  anchor: DateOnly,
+  today: DateOnly,
+  span: CalendarSpan = 'month',
+): CalendarDay[] {
   const state = index.state;
-  const grid = monthGrid(month);
+  const grid = span === 'week' ? weekGrid(anchor) : monthGrid(anchor);
   const first = grid[0]!;
   const last = grid.at(-1)!;
   const inRange = (date: DateOnly) => diffDays(first, date) >= 0 && diffDays(date, last) >= 0;
@@ -389,7 +397,10 @@ export function calendarView(index: GraphIndex, month: DateOnly, today: DateOnly
 
   return grid.map((date) => ({
     date,
-    inMonth: date.slice(0, 7) === startOfMonth(month).slice(0, 7),
+    // A month grid greys the days either side of it. A week grid has no
+    // outside — every day drawn is one of the seven asked for, even when the
+    // week straddles two months.
+    inMonth: span === 'week' || date.slice(0, 7) === startOfMonth(anchor).slice(0, 7),
     isToday: date === today,
     events: (byDate.get(date) ?? []).sort(
       (a, b) => (a.time ?? '99:99').localeCompare(b.time ?? '99:99') || a.title.localeCompare(b.title),

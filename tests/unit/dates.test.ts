@@ -20,6 +20,7 @@ import {
   isWeekend,
   monthGrid,
   startOfMonth,
+  weekGrid,
   weekdayIndex,
 } from '@core/dates.ts';
 
@@ -155,6 +156,23 @@ describe('calendar helpers', () => {
       // Contiguous, no gaps.
       for (let i = 1; i < grid.length; i++) expect(diffDays(grid[i - 1]!, grid[i]!)).toBe(1);
     }
+  });
+
+  it('draws a seven-day week, Monday first, containing the day asked for', () => {
+    for (const day of ['2026-08-05', '2026-08-03', '2026-08-09', '2027-01-01']) {
+      const grid = weekGrid(day);
+      expect(grid).toHaveLength(7);
+      expect(weekdayIndex(grid[0]!)).toBe(0);
+      expect(grid).toContain(day);
+      for (let i = 1; i < grid.length; i++) expect(diffDays(grid[i - 1]!, grid[i]!)).toBe(1);
+    }
+  });
+
+  it('a week may straddle two months, and that is not a special case', () => {
+    // 31 Aug 2026 is a Monday; the week runs into September.
+    const grid = weekGrid('2026-09-02');
+    expect(grid[0]).toBe('2026-08-31');
+    expect(grid.at(-1)).toBe('2026-09-06');
   });
 
   it('builds inclusive ranges', () => {

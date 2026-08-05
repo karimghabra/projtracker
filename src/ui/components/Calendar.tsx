@@ -13,12 +13,13 @@ import { useEffect, useRef, useState } from 'react';
 import {
   MONTH_NAMES,
   WEEKDAY_NAMES,
+  addDays,
   addMonths,
   formatDayMonth,
   formatRelativeDay,
   startOfMonth,
 } from '../../core/dates.ts';
-import type { CalendarEvent } from '../../commands/views.ts';
+import type { CalendarEvent, CalendarSpan } from '../../commands/views.ts';
 import { useApp } from '../state/store.ts';
 import { ReminderDialog } from './ReminderDialog.tsx';
 import { IconChevronLeft, IconChevronRight, IconClock, IconPlus, IconTrash } from './icons.tsx';
@@ -34,43 +35,76 @@ const KIND_TONE: Record<CalendarEvent['kind'], string> = {
 export function Calendar({
   selected,
   onPickDay,
+  span = 'month',
 }: {
   selected?: string | null;
   onPickDay?: (date: string) => void;
+  /** A month is six weeks of grid; a week is one row of it. */
+  span?: CalendarSpan;
 }) {
   const { app } = useApp();
-  const [cursor, setCursor] = useState(() => startOfMonth(app.today));
-  const days = app.calendar(cursor);
-  const monthLabel = `${MONTH_NAMES[Number(cursor.slice(5, 7)) - 1]} ${cursor.slice(0, 4)}`;
+  const week = span === 'week';
+  const [cursor, setCursor] = useState(() => (week ? app.today : startOfMonth(app.today)));
+  const days = app.calendar(cursor, span);
+  const monthLabel = week
+    ? `${formatDayMonth(days[0]!.date, app.today)} – ${formatDayMonth(days[6]!.date, app.today)}`
+    : `${MONTH_NAMES[Number(cursor.slice(5, 7)) - 1]} ${cursor.slice(0, 4)}`;
 
   // Follow a selection made elsewhere (a search hit, say) into its month.
   useEffect(() => {
     if (selected && selected.slice(0, 7) !== cursor.slice(0, 7)) {
-      setCursor(startOfMonth(selected));
+      setCursor(week ? selected : startOfMonth(selected));
     }
-  }, [selected, cursor]);
+  }, [selected, cursor, week]);
+
+  /*
+   * Re-anchor when the span changes. The cursor for a month is the 1st, and
+   * showing "the week containing the 1st" to somebody who just asked for a week
+   * view is a week they did not ask about — usually mostly last month. Stay on
+   * today when today is in view, and otherwise on the month being looked at.
+   */
+  useEffect(() => {
+    setCursor((current) =>
+      current.slice(0, 7) === app.today.slice(0, 7)
+        ? week
+          ? app.today
+          : startOfMonth(app.today)
+        : week
+          ? current
+          : startOfMonth(current),
+    );
+    // Deliberately only on a span change: paging must not be undone by this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [week]);
+
+  // Paging moves by whatever is on screen, so the buttons mean what they show.
+  const step = (direction: -1 | 1) =>
+    setCursor(week ? addDays(cursor, 7 * direction) : addMonths(cursor, direction));
 
   return (
     <div className="calendar">
       <div className="calendar-head">
         <button
           className="btn ghost icon"
-          onClick={() => setCursor(addMonths(cursor, -1))}
-          aria-label="Previous month"
+          onClick={() => step(-1)}
+          aria-label={week ? 'Previous week' : 'Previous month'}
         >
           <IconChevronLeft />
         </button>
         <strong data-testid="calendar-month">{monthLabel}</strong>
         <button
           className="btn ghost icon"
-          onClick={() => setCursor(addMonths(cursor, 1))}
-          aria-label="Next month"
+          onClick={() => step(1)}
+          aria-label={week ? 'Next week' : 'Next month'}
         >
           <IconChevronRight />
         </button>
         <span className="spacer" />
-        <button className="btn ghost sm" onClick={() => setCursor(startOfMonth(app.today))}>
-          This month
+        <button
+          className="btn ghost sm"
+          onClick={() => setCursor(week ? app.today : startOfMonth(app.today))}
+        >
+          {week ? 'This week' : 'This month'}
         </button>
       </div>
 

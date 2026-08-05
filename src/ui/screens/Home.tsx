@@ -9,11 +9,11 @@
 import { useState } from 'react';
 import { formatDayMonth, formatRelativeDay } from '../../core/dates.ts';
 import { formatOffset } from '../../core/protocols.ts';
-import type { TodayItemView } from '../../commands/views.ts';
+import type { CalendarSpan, TodayItemView } from '../../commands/views.ts';
 import { useApp } from '../state/store.ts';
 import { Calendar, DayPanel } from '../components/Calendar.tsx';
 import { UpcomingPanel } from '../components/UpcomingPanel.tsx';
-import { Empty, Modal, ProgressBar, QuickAdd, StatusChip } from '../components/ui.tsx';
+import { Empty, InlineEdit, Modal, ProgressBar, QuickAdd, StatusChip } from '../components/ui.tsx';
 import { PlanButton, PlanDialog } from '../components/PlanDialog.tsx';
 import { NewProjectWizard } from './NewProject.tsx';
 import {
@@ -36,6 +36,9 @@ import type { ViewName } from '../AppShell.tsx';
 export function HomeScreen({ onNavigate }: { onNavigate: (view: ViewName) => void }) {
   const { app } = useApp();
   const [pickedDay, setPickedDay] = useState<string | null>(null);
+  const [calendarSpan, setCalendarSpan] = useState<'off' | CalendarSpan>(
+    () => (window.localStorage.getItem('protracker:calendar') as 'off' | CalendarSpan) ?? 'month',
+  );
   const hasProjects = app.tree().length > 0;
 
   return (
@@ -58,14 +61,39 @@ export function HomeScreen({ onNavigate }: { onNavigate: (view: ViewName) => voi
           <div className="panel-head">
             <IconCalendar size={15} />
             <h2>Calendar</h2>
+            <span className="spacer" />
+            {/*
+              Six weeks of grid is the tallest thing on this screen by a long
+              way, and most days most of it is empty. A week is the same view
+              one row deep; "off" gives the space to the lists below.
+            */}
+            <div className="segmented" role="group" aria-label="How much calendar to show">
+              {(['off', 'week', 'month'] as const).map((option) => (
+                <button
+                  key={option}
+                  className={calendarSpan === option ? 'seg on' : 'seg'}
+                  aria-pressed={calendarSpan === option}
+                  data-testid={`calendar-span-${option}`}
+                  onClick={() => {
+                    setCalendarSpan(option);
+                    window.localStorage.setItem('protracker:calendar', option);
+                  }}
+                >
+                  {option === 'off' ? 'Off' : option === 'week' ? 'Week' : 'Month'}
+                </button>
+              ))}
+            </div>
           </div>
-          <div className="panel-body flush">
-            <Calendar
-              selected={pickedDay}
-              onPickDay={(date) => setPickedDay(date === pickedDay ? null : date)}
-            />
-            {pickedDay && <DayPanel date={pickedDay} onClose={() => setPickedDay(null)} />}
-          </div>
+          {calendarSpan !== 'off' && (
+            <div className="panel-body flush">
+              <Calendar
+                span={calendarSpan}
+                selected={pickedDay}
+                onPickDay={(date) => setPickedDay(date === pickedDay ? null : date)}
+              />
+              {pickedDay && <DayPanel date={pickedDay} onClose={() => setPickedDay(null)} />}
+            </div>
+          )}
         </div>
 
         <UpcomingPanel />
@@ -81,6 +109,16 @@ export function HomeScreen({ onNavigate }: { onNavigate: (view: ViewName) => voi
 function TodayPanel() {
   const { app, run } = useApp();
   const today = app.todayList();
+  const [hideDone, setHideDone] = useState(
+    () => window.localStorage.getItem('protracker:hideDone') === 'yes',
+  );
+
+  /*
+   * Hiding what is finished, not forgetting it. The counts still say how many
+   * there were, so the day does not appear to shrink — the difference between
+   * tidying the list and losing track of what you did.
+   */
+  const shown = hideDone ? today.items.filter((item) => !item.done) : today.items;
 
   // Reordering is by button rather than drag: it works from the keyboard, it
   // works on a laptop trackpad in gloves, and it cannot be started by accident
@@ -102,6 +140,21 @@ function TodayPanel() {
         <IconHome size={15} />
         <h2>Today</h2>
         <span className="spacer" />
+        {today.doneCount > 0 && (
+          <button
+            className="btn ghost sm"
+            aria-pressed={hideDone}
+            data-testid="toggle-done"
+            title={hideDone ? 'Show what is finished' : 'Hide what is finished'}
+            onClick={() => {
+              const next = !hideDone;
+              setHideDone(next);
+              window.localStorage.setItem('protracker:hideDone', next ? 'yes' : 'no');
+            }}
+          >
+            {hideDone ? 'Show done' : 'Hide done'}
+          </button>
+        )}
         {today.items.length > 0 && (
           <span className="faint mono">
             {today.doneCount}/{today.items.length} done
@@ -116,7 +169,7 @@ function TodayPanel() {
           </Empty>
         ) : (
           <div className="list" data-testid="today-list">
-            {groupRuns(today.items).map((group) =>
+            {groupRuns(shown).map((group) =>
               group.group ? (
                 <TodayGroup
                   key={group.group.key}
@@ -442,6 +495,9 @@ function StartProtocolDialog({
 
 function ReadyPanel() {
   const { app, run } = useApp();
+  const [open, setOpen] = useState(
+    () => window.localStorage.getItem('protracker:ready') !== 'closed',
+  );
   const ready = app.ready();
   const onToday = new Set(app.todayList().items.map((i) => i.id));
   const available = ready.filter((row) => !onToday.has(row.id));
@@ -451,11 +507,25 @@ function ReadyPanel() {
   return (
     <section className="panel" data-testid="ready-panel">
       <div className="panel-head">
+        <button
+          className="btn ghost icon sm"
+          aria-expanded={open}
+          aria-label={open ? 'Collapse the ready list' : 'Expand the ready list'}
+          data-testid="toggle-ready"
+          onClick={() => {
+            const next = !open;
+            setOpen(next);
+            window.localStorage.setItem('protracker:ready', next ? 'open' : 'closed');
+          }}
+        >
+          {open ? <IconChevronDown size={13} /> : <IconChevronRight size={13} />}
+        </button>
         <IconCheck size={15} />
         <h2>Ready to work on</h2>
         <span className="spacer" />
         <span className="faint mono">{available.length}</span>
       </div>
+      {open && (
       <div className="panel-body tight">
         {available.length === 0 ? (
           <Empty title="Nothing is unblocked right now">
@@ -466,8 +536,27 @@ function ReadyPanel() {
           <div className="list">
             {available.slice(0, 12).map((row) => (
               <div className="row" key={row.id} data-testid={`ready-${row.id}`}>
+                {/*
+                  Finishing something you never started is normal: you did it at
+                  the bench and are recording it. It should not need a trip
+                  through the detail pane.
+                */}
+                <input
+                  type="checkbox"
+                  className="check"
+                  checked={false}
+                  aria-label={`Complete ${row.name}`}
+                  data-testid={`ready-complete-${row.id}`}
+                  onChange={() => run((a) => a.complete(row.id))}
+                />
                 <div className="grow" style={{ minWidth: 0 }}>
-                  <div className="row-title">{row.name}</div>
+                  <div className="row-title">
+                    <InlineEdit
+                      value={row.name}
+                      ariaLabel={`Name of ${row.name}`}
+                      onCommit={(next) => run((a) => a.updateNode(row.id, { name: next }), { silent: true })}
+                    />
+                  </div>
                   <div className="row-sub">{row.path.split(' › ').slice(0, -1).join(' › ')}</div>
                 </div>
                 {row.stepsTotal > 0 && (
@@ -499,7 +588,8 @@ function ReadyPanel() {
             )}
           </div>
         )}
-      </div>
+        </div>
+      )}
     </section>
   );
 }

@@ -132,6 +132,34 @@
 
 .day-detail-list li.done { color: var(--text-faint); text-decoration: line-through; }
 
+/* A small three-way switch, for choices that are a setting rather than an act. */
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.segmented .seg {
+  padding: 2px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.segmented .seg + .seg {
+  border-left: 1px solid var(--border);
+}
+
+.segmented .seg:hover { background: var(--bg-hover); }
+
+.segmented .seg.on {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
 /* ------------------------------------------------------------------- tree */
 
 /*

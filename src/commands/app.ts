@@ -55,6 +55,7 @@ import { CommandError, conflict, invalid, notAllowed, notFound, toCommandError }
 import { allocateId, allocateSlugId } from './ids.ts';
 import type {
   CalendarDay,
+  CalendarSpan,
   GraphOptions,
   GraphView,
   InventoryView,
@@ -300,8 +301,8 @@ export class App {
     };
   }
 
-  calendar(month: DateOnly = this.today): CalendarDay[] {
-    return calendarView(this.index, month, this.today);
+  calendar(anchor: DateOnly = this.today, span: CalendarSpan = 'month'): CalendarDay[] {
+    return calendarView(this.index, anchor, this.today, span);
   }
 
   graph(options: GraphOptions = {}): GraphView {
