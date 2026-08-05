@@ -226,38 +226,69 @@ export interface Note {
 export interface ScaffoldType {
   id: string;
   name: string;
+  /**
+   * Grouping only — nothing behaves differently. A material is something a
+   * scaffold is made *from* (collagen, in millilitres), and the user asked for
+   * them side by side rather than in a second table, because the same lot of
+   * dialysed collagen becomes thread becomes a braid. Absent means scaffold.
+   */
+  category?: 'material' | 'scaffold';
+  /**
+   * How this type is counted: 'mL', 'm', 'g'. Absent means countable items,
+   * which is what every type was before this existed — so no existing record
+   * gains a field and no vault changes on disk.
+   */
+  unit?: string;
   material?: string;
   geometry?: string;
   notes?: string;
   createdAt: Stamp;
+  /** Fields written by a newer build. Preserved verbatim, as on a node. */
+  extra?: Record<string, string>;
 }
 
-export type BatchState =
-  | 'fabricated'
-  | 'crosslinking'
-  | 'crosslinked'
-  | 'sterilised'
-  | 'seeded'
-  | 'consumed'
-  | 'discarded';
+/**
+ * Where a batch has got to. Open, deliberately.
+ *
+ * A closed list of seven could not say "washing" or "sterilising", which are
+ * ordinary steps in this lab and were the substance of the request. It also
+ * could not grow without a release. What replaced it is a string with a
+ * suggested vocabulary — the app proposes, the bench decides.
+ *
+ * There was a transition table here (`BATCH_NEXT`/`canTransition`) that read as
+ * though it governed which move was legal. Nothing ever called it: every state
+ * change went through `setBatchState`, which assigned unconditionally, and the
+ * UI offered all seven states in a dropdown. It was documentation pretending to
+ * be a machine, so it is gone rather than generalised.
+ */
+export type BatchState = string;
 
+/**
+ * The states offered first, in the order work actually passes through them.
+ * Anything else the user types is equally valid and sorts after these.
+ */
 export const BATCH_STATES: readonly BatchState[] = [
-  'fabricated', 'crosslinking', 'crosslinked', 'sterilised', 'seeded', 'consumed', 'discarded',
+  'fabricated',
+  'dried',
+  'crosslinking',
+  'crosslinked',
+  'washing',
+  'washed',
+  'sterilising',
+  'sterilised',
+  'seeded',
+  'consumed',
+  'discarded',
 ];
 
-/** The forward path through a scaffold's life. Any state may also be discarded. */
-const BATCH_NEXT: Record<BatchState, readonly BatchState[]> = {
-  fabricated: ['crosslinking', 'sterilised', 'discarded'],
-  crosslinking: ['crosslinked', 'fabricated', 'discarded'],
-  crosslinked: ['sterilised', 'seeded', 'discarded'],
-  sterilised: ['seeded', 'discarded'],
-  seeded: ['consumed', 'discarded'],
-  consumed: [],
-  discarded: [],
-};
+/**
+ * The only two names with behaviour attached: stock that is gone. Everything
+ * else is a stage, and stages are the user's business rather than the app's.
+ */
+export const TERMINAL_STATES: readonly BatchState[] = ['consumed', 'discarded'];
 
-export function canTransition(from: BatchState, to: BatchState): boolean {
-  return BATCH_NEXT[from].includes(to);
+export function isTerminalState(state: BatchState): boolean {
+  return TERMINAL_STATES.includes(state);
 }
 
 export interface BatchEvent {
@@ -278,6 +309,7 @@ export interface ScaffoldBatch {
   /** The crosslinking run currently acting on this batch, if any. */
   runId?: string;
   history: BatchEvent[];
+  extra?: Record<string, string>;
 }
 
 export interface ProtocolStep {
@@ -288,6 +320,7 @@ export interface ProtocolStep {
   /** How long the step itself takes, for display. */
   durationHours?: number;
   notes?: string;
+  extra?: Record<string, string>;
 }
 
 /** A crosslinking (or other) protocol template. Fully user-editable. */
@@ -300,6 +333,7 @@ export interface Protocol {
   notes?: string;
   /** Shipped as a default. Editable and deletable like any other. */
   builtin?: boolean;
+  extra?: Record<string, string>;
 }
 
 export interface ProtocolRun {
@@ -320,6 +354,7 @@ export interface ProtocolRun {
   completedStepIds: string[];
   cancelledAt?: Stamp;
   finishedAt?: Stamp;
+  extra?: Record<string, string>;
 }
 
 // -------------------------------------------------------------------- state

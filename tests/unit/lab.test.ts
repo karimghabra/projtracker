@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { describeExperiment, endDateOf, experimentStatus, stagesOf, validateExperiment } from '@core/experiments.ts';
+import { BATCH_STATES } from '@core/model.ts';
 import { formatOffset, scheduleRun, totalHours } from '@core/protocols.ts';
 import { expectThrows, harness, sampleBoard } from './helpers.ts';
 
@@ -302,9 +303,71 @@ describe('scaffold inventory', () => {
     h.app.addBatch(type, 12);
 
     const inv = h.app.inventory();
-    expect(inv.types[0]!.total).toBe(36);
+    expect(inv.types[0]!.inStock).toBe(36);
+    expect(inv.types[0]!.byState).toEqual([{ state: 'fabricated', quantity: 36 }]);
     expect(inv.batches).toHaveLength(2);
     expect(inv.batches[0]!.state).toBe('fabricated');
+  });
+
+  /**
+   * The states are the lab's, not the app's.
+   *
+   * There used to be a closed list of seven, and the parser coerced anything it
+   * did not recognise to 'fabricated' — so a build that had never heard of
+   * "washing" would quietly rewrite it on load, every load, with nothing said.
+   * That is the failure worth a test: it is silent, and it destroys exactly the
+   * information the user typed in.
+   */
+  it('keeps a stage it has never heard of, through a save and a load', () => {
+    const h = harness();
+    const { id: type } = h.app.addScaffoldType('ELAC thread');
+    const batch = h.app.addBatch(type, 12).id;
+
+    h.app.setBatchState(batch, 'dialysing against PBS');
+    expect(h.app.inventory().batches[0]!.state).toBe('dialysing against PBS');
+
+    const reloaded = h.reload();
+    expect(reloaded.inventory().batches[0]!.state).toBe('dialysing against PBS');
+    // And it is in the history, not only on the batch.
+    expect(reloaded.state.batches[0]!.history.map((e) => e.state)).toContain('dialysing against PBS');
+  });
+
+  it('offers the stages the issue asked for', () => {
+    // #20 wanted: dried in storage, crosslinking, crosslinked and washing,
+    // washed, sterilizing, sterilized.
+    for (const stage of ['dried', 'crosslinking', 'washing', 'washed', 'sterilising', 'sterilised']) {
+      expect(BATCH_STATES).toContain(stage);
+    }
+  });
+
+  it('breaks stock down by stage, and leaves out what is gone', () => {
+    const h = harness();
+    const { id: type } = h.app.addScaffoldType('Braid');
+    const a = h.app.addBatch(type, 10).id;
+    const b = h.app.addBatch(type, 4).id;
+    const gone = h.app.addBatch(type, 99).id;
+
+    h.app.setBatchState(a, 'washing');
+    h.app.setBatchState(b, 'sterilised');
+    h.app.setBatchState(gone, 'consumed');
+
+    const [only] = h.app.inventory().types;
+    expect(only!.inStock).toBe(14);
+    // Suggested order, not alphabetical: washing comes before sterilised.
+    expect(only!.byState).toEqual([
+      { state: 'washing', quantity: 10 },
+      { state: 'sterilised', quantity: 4 },
+    ]);
+  });
+
+  it('setting the state a batch already has records nothing', () => {
+    const h = harness();
+    const { id: type } = h.app.addScaffoldType('Braid');
+    const batch = h.app.addBatch(type, 3).id;
+    const before = h.app.history().past.length;
+
+    h.app.setBatchState(batch, 'fabricated');
+    expect(h.app.history().past.length).toBe(before);
   });
 
   it('gives a readable id to a named record', () => {
@@ -320,6 +383,63 @@ describe('scaffold inventory', () => {
 
     h.app.addBatch(id, 5);
     expect(() => h.app.deleteScaffoldType(id)).toThrow(/still use/);
+  });
+
+  /**
+   * The lab's own example: acidified collagen in mL, thread in metres, closed
+   * loops counted. A quantity only makes sense against the thing it measures.
+   */
+  it('takes a fractional amount of something measured, and refuses one of something counted', () => {
+    const h = harness();
+    const collagen = h.app.addScaffoldType('Acidified collagen', {
+      category: 'material',
+      unit: 'mL',
+    }).id;
+    const loops = h.app.addScaffoldType('Closed loop').id;
+
+    expect(() => h.app.addBatch(collagen, 40.5)).not.toThrow();
+    expect(h.app.inventory().batches[0]!.count).toBe(40.5);
+
+    // Half a scaffold is not a thing, and the message is the one it always was.
+    expect(() => h.app.addBatch(loops, 2.5)).toThrow(/whole number/);
+  });
+
+  it('rounds a quantity rather than writing binary noise into the vault', () => {
+    const h = harness();
+    const type = h.app.addScaffoldType('Dialysed collagen', { unit: 'mL' }).id;
+    const batch = h.app.addBatch(type, 0.1).id;
+    h.app.updateBatch(batch, { count: 0.1 + 0.2 });
+
+    expect(h.app.inventory().batches[0]!.count).toBe(0.3);
+    expect(h.reload().inventory().batches[0]!.count).toBe(0.3);
+  });
+
+  it('keeps materials and scaffolds apart without treating them differently', () => {
+    const h = harness();
+    h.app.addScaffoldType('Acidified collagen', { category: 'material', unit: 'mL' });
+    h.app.addScaffoldType('Looped ligament');
+
+    const types = h.app.inventory().types;
+    expect(types.find((t) => t.name === 'Acidified collagen')!.category).toBe('material');
+    expect(types.find((t) => t.name === 'Looped ligament')!.category).toBeUndefined();
+
+    // Both survive a reload with their unit and grouping intact.
+    const reloaded = h.reload().inventory().types;
+    expect(reloaded.find((t) => t.name === 'Acidified collagen')!.unit).toBe('mL');
+  });
+
+  it('never adds millilitres to metres', () => {
+    const h = harness();
+    const collagen = h.app.addScaffoldType('Collagen', { unit: 'mL' }).id;
+    const thread = h.app.addScaffoldType('Thread', { unit: 'm' }).id;
+    const a = h.app.addBatch(collagen, 40).id;
+    const b = h.app.addBatch(thread, 3).id;
+
+    h.app.addProtocol('Wash', '', [{ name: 'Rinse', offsetHours: 0 }]);
+    const runId = h.app.startRun('wash', [a, b]).id;
+    const view = h.app.inventory().runs.find((r) => r.id === runId)!;
+
+    expect(view.quantityLabel).toBe('40 mL, 3 m');
   });
 
   it('rejects a nonsense count with a question rather than a code', () => {

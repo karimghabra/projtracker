@@ -25,7 +25,7 @@ import type {
   StoredStatus,
   WaitingOn,
 } from '../core/model.ts';
-import { isContainerKind, pathNameOf, refOf } from '../core/model.ts';
+import { BATCH_STATES, isContainerKind, isTerminalState, pathNameOf, refOf } from '../core/model.ts';
 import type { Precision } from '../core/periods.ts';
 import { encodePeriod, formatPeriod } from '../core/periods.ts';
 import type { GraphIndex } from '../core/graph.ts';
@@ -43,6 +43,7 @@ import type { ExperimentDef } from '../core/model.ts';
 import type { Stage } from '../core/experiments.ts';
 import { describeExperiment, endDateOf, experimentStatus, stagesOf } from '../core/experiments.ts';
 import { scheduleRun } from '../core/protocols.ts';
+import { describeQuantity, summariseLots } from '../core/inventory.ts';
 import type { Reminder } from '../core/model.ts';
 import type { TodayItem } from '../core/planner.ts';
 import { todayItems } from '../core/planner.ts';
@@ -830,7 +831,12 @@ export interface RunView {
   agent: string;
   batchIds: string[];
   batchLabels: string[];
-  scaffoldCount: number;
+  /**
+   * What the run is acting on, as one line. Not a number: adding millilitres of
+   * collagen to metres of thread does not give a smaller number, it gives a
+   * wrong one.
+   */
+  quantityLabel: string;
   startedAt: string;
   steps: { id: string; name: string; at: string; until?: string; done: boolean; overdue: boolean }[];
   done: number;
@@ -840,14 +846,52 @@ export interface RunView {
 }
 
 export interface InventoryView {
-  types: { id: string; name: string; material?: string; geometry?: string; notes?: string; total: number; available: number }[];
+  types: {
+    id: string;
+    name: string;
+    category?: 'material' | 'scaffold';
+    unit?: string;
+    material?: string;
+    geometry?: string;
+    notes?: string;
+    /** Everything not consumed or discarded. */
+    inStock: number;
+    /**
+     * How that stock is spread across the stages, in the suggested order with
+     * anything unrecognised after it. This is what a "what is in the pipeline"
+     * panel reads, and it is why `available` is gone: with an open vocabulary
+     * there is no principled definition of available beyond "still here".
+     */
+    byState: { state: string; quantity: number }[];
+  }[];
   batches: BatchView[];
   protocols: { id: string; name: string; agent: string; steps: number; hours: number; builtin: boolean; notes?: string }[];
   runs: RunView[];
 }
 
+/**
+ * Quantities per stage, in the suggested order first so a pipeline reads the way
+ * work flows, with anything the user has invented after it in the order it was
+ * first seen. Terminal stages are left out: they are not stock.
+ */
+function groupByState(batches: { state: string; count: number }[]): { state: string; quantity: number }[] {
+  const totals = new Map<string, number>();
+  for (const batch of batches) {
+    if (isTerminalState(batch.state)) continue;
+    totals.set(batch.state, (totals.get(batch.state) ?? 0) + batch.count);
+  }
+  const rank = (state: string) => {
+    const at = BATCH_STATES.indexOf(state);
+    return at === -1 ? BATCH_STATES.length : at;
+  };
+  return [...totals.entries()]
+    .map(([state, quantity]) => ({ state, quantity }))
+    .sort((a, b) => rank(a.state) - rank(b.state) || a.state.localeCompare(b.state));
+}
+
 export function inventoryView(state: State, today: DateOnly, now: string): InventoryView {
   const typeName = new Map(state.scaffoldTypes.map((t) => [t.id, t.name]));
+  const unitOf = new Map(state.scaffoldTypes.map((t) => [t.id, t.unit]));
   const protocolById = new Map(state.protocols.map((p) => [p.id, p]));
 
   const batches: BatchView[] = state.batches.map((batch) => ({
@@ -862,13 +906,13 @@ export function inventoryView(state: State, today: DateOnly, now: string): Inven
     return {
       id: type.id,
       name: type.name,
+      category: type.category,
+      unit: type.unit,
       material: type.material,
       geometry: type.geometry,
       notes: type.notes,
-      total: owned.reduce((sum, b) => sum + (b.state === 'discarded' || b.state === 'consumed' ? 0 : b.count), 0),
-      available: owned
-        .filter((b) => b.state === 'crosslinked' || b.state === 'sterilised' || b.state === 'fabricated')
-        .reduce((sum, b) => sum + b.count, 0),
+      inStock: owned.reduce((sum, b) => sum + (isTerminalState(b.state) ? 0 : b.count), 0),
+      byState: groupByState(owned),
     };
   });
 
@@ -883,11 +927,13 @@ export function inventoryView(state: State, today: DateOnly, now: string): Inven
       batchIds: run.batchIds,
       batchLabels: run.batchIds.map((id) => {
         const batch = batches.find((b) => b.id === id);
-        return batch ? `${batch.count} × ${batch.typeName}` : id;
+        return batch ? describeQuantity(batch.count, batch.typeName, unitOf.get(batch.typeId)) : id;
       }),
-      scaffoldCount: run.batchIds.reduce(
-        (sum, id) => sum + (batches.find((b) => b.id === id)?.count ?? 0),
-        0,
+      quantityLabel: summariseLots(
+        run.batchIds
+          .map((id) => batches.find((b) => b.id === id))
+          .filter((b): b is BatchView => Boolean(b))
+          .map((b) => ({ quantity: b.count, unit: unitOf.get(b.typeId) })),
       ),
       startedAt: run.startedAt,
       steps: scheduled.map((s) => ({

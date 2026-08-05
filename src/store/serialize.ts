@@ -10,7 +10,6 @@
  */
 
 import type {
-  BatchState,
   Dep,
   ExperimentDef,
   Health,
@@ -30,7 +29,6 @@ import type {
   Note,
 } from '../core/model.ts';
 import {
-  BATCH_STATES,
   HEALTH_STATES,
   NODE_KINDS,
   STATE_VERSION,
@@ -74,6 +72,22 @@ const NODE_KNOWN = [
   'id', 'name', 'seq', 'seqSource', 'ordering', 'status', 'health',
   'createdAt', 'startedAt', 'doneAt', 'donePrecision', 'plannedFor',
   'waitingReason', 'waitingUntil', 'tags', 'notes',
+] as const;
+
+/**
+ * The same promise, for the inventory.
+ *
+ * SPEC §7 states unknown-field preservation as a property of the format, but it
+ * was only ever wired to nodes. So a vault written by a newer build and opened
+ * by an older one kept every task intact and quietly dropped whatever the newer
+ * build knew about a scaffold type. These lists close that.
+ */
+const TYPE_KNOWN = ['name', 'category', 'unit', 'material', 'geometry', 'notes', 'createdAt'] as const;
+const BATCH_KNOWN = ['type', 'count', 'fabricatedOn', 'state', 'label', 'notes', 'run'] as const;
+const PROTOCOL_KNOWN = ['name', 'agent', 'notes', 'builtin'] as const;
+const PSTEP_KNOWN = ['name', 'offsetHours', 'durationHours', 'notes'] as const;
+const RUN_KNOWN = [
+  'protocol', 'batches', 'node', 'startedAt', 'completedSteps', 'cancelledAt', 'finishedAt',
 ] as const;
 
 
@@ -316,15 +330,19 @@ export function serializeInventory(state: State): string {
   const blocks: Block[] = [];
 
   for (const t of [...state.scaffoldTypes].sort(byId)) {
-    blocks.push(
-      block('scaffoldtype', t.id, {
-        name: t.name,
-        material: t.material,
-        geometry: t.geometry,
-        notes: t.notes,
-        createdAt: t.createdAt,
-      }),
-    );
+    const b = block('scaffoldtype', t.id, {
+      name: t.name,
+      // Both omitted when absent, so a vault written before units existed is
+      // byte-identical to one written after.
+      category: t.category === 'material' ? 'material' : undefined,
+      unit: t.unit || undefined,
+      material: t.material,
+      geometry: t.geometry,
+      notes: t.notes,
+      createdAt: t.createdAt,
+    });
+    applyExtras(b.fields, t.extra);
+    blocks.push(b);
   }
 
   for (const batch of [...state.batches].sort(byId)) {
@@ -337,6 +355,7 @@ export function serializeInventory(state: State): string {
       notes: batch.notes,
       run: batch.runId,
     });
+    applyExtras(b.fields, batch.extra);
     for (const [i, event] of batch.history.entries()) {
       b.children.push(block('event', `e${i}`, { state: event.state, at: event.at, note: event.note }));
     }
@@ -352,33 +371,34 @@ export function serializeInventory(state: State): string {
       notes: p.notes,
       builtin: p.builtin ? 'true' : undefined,
     });
+    applyExtras(b.fields, p.extra);
     for (const step of p.steps) {
-      b.children.push(
-        block('pstep', step.id, {
-          name: step.name,
-          offsetHours: String(step.offsetHours),
-          durationHours: step.durationHours !== undefined ? String(step.durationHours) : undefined,
-          notes: step.notes,
-        }),
-      );
+      const sb = block('pstep', step.id, {
+        name: step.name,
+        offsetHours: String(step.offsetHours),
+        durationHours: step.durationHours !== undefined ? String(step.durationHours) : undefined,
+        notes: step.notes,
+      });
+      applyExtras(sb.fields, step.extra);
+      b.children.push(sb);
     }
     blocks.push(b);
   }
 
   for (const run of [...state.runs].sort(byId)) {
-    blocks.push(
-      block('run', run.id, {
-        protocol: run.protocolId,
-        batches: encodeList(run.batchIds),
-        // Omitted when absent, so a vault written before runs could name a task
-        // is byte-identical to one written after.
-        node: run.nodeId,
-        startedAt: run.startedAt,
-        completedSteps: encodeList(run.completedStepIds),
-        cancelledAt: run.cancelledAt,
-        finishedAt: run.finishedAt,
-      }),
-    );
+    const b = block('run', run.id, {
+      protocol: run.protocolId,
+      batches: encodeList(run.batchIds),
+      // Omitted when absent, so a vault written before runs could name a task
+      // is byte-identical to one written after.
+      node: run.nodeId,
+      startedAt: run.startedAt,
+      completedSteps: encodeList(run.completedStepIds),
+      cancelledAt: run.cancelledAt,
+      finishedAt: run.finishedAt,
+    });
+    applyExtras(b.fields, run.extra);
+    blocks.push(b);
   }
   return serialize(blocks);
 }
@@ -506,10 +526,13 @@ export function deserialize(files: VaultFiles): State {
           const t: ScaffoldType = {
             id: b.slug,
             name: field(b, 'name') ?? b.slug,
+            category: field(b, 'category') === 'material' ? 'material' : undefined,
+            unit: field(b, 'unit'),
             material: field(b, 'material'),
             geometry: field(b, 'geometry'),
             notes: field(b, 'notes'),
             createdAt: field(b, 'createdAt') ?? '1970-01-01T00:00',
+            extra: extraFields(b, TYPE_KNOWN),
           };
           state.scaffoldTypes.push(t);
           break;
@@ -520,15 +543,19 @@ export function deserialize(files: VaultFiles): State {
             typeId: requireField(b, 'type'),
             count: numberField(b, 'count', 0),
             fabricatedOn: field(b, 'fabricatedOn') ?? '1970-01-01',
-            state: oneOf<BatchState>(field(b, 'state'), BATCH_STATES, 'fabricated'),
+            // NOT `oneOf`: states are open now, and coercing an unrecognised
+            // one to 'fabricated' would silently rewrite the user's own
+            // vocabulary on every load.
+            state: field(b, 'state') ?? 'fabricated',
             label: field(b, 'label'),
             notes: field(b, 'notes'),
             runId: field(b, 'run'),
             history: childrenOfKind(b, 'event').map((e) => ({
-              state: oneOf<BatchState>(field(e, 'state'), BATCH_STATES, 'fabricated'),
+              state: field(e, 'state') ?? 'fabricated',
               at: field(e, 'at') ?? '1970-01-01T00:00',
               note: field(e, 'note'),
             })),
+            extra: extraFields(b, BATCH_KNOWN),
           };
           state.batches.push(batch);
           break;
@@ -546,7 +573,9 @@ export function deserialize(files: VaultFiles): State {
               offsetHours: numberField(s, 'offsetHours', 0),
               durationHours: field(s, 'durationHours') ? numberField(s, 'durationHours', 0) : undefined,
               notes: field(s, 'notes'),
+              extra: extraFields(s, PSTEP_KNOWN),
             })),
+            extra: extraFields(b, PROTOCOL_KNOWN),
           };
           state.protocols.push(p);
           break;
@@ -561,6 +590,7 @@ export function deserialize(files: VaultFiles): State {
             completedStepIds: listField(b, 'completedSteps'),
             cancelledAt: field(b, 'cancelledAt'),
             finishedAt: field(b, 'finishedAt'),
+            extra: extraFields(b, RUN_KNOWN),
           };
           state.runs.push(run);
           break;

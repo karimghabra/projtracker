@@ -82,7 +82,7 @@ test.describe('crosslinking', () => {
 
     await page.getByRole('checkbox', { name: 'Select 24 Collagen sponge' }).check();
     await page.getByRole('checkbox', { name: 'Select 12 Collagen sponge' }).check();
-    await expect(page.getByText('2 batches · 36 scaffolds')).toBeVisible();
+    await expect(page.getByText('2 batches · 36 items')).toBeVisible();
 
     await page.getByTestId('start-crosslink').click();
     await expect(page.getByText('You will be reminded to:')).toBeVisible();

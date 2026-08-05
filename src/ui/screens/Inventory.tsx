@@ -14,11 +14,27 @@ import type { ProtocolStepPatch } from '../../commands/app.ts';
 import { useApp } from '../state/store.ts';
 import { ConfirmDialog, Empty, Modal, ProgressBar } from '../components/ui.tsx';
 import { IconBox, IconFlask, IconPlus, IconTrash } from '../components/icons.tsx';
+import { BATCH_STATES, isTerminalState } from '../../core/model.ts';
+import { formatQuantity, summariseLots } from '../../core/inventory.ts';
 
+/** The suggested stages first, then any this vault has invented. */
+function stateOptions(inventory: Inventory): string[] {
+  const inUse = inventory.batches.map((b) => b.state);
+  return [...BATCH_STATES, ...inUse.filter((s) => !BATCH_STATES.includes(s))].filter(
+    (s, i, all) => all.indexOf(s) === i,
+  );
+}
+
+/* States are open, so this is a hint rather than a mapping: anything not named
+   here simply gets no colour, which is what the `?? ''` at the call site does. */
 const BATCH_TONE: Record<string, string> = {
   fabricated: '',
+  dried: '',
   crosslinking: 'warn',
   crosslinked: 'info',
+  washing: 'warn',
+  washed: 'info',
+  sterilising: 'warn',
   sterilised: 'accent',
   seeded: 'ok',
   consumed: '',
@@ -38,9 +54,9 @@ export function InventoryScreen() {
     setSelected(next);
   };
 
-  const selectable = inventory.batches.filter(
-    (b) => b.state === 'fabricated' || b.state === 'crosslinked' || b.state === 'sterilised',
-  );
+  // Anything still in stock can be run on. Which stages are "usable" is not the
+  // app's to decide once the vocabulary belongs to the user.
+  const selectable = inventory.batches.filter((b) => !isTerminalState(b.state) && !b.runId);
 
   return (
     <div className="dash">
@@ -98,9 +114,14 @@ function BatchPanel({
   const { app, run } = useApp();
   const [adding, setAdding] = useState(false);
   const [confirm, setConfirm] = useState<string | null>(null);
-  const total = [...selected].reduce(
-    (sum, id) => sum + (inventory.batches.find((b) => b.id === id)?.count ?? 0),
-    0,
+  const chosen = [...selected]
+    .map((id) => inventory.batches.find((b) => b.id === id))
+    .filter((b): b is Inventory['batches'][number] => Boolean(b));
+  const total = summariseLots(
+    chosen.map((b) => ({
+      quantity: b.count,
+      unit: inventory.types.find((t) => t.id === b.typeId)?.unit,
+    })),
   );
 
   return (
@@ -112,7 +133,7 @@ function BatchPanel({
         {selected.size > 0 && (
           <>
             <span className="chip accent">
-              {selected.size} batch{selected.size === 1 ? '' : 'es'} · {total} scaffolds
+              {selected.size} batch{selected.size === 1 ? '' : 'es'} · {total}
             </span>
             <button className="btn primary sm" onClick={onStartRun} data-testid="start-crosslink">
               Crosslink these
@@ -158,8 +179,7 @@ function BatchPanel({
             </thead>
             <tbody>
               {inventory.batches.map((batch) => {
-                const usable =
-                  batch.state === 'fabricated' || batch.state === 'crosslinked' || batch.state === 'sterilised';
+                const usable = !isTerminalState(batch.state) && !batch.runId;
                 return (
                   <tr key={batch.id} data-testid={`batch-${batch.id}`}>
                     <td>
@@ -187,13 +207,14 @@ function BatchPanel({
                           run((a) => a.setBatchState(batch.id, event.target.value as 'fabricated'), { silent: true })
                         }
                       >
-                        {['fabricated', 'crosslinking', 'crosslinked', 'sterilised', 'seeded', 'consumed', 'discarded'].map(
-                          (state) => (
-                            <option key={state} value={state}>
-                              {state}
-                            </option>
-                          ),
-                        )}
+                        {/* The suggested stages, plus whatever this vault is
+                            actually using — a state typed elsewhere must not
+                            vanish from its own dropdown. */}
+                        {stateOptions(inventory).map((state) => (
+                          <option key={state} value={state}>
+                            {state}
+                          </option>
+                        ))}
                       </select>
                     </td>
                     <td>
@@ -307,17 +328,62 @@ function AddBatchDialog({ onClose }: { onClose: () => void }) {
 
 // ------------------------------------------------------------------ types
 
+/** One heading and its rows, so materials and scaffolds read as two lists. */
+function TypeGroup({
+  label,
+  types,
+  testid,
+}: {
+  label: string;
+  types: Inventory['types'];
+  testid: string;
+}) {
+  const { run } = useApp();
+  return (
+    <div data-testid={testid}>
+      <div className="row-sub" style={{ padding: '4px 8px 2px', fontWeight: 600 }}>
+        {label}
+      </div>
+      <div className="list">
+        {types.map((type) => (
+          <div className="row" key={type.id}>
+            <div className="grow" style={{ minWidth: 0 }}>
+              <div className="row-title">{type.name}</div>
+              {type.material && <div className="row-sub">{type.material}</div>}
+            </div>
+            <span className="chip" title="In stock — everything not consumed or discarded">
+              {formatQuantity(type.inStock, type.unit)}
+            </span>
+            <button
+              className="btn ghost icon sm"
+              aria-label={`Delete type ${type.name}`}
+              onClick={() => run((a) => a.deleteScaffoldType(type.id))}
+            >
+              <IconTrash size={12} />
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function TypesPanel({ inventory }: { inventory: Inventory }) {
   const { run } = useApp();
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
   const [material, setMaterial] = useState('');
+  const [unit, setUnit] = useState('');
+  const [category, setCategory] = useState<'material' | 'scaffold'>('scaffold');
+
+  const materials = inventory.types.filter((t) => t.category === 'material');
+  const scaffolds = inventory.types.filter((t) => t.category !== 'material');
 
   return (
     <section className="panel" data-testid="types-panel">
       <div className="panel-head">
         <IconFlask size={15} />
-        <h2>Scaffold types</h2>
+        <h2>Types and materials</h2>
         <span className="spacer" />
         <button className="btn sm" onClick={() => setAdding(!adding)} data-testid="add-type">
           <IconPlus size={13} /> Type
@@ -331,9 +397,17 @@ function TypesPanel({ inventory }: { inventory: Inventory }) {
             onSubmit={(event) => {
               event.preventDefault();
               if (!name.trim()) return;
-              if (run((a) => a.addScaffoldType(name, { material: material.trim() || undefined }))) {
+              const made = run((a) =>
+                a.addScaffoldType(name, {
+                  material: material.trim() || undefined,
+                  category: category === 'material' ? 'material' : undefined,
+                  unit: unit.trim() || undefined,
+                }),
+              );
+              if (made) {
                 setName('');
                 setMaterial('');
+                setUnit('');
                 setAdding(false);
               }
             }}
@@ -350,10 +424,32 @@ function TypesPanel({ inventory }: { inventory: Inventory }) {
             <input
               className="input"
               value={material}
-              placeholder="Material (optional)"
+              placeholder="Made of (optional)"
               aria-label="Material"
               onChange={(event) => setMaterial(event.target.value)}
             />
+            <div className="inline">
+              <select
+                className="select"
+                value={category}
+                aria-label="Is this a material or a scaffold?"
+                data-testid="type-category"
+                onChange={(event) => setCategory(event.target.value as 'material' | 'scaffold')}
+              >
+                <option value="scaffold">Scaffold</option>
+                <option value="material">Material</option>
+              </select>
+              {/* Blank means countable things. A unit turns the quantity into a
+                  measurement, and lets it be fractional. */}
+              <input
+                className="input"
+                value={unit}
+                placeholder="Unit — mL, m, g"
+                aria-label="Unit"
+                data-testid="type-unit"
+                onChange={(event) => setUnit(event.target.value)}
+              />
+            </div>
             <div className="inline">
               <button className="btn primary sm" type="submit" data-testid="save-type">
                 Add
@@ -367,29 +463,19 @@ function TypesPanel({ inventory }: { inventory: Inventory }) {
 
         {inventory.types.length === 0 && !adding ? (
           <Empty title="No types yet">
-            A type is a kind of scaffold you can make — the geometry and material, not a specific
-            batch.
+            A type is a kind of thing you make or hold — collagen measured in mL, thread in metres,
+            scaffolds counted. Not a particular batch.
           </Empty>
         ) : (
-          <div className="list">
-            {inventory.types.map((type) => (
-              <div className="row" key={type.id}>
-                <div className="grow" style={{ minWidth: 0 }}>
-                  <div className="row-title">{type.name}</div>
-                  {type.material && <div className="row-sub">{type.material}</div>}
-                </div>
-                <span className="chip" title="Total scaffolds not yet consumed">
-                  {type.total}
-                </span>
-                <button
-                  className="btn ghost icon sm"
-                  aria-label={`Delete type ${type.name}`}
-                  onClick={() => run((a) => a.deleteScaffoldType(type.id))}
-                >
-                  <IconTrash size={12} />
-                </button>
-              </div>
-            ))}
+          <div className="stack tight">
+            {/* Materials first: they are what the scaffolds below get made from,
+                so reading down the panel follows the bench. */}
+            {materials.length > 0 && (
+              <TypeGroup label="Materials" types={materials} testid="materials-group" />
+            )}
+            {scaffolds.length > 0 && (
+              <TypeGroup label="Scaffolds" types={scaffolds} testid="scaffolds-group" />
+            )}
           </div>
         )}
       </div>

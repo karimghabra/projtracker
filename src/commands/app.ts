@@ -42,6 +42,7 @@ import { buildIndex, isDone, wouldCreateCycle } from '../core/graph.ts';
 import type { GraphIndex } from '../core/graph.ts';
 import { emptyExperiment, stagesOf, validateExperiment } from '../core/experiments.ts';
 import { isRunComplete, scheduleRun } from '../core/protocols.ts';
+import { describeQuantity, quantityProblem, roundQuantity } from '../core/inventory.ts';
 import { overdue, plannedAhead, upcomingReminders } from '../core/planner.ts';
 import { parsePeriod } from '../core/periods.ts';
 import type { RestoreReport, VaultFiles } from '../store/backup.ts';
@@ -1217,7 +1218,18 @@ export class App {
 
   // ------------------------------------------------------------- inventory
 
-  addScaffoldType(name: string, options: { material?: string; geometry?: string; notes?: string } = {}): Delta & { id: string } {
+  addScaffoldType(
+    name: string,
+    options: {
+      /** Absent means a scaffold. A material is what scaffolds are made from. */
+      category?: 'material' | 'scaffold';
+      /** Absent means countable. Set it and quantities may be fractional. */
+      unit?: string;
+      material?: string;
+      geometry?: string;
+      notes?: string;
+    } = {},
+  ): Delta & { id: string } {
     const clean = name.trim();
     if (!clean) throw invalid('A scaffold type needs a name.');
     if (this.state.scaffoldTypes.some((t) => t.name.toLowerCase() === clean.toLowerCase())) {
@@ -1232,7 +1244,17 @@ export class App {
     });
   }
 
-  updateScaffoldType(id: string, patch: { name?: string; material?: string; geometry?: string; notes?: string }): Delta {
+  updateScaffoldType(
+    id: string,
+    patch: {
+      name?: string;
+      category?: 'material' | 'scaffold';
+      unit?: string;
+      material?: string;
+      geometry?: string;
+      notes?: string;
+    },
+  ): Delta {
     if (!this.state.scaffoldTypes.some((t) => t.id === id)) throw notFound('scaffold type', id);
     return this.mutate('Edit scaffold type', (draft) => {
       const type = draft.scaffoldTypes.find((t) => t.id === id)!;
@@ -1240,6 +1262,10 @@ export class App {
         if (!patch.name.trim()) throw invalid('A scaffold type needs a name.');
         type.name = patch.name.trim();
       }
+      if (patch.category !== undefined) {
+        type.category = patch.category === 'material' ? 'material' : undefined;
+      }
+      if (patch.unit !== undefined) type.unit = patch.unit.trim() || undefined;
       if (patch.material !== undefined) type.material = patch.material || undefined;
       if (patch.geometry !== undefined) type.geometry = patch.geometry || undefined;
       if (patch.notes !== undefined) type.notes = patch.notes || undefined;
@@ -1263,12 +1289,16 @@ export class App {
   addBatch(typeId: string, count: number, options: { fabricatedOn?: DateOnly; label?: string; notes?: string } = {}): Delta & { id: string } {
     const type = this.state.scaffoldTypes.find((t) => t.id === typeId);
     if (!type) throw notFound('scaffold type', typeId);
-    if (!Number.isInteger(count) || count < 1) throw invalid('How many did you make? Enter a whole number of 1 or more.');
+    // Fractions are fine for something measured — half a millilitre is
+    // ordinary — and nonsense for something counted.
+    const problem = quantityProblem(count, type);
+    if (problem) throw invalid(problem);
+    count = roundQuantity(count);
     const fabricatedOn = options.fabricatedOn ?? this.today;
     if (!isDateOnly(fabricatedOn)) throw invalid(`"${fabricatedOn}" is not a date.`);
     const now = this.now;
 
-    return this.mutate(`Add ${count} × ${type.name}`, (draft) => {
+    return this.mutate(`Add ${describeQuantity(count, type.name, type.unit)}`, (draft) => {
       const id = allocateId(draft, 'b');
       const batch: ScaffoldBatch = {
         id,
@@ -1281,7 +1311,7 @@ export class App {
         history: [{ state: 'fabricated', at: now }],
       };
       draft.batches.push(batch);
-      return { ok: true as const, message: `Added ${count} × ${type.name}.`, id };
+      return { ok: true as const, message: `Added ${describeQuantity(count, type.name, type.unit)}.`, id };
     });
   }
 
@@ -1290,8 +1320,10 @@ export class App {
     return this.mutate('Edit batch', (draft) => {
       const batch = draft.batches.find((b) => b.id === id)!;
       if (patch.count !== undefined) {
-        if (!Number.isInteger(patch.count) || patch.count < 1) throw invalid('Count must be 1 or more.');
-        batch.count = patch.count;
+        const type = draft.scaffoldTypes.find((t) => t.id === batch.typeId);
+        const wrong = quantityProblem(patch.count, type);
+        if (wrong) throw invalid(wrong);
+        batch.count = roundQuantity(patch.count);
       }
       if (patch.label !== undefined) batch.label = patch.label || undefined;
       if (patch.notes !== undefined) batch.notes = patch.notes || undefined;
@@ -1306,14 +1338,21 @@ export class App {
   setBatchState(id: string, state: ScaffoldBatch['state'], note?: string): Delta {
     const batch = this.state.batches.find((b) => b.id === id);
     if (!batch) throw notFound('batch', id);
+    const clean = state.trim();
+    if (!clean) throw invalid('A batch needs a state.');
+    if (clean === batch.state) return { ok: true, message: 'No change.' };
     const now = this.now;
 
-    return this.mutate(`Batch → ${state}`, (draft) => {
+    return this.mutate(`Batch → ${clean}`, (draft) => {
       const target = draft.batches.find((b) => b.id === id)!;
-      target.state = state;
-      target.history.push({ state, at: now, note });
-      if (state !== 'crosslinking') target.runId = undefined;
-      return { ok: true as const, message: `Batch is now ${state}.` };
+      target.state = clean;
+      target.history.push({ state: clean, at: now, note });
+      // Setting a state by hand takes the batch out of whatever run was moving
+      // it — you have overruled the protocol. That used to be phrased as "any
+      // state except crosslinking", which only worked while crosslinking was
+      // the one thing a run could do.
+      target.runId = undefined;
+      return { ok: true as const, message: `Batch is now ${clean}.` };
     });
   }
 
@@ -1893,7 +1932,7 @@ export function syncGeneratedReminders(draft: State, now: Stamp): void {
         const batch = draft.batches.find((b) => b.id === id);
         if (!batch) return null;
         const type = draft.scaffoldTypes.find((t) => t.id === batch.typeId);
-        return `${batch.count} × ${type?.name ?? batch.typeId}`;
+        return describeQuantity(batch.count, type?.name ?? batch.typeId, type?.unit);
       })
       .filter(Boolean)
       .join(', ');

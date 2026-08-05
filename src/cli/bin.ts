@@ -345,7 +345,7 @@ async function run(
       const inventory = app.inventory();
       if (json) return out(inventory), 0;
       out('types');
-      for (const type of inventory.types) out(`  ${type.id.padEnd(22)} ${String(type.total).padStart(4)}  ${type.name}`);
+      for (const type of inventory.types) out(`  ${type.id.padEnd(22)} ${String(type.inStock).padStart(4)}  ${type.name}`);
       out('\nbatches');
       for (const batch of inventory.batches) {
         out(`  ${batch.id.padEnd(6)} ${String(batch.count).padStart(4)} × ${batch.typeName.padEnd(22)} ${batch.state}  ${dim(formatDayMonth(batch.fabricatedOn, app.today))}`);

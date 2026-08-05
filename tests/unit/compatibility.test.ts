@@ -348,6 +348,47 @@ describe('a vault written by 1.3.2', () => {
     }
   });
 
+  /**
+   * SPEC §7 promises unknown fields are preserved so "a newer file opened by an
+   * older build loses nothing". That was only ever wired to nodes — the whole
+   * inventory dropped them silently, which is the same failure the promise
+   * exists to prevent, just somewhere nobody looked.
+   */
+  it('keeps fields it does not understand on inventory records too', () => {
+    const vault = vaultAsShipped();
+    const inventory = vault.read('inventory.pt')!;
+
+    // What a later build might write: a unit on a type, a category, a state a
+    // this build has never heard of, a field on a protocol and on one of its
+    // steps, and one on the run.
+    vault.write(
+      'inventory.pt',
+      inventory
+        .replace('scaffoldtype collagen-sponge\n', 'scaffoldtype collagen-sponge\n  unit: mL\n')
+        .replace('batch b12\n', 'batch b12\n  category: material\n')
+        .replace('protocol edc-nhs\n', 'protocol edc-nhs\n  doneState: crosslinked\n')
+        .replace('  pstep s1\n', '  pstep s1\n    vessel: beaker\n')
+        .replace('run x13\n', 'run x13\n  operator: sam\n'),
+    );
+
+    const state = loadState(vault);
+    const rewritten = new MemoryVault();
+    saveState(rewritten, state);
+
+    const out = rewritten.read('inventory.pt')!;
+    expect(out).toContain('unit: mL');
+    expect(out).toContain('category: material');
+    expect(out).toContain('doneState: crosslinked');
+    expect(out).toContain('vessel: beaker');
+    expect(out).toContain('operator: sam');
+
+    // And it survives a second trip, so the preservation is stable rather than
+    // a one-off copy.
+    const twice = new MemoryVault();
+    saveState(twice, loadState(rewritten));
+    expect(twice.read('inventory.pt')).toBe(out);
+  });
+
   /** Saving what was just saved changes nothing: canonical form is a fixed point. */
   it('is a fixed point', () => {
     const once = new MemoryVault();
