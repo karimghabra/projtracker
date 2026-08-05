@@ -98,12 +98,23 @@ export function AppShell() {
         setShowSearch(true);
         return;
       }
-      // Undo and redo work while typing too; that is what people expect.
+      /*
+        Undo and redo work while typing too; that is what people expect — and
+        the comment said so for a while above a line that returned early
+        instead. Taking the event matters more than convenience: the browser's
+        own text undo fires an `input` event, React turns that into an
+        `updateNode`, and that would record history and discard the redo stack.
+      */
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
-        if (typing) return;
         event.preventDefault();
         if (event.shiftKey) run((a) => a.redo());
         else run((a) => a.undo());
+        return;
+      }
+      // Ctrl+Y is redo on Windows, and costs nothing to honour.
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y') {
+        event.preventDefault();
+        run((a) => a.redo());
         return;
       }
       if (typing) return;
@@ -176,9 +187,16 @@ export function AppShell() {
           >
             <IconSearch />
           </button>
+          {/*
+            `preventDefault` on mousedown keeps focus where it is, so pressing
+            these cannot blur an open editor. A blur used to fire a commit in
+            the same gesture, which re-wrote history and disabled the very
+            button being pressed before the click landed.
+          */}
           <button
             className="btn ghost icon"
             disabled={!history.canUndo}
+            onMouseDown={(event) => event.preventDefault()}
             onClick={() => run((a) => a.undo())}
             title={history.canUndo ? `Undo: ${history.past[0]}` : 'Nothing to undo'}
             aria-label="Undo"
@@ -189,6 +207,7 @@ export function AppShell() {
           <button
             className="btn ghost icon"
             disabled={!history.canRedo}
+            onMouseDown={(event) => event.preventDefault()}
             onClick={() => run((a) => a.redo())}
             title={history.canRedo ? `Redo: ${history.future[0]}` : 'Nothing to redo'}
             aria-label="Redo"

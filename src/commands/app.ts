@@ -88,6 +88,37 @@ export type ImportAction = 'create' | 'merge' | 'skip';
  */
 export type ProtocolStepPatch = Omit<ProtocolStep, 'id'> & { id?: string };
 
+/**
+ * Which fields a patch would actually alter, named for the confirmation.
+ *
+ * Pure, and computed against the stored node before anything is written, so a
+ * caller can tell "nothing to do" from "done" without having recorded a history
+ * entry to find out.
+ */
+function nodeChanges(node: Node, patch: NodePatch): string[] {
+  const changed: string[] = [];
+  const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+
+  if (patch.name !== undefined && patch.name.trim() !== node.name) changed.push('name');
+  if (patch.notes !== undefined && (patch.notes || undefined) !== node.notes) changed.push('notes');
+  if (patch.seq !== undefined && patch.seq !== node.seq) changed.push('rank');
+  if (patch.ordering !== undefined && isContainerKind(node.kind) && patch.ordering !== node.ordering) {
+    changed.push('ordering');
+  }
+  if (patch.health !== undefined && patch.health !== node.health) changed.push('health');
+  if (patch.plannedFor !== undefined && (patch.plannedFor ?? undefined) !== node.plannedFor) {
+    changed.push(patch.plannedFor ? 'planned date' : 'planned date cleared');
+  }
+  if (patch.tags !== undefined) {
+    const next = patch.tags.map((t) => t.trim()).filter(Boolean);
+    if (!same(next, node.tags)) changed.push('tags');
+  }
+  if (patch.waitingOn !== undefined && !same(patch.waitingOn ?? undefined, node.waitingOn)) {
+    changed.push(patch.waitingOn ? 'external hold' : 'hold cleared');
+  }
+  return changed;
+}
+
 /** The numeric half of an `s<n>` step id, or 0 for anything unrecognised. */
 function stepNumber(id: string): number {
   const n = Number(/^s(\d+)$/.exec(id)?.[1]);
@@ -397,46 +428,33 @@ export class App {
       throw invalid(`"${patch.plannedFor}" is not a date (expected YYYY-MM-DD).`);
     }
 
+    // Worked out *before* the mutation, because a mutation is a history entry
+    // and an edit that changes nothing must not cost one. Several editors
+    // commit on blur regardless, and pressing Undo or Redo blurs whatever was
+    // focused — so a no-op recorded here would clear the redo stack with the
+    // very click that was trying to use it.
+    const changed = nodeChanges(existing, patch);
+    if (!changed.length) return { ok: true, message: 'No change.' };
+
     return this.mutate(`Edit "${existing.name}"`, (draft) => {
       const node = draft.nodes[id]!;
-      const changed: string[] = [];
 
-      if (patch.name !== undefined && patch.name.trim() !== node.name) {
+      if (patch.name !== undefined) {
         node.name = patch.name.trim();
         node.slug = uniqueSlug(draft, node.parent, node.name, node.id);
-        changed.push('name');
       }
-      if (patch.notes !== undefined) {
-        node.notes = patch.notes || undefined;
-        changed.push('notes');
-      }
-      if (patch.seq !== undefined && patch.seq !== node.seq) {
+      if (patch.notes !== undefined) node.notes = patch.notes || undefined;
+      if (patch.seq !== undefined) {
         node.seq = patch.seq;
         node.seqSource = 'user';
-        changed.push('rank');
       }
-      if (patch.ordering !== undefined && isContainerKind(node.kind)) {
-        node.ordering = patch.ordering;
-        changed.push('ordering');
-      }
-      if (patch.health !== undefined) {
-        node.health = patch.health;
-        changed.push('health');
-      }
-      if (patch.plannedFor !== undefined) {
-        node.plannedFor = patch.plannedFor ?? undefined;
-        changed.push(patch.plannedFor ? 'planned date' : 'planned date cleared');
-      }
-      if (patch.tags !== undefined) {
-        node.tags = patch.tags.map((t) => t.trim()).filter(Boolean);
-        changed.push('tags');
-      }
-      if (patch.waitingOn !== undefined) {
-        node.waitingOn = patch.waitingOn ?? undefined;
-        changed.push(patch.waitingOn ? 'external hold' : 'hold cleared');
-      }
+      if (patch.ordering !== undefined && isContainerKind(node.kind)) node.ordering = patch.ordering;
+      if (patch.health !== undefined) node.health = patch.health;
+      if (patch.plannedFor !== undefined) node.plannedFor = patch.plannedFor ?? undefined;
+      if (patch.tags !== undefined) node.tags = patch.tags.map((t) => t.trim()).filter(Boolean);
+      if (patch.waitingOn !== undefined) node.waitingOn = patch.waitingOn ?? undefined;
 
-      return { ok: true as const, message: changed.length ? `Updated ${changed.join(', ')}.` : 'No change.' };
+      return { ok: true as const, message: `Updated ${changed.join(', ')}.` };
     });
   }
 
@@ -559,6 +577,14 @@ export class App {
       throw invalid(
         `Cannot read "${when}" as a time. Try a date, a month, a quarter or a year — 2026-08-14, Aug 2026, Q3 2026, 2026.`,
       );
+    }
+
+    // Already recorded as exactly this? Then there is nothing to record. The
+    // Completed field commits on blur, and blur is what pressing Redo does.
+    const doneAt = `${period.at}T12:00`;
+    const precision = period.precision === 'day' ? undefined : period.precision;
+    if (node.status === 'done' && node.doneAt === doneAt && node.donePrecision === precision) {
+      return { ok: true, message: 'No change.' };
     }
 
     const label = `${period.at}${period.precision === 'day' ? '' : ` (${period.precision})`}`;

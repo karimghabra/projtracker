@@ -316,7 +316,11 @@ function CompletedSection({ node }: { node: NodeView }) {
           placeholder="Q3 2026"
           data-testid="detail-completed"
           onChange={(event) => setText(event.target.value)}
-          onBlur={(event) => apply(event.target.value)}
+          // Clicking away without having typed anything is not an edit — and
+          // pressing Undo or Redo is exactly such a click.
+          onBlur={(event) => {
+            if (event.target.value !== (node.doneValue ?? '')) apply(event.target.value);
+          }}
           onKeyDown={(event) => {
             if (event.key === 'Enter') apply((event.target as HTMLInputElement).value);
           }}

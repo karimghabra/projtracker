@@ -145,6 +145,61 @@ describe('undo reverts the whole image', () => {
     expect(h.app.node(t).status).toBe('done');
   });
 
+  /**
+   * The bug behind "redo is non functional".
+   *
+   * Several editors commit on blur whether or not anything changed, and pressing
+   * the Redo button blurs whatever was focused. So the sequence was: undo, press
+   * Redo, the blur fires a no-op edit, `pushHistory` clears the future, and the
+   * button is disabled before the click lands. No action, no error.
+   *
+   * A change that changes nothing is not a change, and must not cost the user
+   * their redo.
+   */
+  it('an edit that changes nothing leaves the redo stack alone', () => {
+    const h = harness();
+    const b = sampleBoard(h);
+
+    h.app.complete(b.draft);
+    h.app.undo();
+    expect(h.app.history().canRedo).toBe(true);
+
+    // Exactly what a blurred cell editor sends: the value that is already there.
+    h.app.updateNode(b.draft, { name: h.app.node(b.draft).name });
+    expect(h.app.history().canRedo).toBe(true);
+
+    h.app.redo();
+    expect(h.app.node(b.draft).status).toBe('done');
+  });
+
+  it('a no-op edit costs no undo step either', () => {
+    const h = harness();
+    const b = sampleBoard(h);
+    const before = h.app.history().past.length;
+
+    h.app.updateNode(b.draft, { name: h.app.node(b.draft).name });
+    h.app.updateNode(b.draft, { notes: undefined });
+
+    expect(h.app.history().past.length).toBe(before);
+  });
+
+  it('re-setting the same completion period is also a no-op', () => {
+    const h = harness('2026-07-30T09:00');
+    const b = sampleBoard(h);
+    h.app.setCompletion(b.draft, '2026-07-28');
+    h.app.complete(b.review);
+
+    h.app.undo();
+    expect(h.app.history().canRedo).toBe(true);
+
+    // The Completed field blurring and re-sending the period already on record.
+    h.app.setCompletion(b.draft, '2026-07-28');
+    expect(h.app.history().canRedo).toBe(true);
+
+    h.app.redo();
+    expect(h.app.node(b.review).derived).toBe('done');
+  });
+
   it('undoes a delete completely, children and edges included', () => {
     const h = harness();
     const b = sampleBoard(h);

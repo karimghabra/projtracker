@@ -113,6 +113,15 @@ export class Store {
     try {
       const parsed = JSON.parse(raw) as HistoryIndex;
       if (!Array.isArray(parsed.past) || !Array.isArray(parsed.future)) return emptyIndex();
+      // A missing or unreadable counter makes every snapshot path `00NaN.json`,
+      // so each one overwrites the last and undo deletes the file redo is about
+      // to read. Start again past whatever is already on record instead.
+      if (!Number.isFinite(parsed.next)) {
+        const used = [...parsed.past, ...parsed.future]
+          .map((entry) => Number(entry.file?.replace(/\D/g, '')))
+          .filter(Number.isFinite);
+        parsed.next = used.length ? Math.max(...used) + 1 : 1;
+      }
       return parsed;
     } catch {
       // A corrupt history costs the undo stack, never the data.
@@ -264,6 +273,12 @@ export class Store {
     }
 
     this.index.past.push({ label: entry.label, file: this.snapshotFile(this.current) });
+    // Redoing grows the past too, and only `pushHistory` used to trim it — so a
+    // long enough undo/redo session grew the vault without bound.
+    while (this.index.past.length > HISTORY_LIMIT) {
+      const dropped = this.index.past.shift();
+      if (dropped) this.vault.remove(dropped.file);
+    }
     this.vault.remove(entry.file);
     this.current = restored;
     this.writeIndex();

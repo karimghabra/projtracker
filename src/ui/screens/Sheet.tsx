@@ -305,6 +305,7 @@ export function SheetScreen() {
                       <CellEditor
                         col={col}
                         value={draft}
+                        original={cellValue(row, col)}
                         onChange={setDraft}
                         onCommit={(value) => {
                           commit(row, col, value);
@@ -379,6 +380,7 @@ function display(row: SheetRow, col: Column): string {
 function CellEditor({
   col,
   value,
+  original,
   onChange,
   onCommit,
   onCancel,
@@ -386,11 +388,27 @@ function CellEditor({
 }: {
   col: Column;
   value: string;
+  /** What the cell held when editing began, so leaving it alone writes nothing. */
+  original: string;
   onChange: (next: string) => void;
   onCommit: (value: string) => void;
   onCancel: () => void;
   onTab: (value: string, shift: boolean) => void;
 }) {
+  /**
+   * Clicking away from an untouched cell is not an edit.
+   *
+   * Committing regardless used to record a history entry that changed nothing,
+   * and since pressing Undo or Redo blurs whatever is focused, that entry
+   * landed on the very click meant to use the redo stack — wiping it. The
+   * command layer refuses no-ops too now; this stops the round trip happening
+   * at all.
+   */
+  const commitIfChanged = () => {
+    if (value !== original) onCommit(value);
+    else onCancel();
+  };
+
   const onKeyDown = (event: React.KeyboardEvent) => {
     if (event.key === 'Enter') {
       event.preventDefault();
@@ -417,7 +435,7 @@ function CellEditor({
           onCommit(event.target.value);
         }}
         onKeyDown={onKeyDown}
-        onBlur={() => onCommit(value)}
+        onBlur={commitIfChanged}
       >
         {options.map((option) => (
           <option key={option} value={option}>
@@ -438,7 +456,7 @@ function CellEditor({
       placeholder={col.kind === 'period' ? 'Q3 2026' : undefined}
       onChange={(event) => onChange(event.target.value)}
       onKeyDown={onKeyDown}
-      onBlur={() => onCommit(value)}
+      onBlur={commitIfChanged}
     />
   );
 }
