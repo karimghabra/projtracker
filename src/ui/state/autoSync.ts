@@ -98,3 +98,61 @@ export function useAutoSync(): void {
     };
   }, [app, store]);
 }
+
+/**
+ * Keeping the vault repository in step, without being asked.
+ *
+ * Separate from the Google Sheets loop above and deliberately so: that one
+ * publishes a rendering and can be blocked by somebody typing in a cell, while
+ * this one moves the files themselves and cannot be blocked by anything — the
+ * merge already decided what happens. Sharing a timer between them would tie
+ * the two failure modes together for no gain.
+ *
+ * A sync that changed files rebuilds the board, because the vault is the state.
+ * That is announced, because work appearing from another machine while you are
+ * looking at the screen is startling if nothing says why.
+ */
+export function useVaultSync(): void {
+  const { store } = useApp();
+
+  useEffect(() => {
+    const bridge = typeof window === 'undefined' ? undefined : window.protracker?.git;
+    if (!bridge) return;
+
+    let stopped = false;
+    let running = false;
+
+    const tick = async () => {
+      if (stopped || running) return;
+      running = true;
+      try {
+        const status = await bridge.status();
+        if (!status.configured || !status.auto) return;
+        if (minutesSince(status.lastSyncAt) < status.everyMinutes) return;
+
+        const outcome = await bridge.sync();
+        if (outcome.changed) {
+          store.reload();
+          store.toast(
+            outcome.collisions.some((c) => c.winner === 'theirs')
+              ? outcome.message
+              : `Brought in ${outcome.pulled} file${outcome.pulled === 1 ? '' : 's'} from your other machine.`,
+          );
+        }
+      } catch {
+        // Offline, asleep, or GitHub having a moment. The next tick tries
+        // again; a sync that shouts about every dropped connection is a sync
+        // people turn off.
+      } finally {
+        running = false;
+      }
+    };
+
+    void tick();
+    const timer = setInterval(() => void tick(), TICK_MS);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }, [store]);
+}

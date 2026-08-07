@@ -88,6 +88,16 @@ test.describe('backup and restore', () => {
     await expect(h.page.getByTestId('sheets-push')).toHaveCount(0);
   });
 
+  test('says the same about syncing the vault itself, and offers no token box', async ({ h }) => {
+    await board(h.page);
+    await openBackup(h.page);
+    await expect(h.page.getByTestId('git-desktop-only')).toContainText('desktop app');
+    // A password field in a browser tab would be a place to type a token that
+    // has nowhere safe to go. There must not be one.
+    await expect(h.page.getByTestId('git-token')).toHaveCount(0);
+    await expect(h.page.getByTestId('git-sync')).toHaveCount(0);
+  });
+
   test('counts what is in the vault before you commit to anything', async ({ h }) => {
     await board(h.page);
     await openBackup(h.page);

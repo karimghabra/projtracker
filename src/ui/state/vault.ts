@@ -44,6 +44,39 @@ export interface SheetsBridge {
   pull(): Promise<{ files: Record<string, string>; problems: string[]; meta: { generatedAt: string; version: string } }>;
 }
 
+export interface GitStatus {
+  configured: boolean;
+  repo?: string;
+  branch?: string;
+  lastSyncAt?: string;
+  lastCommit?: string;
+  auto: boolean;
+  everyMinutes: number;
+  /** False when this machine had no keychain and the token sits in plain text. */
+  encrypted: boolean;
+}
+
+export interface SyncOutcome {
+  message: string;
+  commit?: string;
+  /** Where this machine's superseded version was kept, when newest-wins lost one. */
+  supersededCommit?: string;
+  pushed: number;
+  pulled: number;
+  collisions: { path: string; winner: 'mine' | 'theirs'; deletion?: boolean }[];
+  /** True when files on disk changed, so the board must be rebuilt from them. */
+  changed: boolean;
+  repo?: string;
+}
+
+export interface GitBridge {
+  status(): Promise<GitStatus>;
+  connect(repo: string, token: string): Promise<GitStatus>;
+  forget(): Promise<GitStatus>;
+  setAuto(auto: boolean, everyMinutes?: number): Promise<GitStatus>;
+  sync(): Promise<SyncOutcome>;
+}
+
 export interface DesktopBridge {
   readFile(path: string): string | null;
   writeFile(path: string, text: string): void;
@@ -57,6 +90,7 @@ export interface DesktopBridge {
   revealVault(): Promise<boolean>;
   /** Absent in the browser build, which has no key and no socket. */
   sheets?: SheetsBridge;
+  git?: GitBridge;
 }
 
 declare global {

@@ -25,16 +25,43 @@ export interface Toast {
 }
 
 export class UiStore {
-  readonly app: App;
+  /**
+   * Replaced wholesale when the files underneath change — see `reload`. Not
+   * readonly for that reason, and read through `useApp` on every render so a
+   * replacement reaches the screen the way any other change does.
+   */
+  app: App;
   readonly location: string;
   private listeners = new Set<() => void>();
   private version = 0;
   private toastSeq = 0;
   toasts: Toast[] = [];
 
-  constructor(vault: Vault, location: string, clock: Clock = systemClock) {
+  constructor(
+    private readonly vault: Vault,
+    location: string,
+    private readonly clock: Clock = systemClock,
+  ) {
     this.app = new App(vault, clock);
     this.location = location;
+  }
+
+  /**
+   * Read the vault again, from scratch.
+   *
+   * For when something outside the app has rewritten the files — a sync
+   * bringing in another machine's work. Rebuilding is not a shortcut for
+   * re-parsing selectively: the vault *is* the state, so re-reading it is the
+   * only definition of "what is true now" that cannot drift.
+   *
+   * The undo history is not carried across. It describes a line of edits this
+   * machine made to files that have since been replaced, and offering to undo
+   * into a state that never existed on either machine would be worse than
+   * offering nothing. A sync is a place you cannot step back through.
+   */
+  reload(): void {
+    this.app = new App(this.vault, this.clock);
+    this.emit();
   }
 
   subscribe = (listener: () => void): (() => void) => {

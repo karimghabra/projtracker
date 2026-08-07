@@ -7,12 +7,17 @@
  * Deleting this file would leave the system working in a browser.
  */
 
-import { BrowserWindow, app, dialog, ipcMain, shell } from 'electron';
+import { BrowserWindow, app, dialog, ipcMain, safeStorage, shell } from 'electron';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
+import { hostname } from 'node:os';
 import type { BackupMeta, VaultFiles } from '../store/backup.ts';
+import { isBackedUp } from '../store/backup.ts';
 import type { Fingerprints, Grid } from '../sync/backupSync.ts';
 import { pullBackup, pushBackup, readReadableTabs, untouchedSince } from '../sync/backupSync.ts';
+import type { Files } from '../sync/gitVault.ts';
+import { syncVault } from '../sync/gitVault.ts';
+import { GitHubVault, parseRepo } from '../sync/github.ts';
 import type { ServiceAccount } from '../sync/sheets.ts';
 import { GoogleSheets, parseServiceAccount, parseSpreadsheetId } from '../sync/sheets.ts';
 import {
@@ -270,6 +275,187 @@ function registerSheetsHandlers(): void {
   ipcMain.handle('pt:sheets:pull', async () => pullBackup(connect(readSettings())));
 }
 
+// ----------------------------------------------------------- git vault sync
+
+interface GitSettings {
+  repo?: string;
+  branch?: string;
+  /** The token, encrypted by the OS. Base64 of whatever safeStorage produced. */
+  token?: string;
+  /** Stored in the clear only when the OS has no keychain to offer. */
+  tokenPlain?: string;
+  /** The commit this machine last agreed with — the base for every merge. */
+  lastCommit?: string;
+  lastSyncAt?: string;
+  auto?: boolean;
+  everyMinutes?: number;
+}
+
+function gitSettingsFile(): string {
+  return join(app.getPath('userData'), 'git-sync.json');
+}
+
+function readGitSettings(): GitSettings {
+  try {
+    return JSON.parse(readFileSync(gitSettingsFile(), 'utf8')) as GitSettings;
+  } catch {
+    return {};
+  }
+}
+
+function writeGitSettings(settings: GitSettings): void {
+  writeFileSync(gitSettingsFile(), `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
+}
+
+/**
+ * The token is encrypted by the operating system — DPAPI on Windows, the
+ * Keychain on macOS — so the file on disk is useless to anything that is not
+ * this user on this machine. Where no keychain exists the token is stored in
+ * the clear, and the status says so rather than implying a protection that is
+ * not there.
+ */
+function storeToken(settings: GitSettings, token: string): void {
+  if (safeStorage.isEncryptionAvailable()) {
+    settings.token = safeStorage.encryptString(token).toString('base64');
+    delete settings.tokenPlain;
+  } else {
+    settings.tokenPlain = token;
+    delete settings.token;
+  }
+}
+
+function loadToken(settings: GitSettings): string | undefined {
+  if (settings.token) {
+    try {
+      return safeStorage.decryptString(Buffer.from(settings.token, 'base64'));
+    } catch {
+      // Encrypted by a different user or machine: the token is unreadable, and
+      // saying so beats failing later with a message about GitHub.
+      return undefined;
+    }
+  }
+  return settings.tokenPlain;
+}
+
+/** Every vault file that belongs in a sync, and when each was last written. */
+function vaultOnDisk(): { files: Files; at: Map<string, string> } {
+  const out: Files = new Map();
+  const at = new Map<string, string>();
+  for (const path of listFiles('').filter(isBackedUp)) {
+    const full = safePath(path);
+    out.set(path, readFileSync(full, 'utf8'));
+    at.set(path, new Date(statSync(full).mtimeMs).toISOString());
+  }
+  return { files: out, at };
+}
+
+function gitStatus(settings: GitSettings): {
+  configured: boolean;
+  repo?: string;
+  branch?: string;
+  lastSyncAt?: string;
+  lastCommit?: string;
+  auto: boolean;
+  everyMinutes: number;
+  /** False when the OS gave us nowhere safe to keep the token. */
+  encrypted: boolean;
+} {
+  return {
+    configured: Boolean(settings.repo && loadToken(settings)),
+    repo: settings.repo,
+    branch: settings.branch,
+    lastSyncAt: settings.lastSyncAt,
+    lastCommit: settings.lastCommit,
+    auto: settings.auto === true,
+    everyMinutes: settings.everyMinutes ?? 10,
+    encrypted: Boolean(settings.token),
+  };
+}
+
+function registerGitHandlers(): void {
+  ipcMain.handle('pt:git:status', () => gitStatus(readGitSettings()));
+
+  ipcMain.handle('pt:git:connect', async (_event, repo: string, token: string) => {
+    const vault = new GitHubVault(repo, token);
+    const info = await vault.info();
+    /*
+     * A vault is unpublished work. Refusing a public repository is the one
+     * check worth making before anything is written, because by the time the
+     * mistake is visible the history is already public and rewriting it does
+     * not un-publish it.
+     */
+    if (!info.private) {
+      throw new Error(
+        `${parseRepo(repo).owner}/${parseRepo(repo).repo} is public. Make it private before syncing a vault into it — everything in your tracker would otherwise be readable by anyone.`,
+      );
+    }
+
+    const settings = readGitSettings();
+    const was = settings.repo;
+    settings.repo = repo.trim();
+    settings.branch = info.defaultBranch;
+    // A different repository is a different history, so the commit we last
+    // agreed with means nothing there — keeping it would make the first sync
+    // ask for a base that does not exist.
+    if (was !== settings.repo) delete settings.lastCommit;
+    storeToken(settings, token.trim());
+    writeGitSettings(settings);
+    return gitStatus(settings);
+  });
+
+  ipcMain.handle('pt:git:forget', () => {
+    const settings = readGitSettings();
+    writeGitSettings({ everyMinutes: settings.everyMinutes });
+    return gitStatus(readGitSettings());
+  });
+
+  ipcMain.handle('pt:git:setAuto', (_event, auto: boolean, everyMinutes?: number) => {
+    const settings = readGitSettings();
+    settings.auto = auto;
+    if (everyMinutes) settings.everyMinutes = everyMinutes;
+    writeGitSettings(settings);
+    return gitStatus(settings);
+  });
+
+  ipcMain.handle('pt:git:sync', async () => {
+    const settings = readGitSettings();
+    const token = loadToken(settings);
+    if (!settings.repo || !token) throw new Error('No repository has been set up yet.');
+
+    const { files, at } = vaultOnDisk();
+    const report = await syncVault(new GitHubVault(settings.repo, token), {
+      branch: settings.branch ?? 'main',
+      mine: files,
+      mineAt: at,
+      lastCommit: settings.lastCommit,
+      device: hostname(),
+    });
+
+    for (const [path, text] of report.write) {
+      const full = safePath(path);
+      mkdirSync(dirname(full), { recursive: true });
+      writeFileSync(full, text, 'utf8');
+    }
+    for (const path of report.remove) rmSync(safePath(path), { force: true });
+
+    settings.lastCommit = report.commit ?? settings.lastCommit;
+    settings.lastSyncAt = new Date().toISOString();
+    writeGitSettings(settings);
+
+    return {
+      message: report.message,
+      commit: report.commit,
+      supersededCommit: report.supersededCommit,
+      pushed: report.pushed,
+      pulled: report.pulled,
+      collisions: report.collisions,
+      /** The renderer must rebuild from the vault when this is true. */
+      changed: report.write.size > 0 || report.remove.length > 0,
+      repo: settings.repo,
+    };
+  });
+}
+
 function registerHandlers(): void {
   ipcMain.on('pt:read', (event, path: string) => {
     try {
@@ -418,6 +604,7 @@ if (!single) {
     }
     registerHandlers();
     registerSheetsHandlers();
+    registerGitHandlers();
     createWindow();
 
     app.on('activate', () => {

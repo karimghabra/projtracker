@@ -26,6 +26,7 @@ import type { SheetsStatus } from '../state/vault.ts';
 import { useApp } from '../state/store.ts';
 import { ConfirmDialog, Modal } from './ui.tsx';
 import { SheetsPanel } from './SheetsPanel.tsx';
+import { VaultRepoPanel } from './VaultRepoPanel.tsx';
 import { IconImport, IconWarning } from './icons.tsx';
 
 type Pending = { files: VaultFiles; from: string; problems: string[]; takenAt?: string };
@@ -33,6 +34,7 @@ type Pending = { files: VaultFiles; from: string; problems: string[]; takenAt?: 
 export function BackupDialog({ onClose }: { onClose: () => void }) {
   const { app, run, store } = useApp();
   const bridge = typeof window === 'undefined' ? undefined : window.protracker?.sheets;
+  const gitBridge = typeof window === 'undefined' ? undefined : window.protracker?.git;
 
   const [busy, setBusy] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
@@ -210,6 +212,20 @@ export function BackupDialog({ onClose }: { onClose: () => void }) {
             />
           )}
         </div>
+
+        <hr className="sep" />
+
+        {gitBridge ? (
+          <VaultRepoPanel bridge={gitBridge} />
+        ) : (
+          <div className="field">
+            <label>The same vault on another computer</label>
+            <span className="hint" data-testid="git-desktop-only">
+              Syncing the vault itself needs the desktop app — a browser tab has nowhere safe to
+              keep the token.
+            </span>
+          </div>
+        )}
 
         <hr className="sep" />
 

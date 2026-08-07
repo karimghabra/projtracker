@@ -432,6 +432,48 @@ Consequences that fall out of this:
   the readable tabs; sharing a name or a code path would be the worst bug the
   feature could have.
 
+### 7.3 The same vault on two machines
+
+Optional, off until configured: the vault's own files kept in a **private**
+GitHub repository, so a second computer opens the same tracker.
+
+Distinct in kind from §7.1, and the wording in the UI keeps them apart. A backup
+publishes a *rendering* of the board for people to read and type into. This
+moves the files themselves, byte for byte — which is only sound because
+serialization is canonical (§4), so a commit is a readable diff of what actually
+changed rather than an opaque swap.
+
+**What crosses.** Exactly what a backup contains: `.pt` files, not `.history/`.
+Undo is a local cache describing edits to files a sync may have replaced, so it
+does not survive one — a sync is a point you cannot step back through. Anything
+else already in the repository, a README included, is carried across untouched;
+the tree is written whole, so a file left off the list is a file deleted.
+
+**Transport** is the GitHub Git Data API — blobs, a tree, a commit, one ref
+update — over `fetch`, with no git binary and no clone. The branch moves once,
+at the end, so a failure anywhere leaves the repository exactly as it was. A
+blob's name is a hash of its content and `node:crypto` computes it locally, so
+the tree listing alone says which files differ: nothing unchanged is uploaded or
+downloaded, and a sync where nothing moved costs three requests.
+
+**Merging is per file**, against the commit this machine last agreed with. Two
+machines that edited different projects have not conflicted, and are merged with
+nothing reported. Where the same file moved on both, **the newer edit wins** —
+with one asymmetry: an edit beats a deletion, because a deletion carries no
+timestamp to compare and discarding work is the worse way to be wrong.
+
+**Nothing is lost to that rule.** Before a merge in which anything of this
+machine's would be superseded, this machine's version is committed first, and
+that commit becomes a parent of the merge. The losing side is reachable in
+history rather than described in a log, and the app links to it.
+
+**The token** is entered once and held by the desktop shell, encrypted by the
+operating system where one offers it. It never enters the vault — the vault is
+the thing a person shares — and never reaches the renderer, which is given a
+status and no way to read it back. Setup **refuses a public repository**: by the
+time that mistake is visible the history is already public, and deleting it does
+not un-publish it.
+
 ---
 
 ## 8. Architecture

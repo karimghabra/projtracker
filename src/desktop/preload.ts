@@ -23,6 +23,32 @@ export interface SheetsStatus {
   vault?: string;
 }
 
+/** What the renderer is told about the vault repository. Never the token. */
+export interface GitStatus {
+  configured: boolean;
+  repo?: string;
+  branch?: string;
+  lastSyncAt?: string;
+  lastCommit?: string;
+  auto: boolean;
+  everyMinutes: number;
+  /** False when this machine had no keychain and the token sits in plain text. */
+  encrypted: boolean;
+}
+
+export interface SyncOutcome {
+  message: string;
+  commit?: string;
+  /** Where this machine's superseded version was kept, when newest-wins lost one. */
+  supersededCommit?: string;
+  pushed: number;
+  pulled: number;
+  collisions: { path: string; winner: 'mine' | 'theirs'; deletion?: boolean }[];
+  /** True when files on disk changed, so the board must be rebuilt from them. */
+  changed: boolean;
+  repo?: string;
+}
+
 contextBridge.exposeInMainWorld('protracker', {
   readFile: (path: string): string | null => ipcRenderer.sendSync('pt:read', path),
   writeFile: (path: string, text: string): void => {
@@ -48,6 +74,20 @@ contextBridge.exposeInMainWorld('protracker', {
   chooseVault: (): Promise<{ path: string; refused?: string } | null> =>
     ipcRenderer.invoke('pt:chooseVault'),
   revealVault: (): Promise<boolean> => ipcRenderer.invoke('pt:revealVault'),
+
+  /**
+   * The vault on GitHub. Same shape and same reason as `sheets`: it needs a
+   * token and a socket, and the renderer is given a status, never the token.
+   */
+  git: {
+    status: (): Promise<GitStatus> => ipcRenderer.invoke('pt:git:status'),
+    connect: (repo: string, token: string): Promise<GitStatus> =>
+      ipcRenderer.invoke('pt:git:connect', repo, token),
+    forget: (): Promise<GitStatus> => ipcRenderer.invoke('pt:git:forget'),
+    setAuto: (auto: boolean, everyMinutes?: number): Promise<GitStatus> =>
+      ipcRenderer.invoke('pt:git:setAuto', auto, everyMinutes),
+    sync: (): Promise<SyncOutcome> => ipcRenderer.invoke('pt:git:sync'),
+  },
 
   sheets: {
     status: (): Promise<SheetsStatus> => ipcRenderer.invoke('pt:sheets:status'),
