@@ -71,6 +71,7 @@ export interface NodeView {
   kind: NodeKind;
   name: string;
   notes?: string;
+  troubleshooting?: string;
   ref: string;
   path: string;
   parent: NodeId | null;
@@ -111,6 +112,7 @@ export function nodeView(index: GraphIndex, id: NodeId, today: DateOnly): NodeVi
     kind: node.kind,
     name: node.name,
     notes: node.notes,
+    troubleshooting: node.troubleshooting,
     ref: refOf(state, node.id),
     path: pathNameOf(state, node.id),
     parent: node.parent,
@@ -760,7 +762,14 @@ export interface SheetRow {
   plannedFor?: DateOnly;
   tags: string;
   notes: string;
+  troubleshooting: string;
   depth: number;
+  /**
+   * Nothing above it: a task or a culture recorded before it was filed. The
+   * grid says so rather than leaving the row looking nested under whatever
+   * happens to be above it.
+   */
+  unfiled: boolean;
   /** True on the first row of each project, so the grid can rule a line. */
   startsProject: boolean;
 }
@@ -808,6 +817,8 @@ export function sheetView(index: GraphIndex, today: DateOnly): SheetRow[] {
       plannedFor: node.plannedFor,
       tags: node.tags.join(', '),
       notes: node.notes ?? '',
+      troubleshooting: node.troubleshooting ?? '',
+      unfiled,
       depth: (index.ancestors.get(id) ?? []).length,
       startsProject: project?.id !== lastProject,
     });
@@ -989,6 +1000,35 @@ export interface ProgressRow {
   total: number;
   lastActivity?: string;
   daysQuiet: number | null;
+}
+
+/**
+ * Cultures that are running or about to, soonest to finish first.
+ *
+ * Here rather than filtered in a component: which experiments count as ongoing,
+ * and what order "ending soonest" means, are both derivations. A panel that
+ * worked them out itself would be the bug invariant 2 describes.
+ */
+export function experimentsView(index: GraphIndex, today: DateOnly): NodeView[] {
+  return index.order
+    .map((id) => nodeView(index, id, today))
+    // Everything except what is over. An experiment with no dates yet is
+    // exactly the one this panel exists to catch: it was started from here and
+    // has not been given a timeline, and hiding it until it has one would mean
+    // it disappeared the moment it was created.
+    .filter((node) => node.experiment !== undefined && node.experiment.state !== 'finished')
+    .sort((a, b) => {
+      // Something already running outranks something merely planned, and both
+      // outrank something with no dates at all; within each, the one finishing
+      // first.
+      const rank = (n: NodeView) =>
+        n.experiment?.state === 'running' ? 0 : n.experiment?.state === 'unplanned' ? 2 : 1;
+      return (
+        rank(a) - rank(b) ||
+        (a.experiment?.endsOn ?? '9999').localeCompare(b.experiment?.endsOn ?? '9999') ||
+        a.name.localeCompare(b.name)
+      );
+    });
 }
 
 export function progressView(index: GraphIndex, today: DateOnly): ProgressRow[] {

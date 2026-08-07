@@ -27,7 +27,8 @@ type ColumnId =
   | 'health'
   | 'plannedFor'
   | 'tags'
-  | 'notes';
+  | 'notes'
+  | 'troubleshooting';
 
 interface Column {
   id: ColumnId;
@@ -48,6 +49,7 @@ const COLUMNS: Column[] = [
   { id: 'plannedFor', label: 'Planned', width: 122, kind: 'date' },
   { id: 'tags', label: 'Tags', width: 132, kind: 'text' },
   { id: 'notes', label: 'Notes', width: 260, kind: 'text' },
+  { id: 'troubleshooting', label: 'Troubleshooting', width: 260, kind: 'text' },
 ];
 
 const STATUSES: StoredStatus[] = ['active', 'in_progress', 'done', 'dropped'];
@@ -92,6 +94,8 @@ export function SheetScreen() {
           return row.tags;
         case 'notes':
           return row.notes;
+        case 'troubleshooting':
+          return row.troubleshooting;
       }
     },
     [],
@@ -146,6 +150,9 @@ export function SheetScreen() {
           break;
         case 'notes':
           run((a) => a.updateNode(row.id, { notes: value }), { silent: true });
+          break;
+        case 'troubleshooting':
+          run((a) => a.updateNode(row.id, { troubleshooting: value }), { silent: true });
           break;
       }
     },
@@ -271,7 +278,7 @@ export function SheetScreen() {
                   col.id === 'seq' || col.id === 'status' ||
                   (col.id === 'completed' && leaf) ||
                   col.id === 'health' || col.id === 'plannedFor' || col.id === 'tags' ||
-                  col.id === 'notes' || own;
+                  col.id === 'notes' || col.id === 'troubleshooting' || own;
                 const active = cursor.row === rowIndex && cursor.col === colIndex;
 
                 return (
@@ -360,7 +367,10 @@ function display(row: SheetRow, col: Column): string {
     case 'goal':
     case 'task':
       // Each level names itself on its own row; the columns above a row are
-      // empty, which is what makes the grid read as a hierarchy.
+      // empty, which is what makes the grid read as a hierarchy. "(unfiled)" is
+      // the exception: it is not a level's name, it is the statement that there
+      // is no level above, and suppressing it would hide exactly that.
+      if (col.id === 'project' && row.unfiled) return '(unfiled)';
       return own ? (row[col.id] as string) : '';
     case 'status':
       return row.derived.replace('_', ' ');
@@ -374,6 +384,8 @@ function display(row: SheetRow, col: Column): string {
       return row.tags;
     case 'notes':
       return row.notes;
+    case 'troubleshooting':
+      return row.troubleshooting;
   }
 }
 

@@ -128,6 +128,12 @@ export interface Node {
   slug: string;
   name: string;
   notes?: string;
+  /**
+   * What went wrong, and what was tried. Separate from `notes` because that
+   * says what the task *is*; this is the running account of trouble with it,
+   * and it is wanted as a column of its own in the spreadsheet.
+   */
+  troubleshooting?: string;
 
   seq: number;
   seqSource: SeqSource;

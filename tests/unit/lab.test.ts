@@ -144,6 +144,93 @@ describe('experiments in the app', () => {
   });
 });
 
+describe('an experiment that belongs to no project', () => {
+  it('can be started without first deciding where it lives', () => {
+    const h = harness('2026-08-03T08:00');
+    const { id } = h.app.experimentQuickAdd('Osteogenic culture');
+
+    const node = h.app.node(id);
+    expect(node.kind).toBe('experiment');
+    expect(node.parent).toBeNull();
+    expect(node.experiment).toBeDefined();
+  });
+
+  it('takes its dates afterwards, and the timeline follows', () => {
+    const h = harness('2026-08-03T08:00');
+    const { id } = h.app.experimentQuickAdd('Pilot');
+    h.app.setExperiment(id, { sampleCount: 6, seedingDate: '2026-08-03', durationDays: 14 });
+
+    expect(h.app.node(id).experiment!.endsOn).toBe('2026-08-17');
+    // And its stages are on the day's list, exactly as a filed one's would be.
+    expect(h.app.todayList().items.some((i) => i.title.includes('Seed'))).toBe(true);
+  });
+
+  it('survives a reload, in a file of its own', () => {
+    const h = harness();
+    const { id } = h.app.experimentQuickAdd('Standalone culture');
+    const reloaded = h.reload();
+
+    expect(reloaded.node(id).name).toBe('Standalone culture');
+    expect(reloaded.node(id).experiment).toBeDefined();
+    expect(h.vault.list('projects/')).toContain('projects/standalone-culture.pt');
+  });
+
+  it('joins the ready pool like any other leaf', () => {
+    const h = harness();
+    const { id } = h.app.experimentQuickAdd('Ready culture');
+    expect(h.app.ready().map((r) => r.id)).toContain(id);
+  });
+
+  it('still refuses a container at the top level', () => {
+    const h = harness();
+    // A milestone outside a project is not a thing, and that has not changed.
+    expect(() => h.app.addNode(null, 'Loose milestone', { kind: 'milestone' })).toThrow();
+  });
+
+  it('needs a name, and refuses a definition that cannot be right', () => {
+    const h = harness();
+    expect(() => h.app.experimentQuickAdd('   ')).toThrow(/needs a name/);
+    expect(() => h.app.experimentQuickAdd('Bad', { durationDays: -3 })).toThrow(/at least one day/);
+  });
+});
+
+describe('the experiments panel reads', () => {
+  it('lists running cultures before planned ones, soonest to finish first', () => {
+    const h = harness('2026-08-10T08:00');
+    const running = h.app.experimentQuickAdd('Running late').id;
+    const endingSooner = h.app.experimentQuickAdd('Running soon').id;
+    const planned = h.app.experimentQuickAdd('Not yet').id;
+
+    h.app.setExperiment(running, { sampleCount: 1, seedingDate: '2026-08-01', durationDays: 40 });
+    h.app.setExperiment(endingSooner, { sampleCount: 1, seedingDate: '2026-08-01', durationDays: 20 });
+    h.app.setExperiment(planned, { sampleCount: 1, seedingDate: '2026-09-01', durationDays: 10 });
+
+    expect(h.app.experiments().map((n) => n.name)).toEqual([
+      'Running soon',
+      'Running late',
+      'Not yet',
+    ]);
+  });
+
+  it('keeps a culture that has no dates yet, and puts it last', () => {
+    const h = harness('2026-08-10T08:00');
+    h.app.experimentQuickAdd('No dates yet');
+    const dated = h.app.experimentQuickAdd('Running').id;
+    h.app.setExperiment(dated, { sampleCount: 1, seedingDate: '2026-08-01', durationDays: 30 });
+
+    expect(h.app.experiments().map((n) => n.name)).toEqual(['Running', 'No dates yet']);
+    expect(h.app.experiments()[1]!.experiment!.summary).toBe('Not scheduled');
+  });
+
+  it('leaves out a culture that has finished', () => {
+    const h = harness('2026-09-30T08:00');
+    const done = h.app.experimentQuickAdd('Finished').id;
+    h.app.setExperiment(done, { sampleCount: 1, seedingDate: '2026-08-01', durationDays: 7 });
+
+    expect(h.app.experiments()).toEqual([]);
+  });
+});
+
 describe('protocol scheduling', () => {
   it('turns offsets into real times', () => {
     const h = harness('2026-07-30T09:00');

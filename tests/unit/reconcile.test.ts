@@ -94,6 +94,27 @@ describe('reading edits back out of a spreadsheet', () => {
     });
   });
 
+  it('picks up troubleshooting written in the sheet, and lands it on the node', () => {
+    const { h, electrospin } = board();
+    const base = grids(h);
+    const theirs = edit(copy(base), 'Electrospin', 'Troubleshooting', 'Fibres beading below 15 kV');
+
+    const { changes } = run(h, base, theirs);
+    expect(changes).toHaveLength(1);
+    expect(changes[0]).toMatchObject({
+      sort: 'edit',
+      recommended: true,
+      column: 'Troubleshooting',
+      edit: { field: 'troubleshooting', value: 'Fibres beading below 15 kV' },
+    });
+
+    h.app.applySheetChanges([changes[0]!]);
+    expect(h.app.node(electrospin).troubleshooting).toBe('Fibres beading below 15 kV');
+    // It did not land in Notes, which is the column it would have been folded
+    // into if the header had gone unrecognised.
+    expect(h.app.node(electrospin).notes).toBeUndefined();
+  });
+
   it('says nothing about a cell the app changed and the sheet has not caught up with', () => {
     const { h, electrospin } = board();
     const base = grids(h);

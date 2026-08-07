@@ -71,7 +71,7 @@ export function journalFile(month: string): string {
 const NODE_KNOWN = [
   'id', 'name', 'seq', 'seqSource', 'ordering', 'status', 'health',
   'createdAt', 'startedAt', 'doneAt', 'donePrecision', 'plannedFor',
-  'waitingReason', 'waitingUntil', 'tags', 'notes',
+  'waitingReason', 'waitingUntil', 'tags', 'notes', 'troubleshooting',
 ] as const;
 
 /**
@@ -121,6 +121,9 @@ function nodeToBlock(state: State, node: Node): Block {
   const tags = encodeList(node.tags);
   if (tags) f.set('tags', tags);
   if (node.notes) f.set('notes', node.notes);
+  // Written only when there is something to say, so a vault full of nodes
+  // that never went wrong is byte-identical to one from before this existed.
+  if (node.troubleshooting) f.set('troubleshooting', node.troubleshooting);
   applyExtras(f, node.extra);
 
   if (node.experiment) b.children.push(experimentToBlock(node.experiment));
@@ -206,6 +209,7 @@ function blockToNode(b: Block, parent: string | null, into: State): void {
     slug: b.slug,
     name: field(b, 'name') ?? b.slug,
     notes: field(b, 'notes'),
+    troubleshooting: field(b, 'troubleshooting'),
     seq: numberField(b, 'seq', 1),
     seqSource: oneOf<SeqSource>(field(b, 'seqSource'), ['user', 'assumed'], 'user'),
     ordering: isContainerKind(kind)

@@ -95,6 +95,8 @@ export interface ImportRow {
   culture?: CultureSpec;
   seq?: number;
   notes?: string;
+  /** The Troubleshooting column: what went wrong, kept apart from the notes. */
+  troubleshooting?: string;
   done: boolean;
   health: Health;
   plannedFor?: string;
@@ -141,6 +143,14 @@ const HEADERS: Record<string, keyof ColumnMap> = {
   note: 'notes',
   comment: 'notes',
   comments: 'notes',
+  // Headers normalise with punctuation and spaces stripped, so every phrasing
+  // of the column has to be spelled out or the column is silently dropped on
+  // re-import of a workbook we ourselves wrote.
+  troubleshooting: 'troubleshooting',
+  troubleshootingcomments: 'troubleshooting',
+  troubleshootingnotes: 'troubleshooting',
+  issues: 'troubleshooting',
+  problems: 'troubleshooting',
   status: 'status',
   health: 'health',
   deadline: 'planned',
@@ -169,6 +179,7 @@ interface ColumnMap {
   task?: number;
   seq?: number;
   notes?: number;
+  troubleshooting?: number;
   status?: number;
   health?: number;
   planned?: number;
@@ -437,6 +448,7 @@ export function readWorkbook(workbook: Workbookish): ImportPlan {
           culture: own ? culture : undefined,
           seq: own ? seq : undefined,
           notes: own ? at('notes') || undefined : undefined,
+          troubleshooting: own ? at('troubleshooting') || undefined : undefined,
           done: own
             ? cell?.font?.strike === true ||
               isDoneText(at('status')) ||

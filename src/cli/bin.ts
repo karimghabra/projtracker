@@ -245,6 +245,7 @@ async function run(
         }
       }
       if (view.notes) out(`\n${view.notes}`);
+      if (view.troubleshooting) out(`\nTroubleshooting\n${view.troubleshooting}`);
       return 0;
     }
 

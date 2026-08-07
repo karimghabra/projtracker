@@ -68,6 +68,17 @@ Project
 A goal holds tasks, an experiment, or both — the spec calls for a mix and the
 model allows it without a special case.
 
+**A task or an experiment may also sit at the top level, belonging to no
+project.** The hierarchy is how work is organised, not a toll gate on recording
+it: a task gets quick-added because it needs doing today, and a culture gets
+seeded because the cells were ready — and asking "which goal is this?" at the
+hood is how a thing ends up not written down at all. Both can be filed later.
+
+Such a node is a leaf like any other: it takes a rank among the other top-level
+nodes, joins the ready pool, appears on the calendar, and is written to its own
+`projects/<slug>.pt` exactly as a project is. Only containers are refused at the
+top level, since a milestone outside a project is not a thing.
+
 Every node carries a **rank** (`seq`), assigned by the user at creation and
 editable afterwards. Ranks are the implicit dependency mechanism (§2.3).
 
@@ -274,6 +285,15 @@ in place, and insert new nodes (which take their place in the sequence).
 Edge provenance is visible in the line style: explicit edges solid and
 accented, user-set ranks solid grey, assumed ranks dashed. Cycles are rejected
 with the offending path named. Undo and redo are always available.
+
+**Notes and troubleshooting are two columns, not one.** Notes says what a task
+*is*; troubleshooting is the running account of what keeps going wrong with it
+and what has been tried. Folding them together loses the distinction the
+original workbook had, and it is a field rather than notebook entries because a
+list of failures wants to be edited in place and read at a glance beside its
+row, not dated and appended to. It is written to the vault only when it has
+something in it, so a board where nothing has gone wrong is byte-identical to
+one from before the column existed.
 
 **Spreadsheet view.** A grid mirroring the familiar tracker layout, one row per
 leaf, with the hierarchy in the left columns. Editing behaves like a

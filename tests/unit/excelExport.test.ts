@@ -170,9 +170,13 @@ describe('writing a workbook', () => {
     expect(header.getCell(5).value).toBe('Status');
     expect(header.getCell(6).value).toBe('Completed');
     expect(header.getCell(7).value).toBe('Progress');
+    // Troubleshooting is for a person, so it sits beside Notes rather than out
+    // past the machine columns.
+    expect(header.getCell(11).value).toBe('Notes');
+    expect(header.getCell(12).value).toBe('Troubleshooting');
     // Kind and Culture are for the importer, not for a reader.
-    expect(header.getCell(12).value).toBe('Kind');
-    expect(header.getCell(13).value).toBe('Culture');
+    expect(header.getCell(13).value).toBe('Kind');
+    expect(header.getCell(14).value).toBe('Culture');
   });
 
   it('names sheets Excel will accept', async () => {

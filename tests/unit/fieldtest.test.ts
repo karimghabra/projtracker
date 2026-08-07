@@ -15,6 +15,7 @@
 import { describe, expect, it } from 'vitest';
 import { addDays, dateOf, diffDays } from '@core/dates.ts';
 import { buildIndex, isDone, wouldCreateCycle } from '@core/graph.ts';
+import { isContainerKind } from '@core/model.ts';
 import { loadState } from '@store/store.ts';
 import { serializeAll } from '@store/serialize.ts';
 import { backupGrid, readBackupGrid, restoreVault, snapshotVault } from '@store/backup.ts';
@@ -100,12 +101,19 @@ describe('sixty days of use', () => {
 
     app.addScaffoldType('Collagen sponge', { material: 'Type I collagen' });
     app.addScaffoldType('Collagen–GAG scaffold');
+    // A material rather than a scaffold: measured, not counted, so the
+    // quantity guard and every display of it take the other branch.
+    app.addScaffoldType('Osteogenic medium', { category: 'material', unit: 'mL' });
 
     let completed = 0;
     let notesWritten = 0;
     let runsStarted = 0;
     let batchesMade = 0;
     let experimentSeeded = false;
+    let notebookEntries = 0;
+    let daysPlanned = 0;
+    let troublesRecorded = 0;
+    let looseExperiments = 0;
 
     for (let day = 0; day < DAYS; day++) {
       const date = dateOf(clock.now());
@@ -121,7 +129,12 @@ describe('sixty days of use', () => {
         if (random() < 0.35) continue;
         const pick = ready[Math.floor(random() * ready.length)]!;
         if (app.state.nodes[pick.id]?.status === 'done') continue;
-        app.todayAdd(pick.id);
+        // Something planned for today is already on today's list; adding it
+        // again is not something a person does, and the command layer says so.
+        const alreadyOnToday = app.state.planner.some(
+          (e) => e.date === date && e.nodeId === pick.id && !e.outcome,
+        );
+        if (!alreadyOnToday) app.todayAdd(pick.id);
         if (random() < 0.75) {
           app.complete(pick.id);
           completed += 1;
@@ -145,6 +158,52 @@ describe('sixty days of use', () => {
         notesWritten += 1;
       }
 
+      // --- write in the notebook of something in progress -----------
+      const inFlight = app.flat().filter((n) => n.status === 'in_progress');
+      if (inFlight.length && random() < 0.5) {
+        const subject = inFlight[Math.floor(random() * inFlight.length)]!;
+        const entry = app.capture(`Day ${day}: ran it, results attached.`, subject.id);
+        notebookEntries += 1;
+        // A notebook is written as it happens and corrected afterwards, so the
+        // correcting has to be exercised too.
+        if (random() < 0.3) app.editNote(entry.id, `Day ${day}: ran it — actually 18 kV.`);
+        did.push(`wrote up ${subject.name}`);
+      }
+
+      // --- say what went wrong, without burying it in the notes -----
+      if (inFlight.length && random() < 0.25) {
+        const subject = inFlight[Math.floor(random() * inFlight.length)]!;
+        const said = app.node(subject.id).troubleshooting ?? '';
+        app.updateNode(subject.id, {
+          troubleshooting: `${said}${said ? '\n' : ''}Day ${day}: fibres beading; dropped to 15 kV.`,
+        });
+        troublesRecorded += 1;
+        did.push(`recorded trouble on ${subject.name}`);
+      }
+
+      // --- put something on a day ------------------------------------
+      if (random() < 0.3) {
+        const pool = app.ready();
+        const pick = pool[Math.floor(random() * pool.length)];
+        if (pick) {
+          app.planFor(pick.id, addDays(date, Math.floor(random() * 4)));
+          daysPlanned += 1;
+          did.push(`planned ${pick.name}`);
+        }
+      }
+
+      // --- start a culture before deciding where it belongs ----------
+      if (random() < 0.06) {
+        const loose = app.experimentQuickAdd(`Pilot culture day ${day}`, {
+          sampleCount: 6,
+          seedingDate: addDays(date, 1),
+          durationDays: 7 + Math.floor(random() * 14),
+          mediaChangeEveryDays: 3,
+        });
+        looseExperiments += 1;
+        did.push(`started a loose culture (${loose.id})`);
+      }
+
       // --- fabricate and crosslink ----------------------------------
       if (random() < 0.12) {
         const batch = app.addBatch('collagen-sponge', 6 + Math.floor(random() * 24), {
@@ -157,7 +216,21 @@ describe('sixty days of use', () => {
           app.startRun(random() < 0.5 ? 'edc-nhs' : 'genipin', [batch.id]);
           runsStarted += 1;
           did.push('started a crosslinking run');
+        } else if (random() < 0.5) {
+          // A stage this lab invented, which the vocabulary is open for. If
+          // anything still coerces it, invariant 1 fails the day it happens.
+          app.setBatchState(batch.id, 'washing');
+          did.push('put a batch in to wash');
         }
+      }
+
+      // --- make up some medium, in millilitres ----------------------
+      if (random() < 0.1) {
+        app.addBatch('osteogenic-medium', 12.5 + Math.floor(random() * 4) * 0.5, {
+          fabricatedOn: date,
+        });
+        batchesMade += 1;
+        did.push('made up medium');
       }
 
       // --- work through any protocol step due today -----------------
@@ -286,7 +359,54 @@ describe('sixty days of use', () => {
         if (batch.runId) expect(app.state.runs.some((r) => r.id === batch.runId)).toBe(true);
       }
 
-      // 9. Today's board is still recoverable from a backup taken today.
+      // 9. Every notebook entry still points at something that exists, and a
+      // node's notebook is exactly the entries filed against it.
+      for (const note of app.state.notes) {
+        if (note.nodeId) expect(app.state.nodes[note.nodeId]).toBeDefined();
+      }
+      for (const node of Object.values(app.state.nodes)) {
+        if (isContainerKind(node.kind)) continue;
+        const entries = app.notebook(node.id);
+        expect(new Set(entries.map((n) => n.id))).toEqual(
+          new Set(app.state.notes.filter((n) => n.nodeId === node.id).map((n) => n.id)),
+        );
+        // A notebook reads as a stream, most recent first.
+        expect(entries.map((n) => n.at)).toEqual([...entries.map((n) => n.at)].sort().reverse());
+      }
+
+      // 10. Troubleshooting is a field of its own, and stays out of the notes.
+      // The sheet is the surface it was asked for, so the sheet is where it is
+      // checked — a column that reads blank is the failure people would meet.
+      const sheetRows = new Map(app.sheet().map((r) => [r.id, r]));
+      for (const node of Object.values(app.state.nodes)) {
+        expect(sheetRows.get(node.id)!.troubleshooting).toBe(node.troubleshooting ?? '');
+        if (node.troubleshooting) expect(node.notes ?? '').not.toContain('beading');
+      }
+
+      // 11. A culture started at the top level stays there, and is still a
+      // first-class experiment: on the panel until it is over, and never
+      // blocked by a hierarchy it does not have.
+      for (const node of Object.values(app.state.nodes)) {
+        if (node.parent !== null || node.kind !== 'experiment') continue;
+        expect(node.experiment).toBeDefined();
+        expect(app.node(node.id).path).toBe(node.name);
+        const view = app.node(node.id).experiment!;
+        expect(app.experiments().some((e) => e.id === node.id) || view.state === 'finished').toBe(true);
+        expect(app.node(node.id).blockers).toEqual([]);
+      }
+
+      // 12. Inventory arithmetic holds with an open vocabulary and units: the
+      // stages a type is spread across add up to what is in stock, and a
+      // countable type keeps its quantities on the integers.
+      for (const type of app.inventory().types) {
+        const summed = type.byState.reduce((n, s) => n + s.quantity, 0);
+        expect(Math.abs(summed - type.inStock)).toBeLessThan(1e-6);
+        if (!type.unit) {
+          for (const state of type.byState) expect(Number.isInteger(state.quantity)).toBe(true);
+        }
+      }
+
+      // 13. Today's board is still recoverable from a backup taken today.
       // Checked every day rather than at the end, because the interesting
       // failure is a field that only appears once some particular thing has
       // happened — a run mid-flight, an experiment part-way through its
@@ -311,6 +431,10 @@ describe('sixty days of use', () => {
       batches: batchesMade,
       crosslinkingRuns: runsStarted,
       remindersGenerated: app.state.reminders.length,
+      notebookEntries,
+      daysPlanned,
+      troublesRecorded,
+      looseExperiments,
       nodes: Object.keys(app.state.nodes).length,
       vaultFiles: h.vault.list('').filter((p) => !p.startsWith('.history/')).length,
       historySnapshots: h.vault.list('.history/').length,
@@ -323,6 +447,11 @@ describe('sixty days of use', () => {
     expect(completed).toBeGreaterThan(8);
     expect(runsStarted).toBeGreaterThan(0);
     expect(experimentSeeded).toBe(true);
+    // The newer surfaces were actually exercised, not merely available.
+    expect(notebookEntries).toBeGreaterThan(0);
+    expect(daysPlanned).toBeGreaterThan(0);
+    expect(troublesRecorded).toBeGreaterThan(0);
+    expect(looseExperiments).toBeGreaterThan(0);
 
     // The experiment produced a real, dated timeline.
     const experiment = app.node(board.experiment);
@@ -340,6 +469,8 @@ describe('sixty days of use', () => {
     );
     expect(twin.upcoming()).toEqual(app.upcoming());
     expect(twin.progress()).toEqual(app.progress());
+    expect(twin.experiments()).toEqual(app.experiments());
+    expect(twin.inventory()).toEqual(app.inventory());
     expect(snapshotVault(restored)).toEqual(snapshotVault(h.vault));
 
     // Undo still works after two months of history.

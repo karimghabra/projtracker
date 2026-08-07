@@ -74,6 +74,7 @@ import {
   inventoryView,
   nodeView,
   progressView,
+  experimentsView,
   readyView,
   sheetView,
   todayView,
@@ -103,6 +104,12 @@ function nodeChanges(node: Node, patch: NodePatch): string[] {
 
   if (patch.name !== undefined && patch.name.trim() !== node.name) changed.push('name');
   if (patch.notes !== undefined && (patch.notes || undefined) !== node.notes) changed.push('notes');
+  if (
+    patch.troubleshooting !== undefined &&
+    (patch.troubleshooting || undefined) !== node.troubleshooting
+  ) {
+    changed.push('troubleshooting');
+  }
   if (patch.seq !== undefined && patch.seq !== node.seq) changed.push('rank');
   if (patch.ordering !== undefined && isContainerKind(node.kind) && patch.ordering !== node.ordering) {
     changed.push('ordering');
@@ -163,6 +170,7 @@ export interface AddNodeOptions {
    */
   seqSource?: SeqSource;
   notes?: string;
+  troubleshooting?: string;
   ordering?: Ordering;
   tags?: string[];
   plannedFor?: DateOnly;
@@ -172,6 +180,7 @@ export interface AddNodeOptions {
 export interface NodePatch {
   name?: string;
   notes?: string;
+  troubleshooting?: string;
   seq?: number;
   ordering?: Ordering;
   health?: Health;
@@ -318,6 +327,10 @@ export class App {
     return inventoryView(this.state, this.today, this.now);
   }
 
+  experiments(): NodeView[] {
+    return experimentsView(this.index, this.today);
+  }
+
   progress(): ProgressRow[] {
     return progressView(this.index, this.today);
   }
@@ -386,7 +399,12 @@ export class App {
         `A ${parent.kind} cannot contain a ${kind}. ${suggestParent(kind)}`,
       );
     }
-    if (!parent && kind !== 'project') throw notAllowed('Only projects live at the top level.');
+    // A task or an experiment may sit at the top level, unfiled: the hierarchy
+    // is how work is organised, not a toll gate on recording it. A milestone or
+    // a goal outside a project is not a thing, so those are still refused.
+    if (!parent && isContainerKind(kind) && kind !== 'project') {
+      throw notAllowed(`A ${kind} only means something inside a project. ${suggestParent(kind)}`);
+    }
 
     const now = this.now;
     return this.mutate(`Add ${kind} "${clean}"`, (draft) => {
@@ -399,6 +417,7 @@ export class App {
         slug: uniqueSlug(draft, parentId, clean),
         name: clean,
         notes: options.notes,
+        troubleshooting: options.troubleshooting,
         seq: seqGiven ? options.seq! : nextSeq(draft, parentId),
         // A rank we picked is a guess and must never masquerade as a statement.
         seqSource: options.seqSource ?? (seqGiven ? 'user' : 'assumed'),
@@ -446,6 +465,9 @@ export class App {
         node.slug = uniqueSlug(draft, node.parent, node.name, node.id);
       }
       if (patch.notes !== undefined) node.notes = patch.notes || undefined;
+      if (patch.troubleshooting !== undefined) {
+        node.troubleshooting = patch.troubleshooting || undefined;
+      }
       if (patch.seq !== undefined) {
         node.seq = patch.seq;
         node.seqSource = 'user';
@@ -887,6 +909,51 @@ export class App {
       const order = draft.planner.filter((e) => e.date === date).length;
       draft.planner.push({ date, nodeId: id, order });
       return { ok: true as const, message: `Added "${name}".`, id };
+    });
+  }
+
+  /**
+   * Start an experiment without first deciding where it belongs.
+   *
+   * A culture gets seeded because the cells were ready, not because a goal
+   * existed to hang it on — and by the time you are at the hood, "which goal is
+   * this?" is the question that stops it being recorded at all. So an
+   * experiment may sit at the top level exactly as a quick-added task does, and
+   * be filed later.
+   *
+   * This is a widening of §2.1, which had experiments only under a goal. The
+   * hierarchy still means what it did; it is no longer the only way in. The
+   * storage layer already tolerated it — `serializeAll` writes every root node
+   * to its own file — and the ready pool and calendar pick it up unchanged.
+   */
+  experimentQuickAdd(name: string, def: Partial<ExperimentDef> = {}): Delta & { id: NodeId } {
+    const clean = name.trim();
+    if (!clean) throw invalid('An experiment needs a name.');
+
+    const experiment = { ...emptyExperiment(), ...def };
+    const problems = validateExperiment(experiment);
+    if (problems.length) throw invalid(problems[0]!);
+
+    const now = this.now;
+    return this.mutate(`Add experiment "${clean}"`, (draft) => {
+      const id = allocateId(draft, 'n');
+      draft.nodes[id] = {
+        id,
+        kind: 'experiment',
+        parent: null,
+        slug: uniqueSlug(draft, null, clean),
+        name: clean,
+        seq: nextSeq(draft, null),
+        seqSource: 'assumed',
+        status: 'active',
+        health: 'not_begun',
+        createdAt: now,
+        tags: [],
+        links: [],
+        steps: [],
+        experiment,
+      };
+      return { ok: true as const, message: `Added experiment "${clean}".`, id };
     });
   }
 
@@ -1654,6 +1721,7 @@ export class App {
             // Row order is a guess about intent, not a statement of it.
             seqSource: row.seq === undefined ? 'assumed' : 'user',
             notes: row.notes,
+            troubleshooting: row.troubleshooting,
             tags: row.tags,
             plannedFor: row.plannedFor,
             kind: row.kind === 'experiment' ? 'experiment' : 'task',
@@ -1797,6 +1865,9 @@ export class App {
         return;
       case 'notes':
         this.updateNode(id, { notes: edit.value });
+        return;
+      case 'troubleshooting':
+        this.updateNode(id, { troubleshooting: edit.value });
         return;
       case 'tags':
         this.updateNode(id, { tags: edit.value.split(',') });

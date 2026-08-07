@@ -11,6 +11,7 @@
 import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
 import { readWorkbook, summarise } from '@store/excel.ts';
+import { exportWorkbook } from '@store/excelExport.ts';
 import type { ImportPlan } from '@store/excel.ts';
 import { harness } from './helpers.ts';
 
@@ -293,5 +294,80 @@ describe('where an imported order came from', () => {
     h.app.addDep(first.id, second.id);
     expect(h.app.node(first.id).derived).toBe('ready');
     expect(h.app.node(second.id).derived).toBe('blocked');
+  });
+});
+
+/**
+ * The troubleshooting column, out and back.
+ *
+ * The trap this guards: header names are matched with punctuation and spaces
+ * stripped, and there is a table of aliases. A column we write but do not
+ * recognise on the way back in is not an error — it is silently dropped, and
+ * the person who typed into it finds their words gone after a re-import.
+ */
+describe('the troubleshooting column round-trips', () => {
+  async function reimport(app: import('@commands/app.ts').App) {
+    const exported = await exportWorkbook(app.state, '2026-07-30');
+    const book = new ExcelJS.Workbook();
+    await book.xlsx.load(exported.buffer as ArrayBuffer);
+    return readWorkbook(book as never);
+  }
+
+  it('comes back from a workbook we wrote ourselves', async () => {
+    const h = harness();
+    const project = h.app.addProject('Tendon').id;
+    const milestone = h.app.addNode(project, 'Fabrication', { seq: 1 }).id;
+    const goal = h.app.addNode(milestone, 'Printing', { seq: 1 }).id;
+    const task = h.app.addNode(goal, 'Run the print', { seq: 1 }).id;
+    h.app.updateNode(task, { troubleshooting: 'Nozzle clogs at 220C; tried 235C, still clogs.' });
+
+    const fresh = harness();
+    fresh.app.applyImport(await reimport(h.app));
+
+    const landed = fresh.app.flat().find((n) => n.name === 'Run the print')!;
+    expect(landed.troubleshooting).toBe('Nozzle clogs at 220C; tried 235C, still clogs.');
+    // And it stayed out of the notes, which is the whole point of a second column.
+    expect(landed.notes).toBeUndefined();
+  });
+
+  it('understands the ways a person might have headed the column', async () => {
+    const book = new ExcelJS.Workbook();
+    const sheet = book.addWorksheet('Bench');
+    sheet.addRow(['Goal', 'Task', 'Troubleshooting comments']);
+    sheet.addRow(['Staining', 'Optimise dilution', 'Background too high at 1:200']);
+    const reread = new ExcelJS.Workbook();
+    await reread.xlsx.load(await book.xlsx.writeBuffer());
+
+    const h = harness();
+    h.app.applyImport(readWorkbook(reread as never));
+    const task = h.app.flat().find((n) => n.name === 'Optimise dilution')!;
+    expect(task.troubleshooting).toBe('Background too high at 1:200');
+  });
+
+  it('survives the round trip through text', () => {
+    const h = harness();
+    const project = h.app.addProject('Tendon').id;
+    const milestone = h.app.addNode(project, 'Fabrication', { seq: 1 }).id;
+    const goal = h.app.addNode(milestone, 'Printing', { seq: 1 }).id;
+    const task = h.app.addNode(goal, 'Run the print', { seq: 1 }).id;
+    h.app.updateNode(task, { troubleshooting: 'Line one\nLine two' });
+
+    expect(h.reload().node(task).troubleshooting).toBe('Line one\nLine two');
+  });
+
+  it('writes nothing at all when there is nothing wrong', () => {
+    const h = harness();
+    const project = h.app.addProject('Tendon').id;
+    const milestone = h.app.addNode(project, 'Fabrication', { seq: 1 }).id;
+    const goal = h.app.addNode(milestone, 'Printing', { seq: 1 }).id;
+    const task = h.app.addNode(goal, 'Loose end', { seq: 1 }).id;
+
+    // Byte-neutrality for every vault written before this column existed: the
+    // field appears in the file only once somebody has used it.
+    expect(h.vault.read('projects/tendon.pt')).not.toContain('troubleshooting');
+    h.app.updateNode(task, { troubleshooting: 'x' });
+    expect(h.vault.read('projects/tendon.pt')).toContain('troubleshooting: x');
+    h.app.updateNode(task, { troubleshooting: '' });
+    expect(h.vault.read('projects/tendon.pt')).not.toContain('troubleshooting');
   });
 });

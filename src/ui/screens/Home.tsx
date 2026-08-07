@@ -97,6 +97,7 @@ export function HomeScreen({ onNavigate }: { onNavigate: (view: ViewName) => voi
         </div>
 
         <UpcomingPanel />
+        <ExperimentsPanel />
         <CapturePanel />
         <ProgressPanel empty={!hasProjects} />
       </div>
@@ -502,7 +503,11 @@ function ReadyPanel() {
   const onToday = new Set(app.todayList().items.map((i) => i.id));
   const available = ready.filter((row) => !onToday.has(row.id));
 
-  if (app.tree().length === 0) return null;
+  // Hidden only on a genuinely empty board, where it would sit under the
+  // get-started prompt saying nothing. Work with no project above it still
+  // counts as work, so the test is "is there anything ready", not "is there a
+  // project".
+  if (app.tree().length === 0 && available.length === 0) return null;
 
   return (
     <section className="panel" data-testid="ready-panel">
@@ -726,9 +731,6 @@ function ProjectsPanel({ onNavigate }: { onNavigate: (view: ViewName) => void })
 function ProgressPanel({ empty }: { empty: boolean }) {
   const { app } = useApp();
   const rows = app.progress();
-  const experiments = app
-    .flat()
-    .filter((n) => n.experiment && n.experiment.state === 'running');
 
   if (empty) return null;
 
@@ -774,25 +776,87 @@ function ProgressPanel({ empty }: { empty: boolean }) {
           ))}
         </div>
 
-        {experiments.length > 0 && (
-          <>
-            <hr className="sep" />
-            <div className="stack tight">
-              {experiments.map((node) => (
-                <div className="row" key={node.id}>
-                  <div className="grow" style={{ minWidth: 0 }}>
-                    <div className="row-title">{node.name}</div>
-                    <div className="row-sub">{node.experiment!.summary}</div>
-                  </div>
-                  {node.experiment!.endsOn && (
-                    <span className="chip info nowrap">
-                      ends {formatDayMonth(node.experiment!.endsOn, app.today)}
-                    </span>
-                  )}
+      </div>
+    </section>
+  );
+}
+
+// ------------------------------------------------------------ experiments
+
+/**
+ * Cultures in the incubator, and the ones about to be.
+ *
+ * A running experiment is the thing in the lab with a clock on it that cannot
+ * be paused, so it earns a panel rather than a footnote under Recent progress —
+ * which is where it used to live, filtered in the component. The ordering and
+ * the "what counts as ongoing" question both come from `app.experiments()`.
+ */
+function ExperimentsPanel() {
+  const { app, run } = useApp();
+  const experiments = app.experiments();
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState('');
+
+  return (
+    <section className="panel" data-testid="experiments-panel">
+      <div className="panel-head">
+        <IconFlask size={15} />
+        <h2>Experiments</h2>
+        <span className="spacer" />
+        <button className="btn sm" data-testid="add-experiment" onClick={() => setAdding(!adding)}>
+          <IconPlus size={13} /> Experiment
+        </button>
+      </div>
+
+      <div className="panel-body tight">
+        {adding && (
+          <form
+            className="inline"
+            style={{ padding: 8 }}
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!name.trim()) return;
+              if (run((a) => a.experimentQuickAdd(name))) {
+                setName('');
+                setAdding(false);
+              }
+            }}
+          >
+            <input
+              className="input"
+              autoFocus
+              value={name}
+              placeholder="Osteogenic culture"
+              aria-label="Name of the experiment"
+              data-testid="experiment-name"
+              onChange={(event) => setName(event.target.value)}
+            />
+            <button className="btn primary sm" type="submit" data-testid="save-experiment">
+              Add
+            </button>
+          </form>
+        )}
+
+        {experiments.length === 0 ? (
+          <Empty title="No cultures running">
+            Start one here and give it its dates afterwards — the timeline follows from them.
+          </Empty>
+        ) : (
+          <div className="list">
+            {experiments.map((node) => (
+              <div className="row" key={node.id} data-testid={`experiment-${node.id}`}>
+                <div className="grow" style={{ minWidth: 0 }}>
+                  <div className="row-title">{node.name}</div>
+                  <div className="row-sub">{node.experiment!.summary}</div>
                 </div>
-              ))}
-            </div>
-          </>
+                {node.experiment!.endsOn && (
+                  <span className="chip info nowrap">
+                    ends {formatDayMonth(node.experiment!.endsOn, app.today)}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
         )}
       </div>
     </section>

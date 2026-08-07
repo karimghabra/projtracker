@@ -69,6 +69,7 @@ export const EXPORT_HEADERS = [
   'Planned',
   'Tags',
   'Notes',
+  'Troubleshooting',
   'Kind',
   'Culture',
   'ID',
@@ -327,6 +328,7 @@ export function projectRows(index: GraphIndex, project: Node): BodyRow[] {
           child.plannedFor ?? '',
           child.tags.join(', '),
           child.notes ?? '',
+          child.troubleshooting ?? '',
           child.kind === 'experiment' ? 'experiment' : '',
           child.experiment ? encodeCulture(child.experiment) : '',
           // Identity, so an edit made in the spreadsheet can be matched back to
@@ -466,6 +468,7 @@ export function writeWorkbook(
       { width: 11 },
       { width: 12 },
       { width: 18 },
+      { width: 44 },
       { width: 44 },
       { width: 11 },
       { width: 40 },

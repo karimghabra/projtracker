@@ -71,7 +71,8 @@ export type SheetEdit =
   | { field: 'health'; value: Health }
   | { field: 'planned'; value: string }
   | { field: 'tags'; value: string }
-  | { field: 'notes'; value: string };
+  | { field: 'notes'; value: string }
+  | { field: 'troubleshooting'; value: string };
 
 export type ChangeSort = 'edit' | 'added' | 'missing' | 'conflict' | 'unsupported';
 
@@ -105,6 +106,7 @@ const EDITABLE: { column: (typeof EXPORT_HEADERS)[number]; field: SheetEdit['fie
   { column: 'Planned', field: 'planned' },
   { column: 'Tags', field: 'tags' },
   { column: 'Notes', field: 'notes' },
+  { column: 'Troubleshooting', field: 'troubleshooting' },
 ];
 
 /**

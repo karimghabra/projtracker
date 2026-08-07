@@ -215,6 +215,22 @@ export function NodeDetail({
           </span>
         </div>
 
+        <div className="field">
+          <label htmlFor="d-troubleshooting">Troubleshooting</label>
+          <textarea
+            id="d-troubleshooting"
+            className="textarea"
+            value={node.troubleshooting ?? ''}
+            onChange={(event) =>
+              run((a) => a.updateNode(node.id, { troubleshooting: event.target.value }), { silent: true })
+            }
+          />
+          <span className="hint">
+            What keeps going wrong here, and what has been tried. Its own column
+            in the spreadsheet, so it survives the round trip.
+          </span>
+        </div>
+
         {/* --------------------------------------------------- notebook */}
         {isLeaf && <NotebookSection node={node} />}
 
