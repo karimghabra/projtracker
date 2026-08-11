@@ -47,7 +47,7 @@ import { scheduleRun } from '../core/protocols.ts';
 import { describeQuantity, summariseLots } from '../core/inventory.ts';
 import type { Reminder } from '../core/model.ts';
 import type { TodayItem } from '../core/planner.ts';
-import { todayItems } from '../core/planner.ts';
+import { missedFor, todayItems } from '../core/planner.ts';
 
 export interface BlockerView {
   id: NodeId;
@@ -65,6 +65,12 @@ export interface ExperimentView {
   day: number | null;
   phase?: string;
   state: string;
+  /**
+   * Generated events whose day passed untouched. They expire off Today rather
+   * than rolling forward as a debt nobody can pay, so this is where they go on
+   * being true: a culture that missed three media changes wants looking at.
+   */
+  missed: { date: DateOnly; title: string }[];
 }
 
 export interface NodeView {
@@ -168,6 +174,7 @@ export function nodeView(index: GraphIndex, id: NodeId, today: DateOnly): NodeVi
       day: status.day,
       phase: status.phase,
       state: status.state,
+      missed: missedFor(state, node.id, today).map((r) => ({ date: r.date, title: r.title })),
     };
   }
   return view;

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+﻿import { describe, expect, it } from 'vitest';
 import { expectThrows, harness, sampleBoard, todayTitles } from './helpers.ts';
 
 describe('the day list', () => {
@@ -61,7 +61,7 @@ describe('rollover', () => {
 
   /**
    * There used to be a 120-day horizon past which a carried task simply stopped
-   * being offered — no announcement, no "still owed" state, and the planner
+   * being offered â€” no announcement, no "still owed" state, and the planner
    * entry still sitting in the vault with no outcome. Nobody specified it; it
    * arrived unremarked in the rewrite. These two pin its absence, because the
    * failure it caused is invisible: nothing goes red, the item is just gone.
@@ -113,7 +113,7 @@ describe('rollover', () => {
     h.app.todayRemove(`node:${b.draft}`);
     expect(h.app.todayList().items).toEqual([]);
 
-    // Tomorrow it is fair game again — saying "not today" is not saying "never".
+    // Tomorrow it is fair game again â€” saying "not today" is not saying "never".
     h.clock.set('2026-08-01T09:00');
     expect(todayTitles(h.app)).toEqual(['Draft geometry']);
   });
@@ -225,7 +225,7 @@ describe('putting a reminder off until another day', () => {
 
   /**
    * The date of a generated reminder is arithmetic over its source, and
-   * `syncGeneratedReminders` recomputes it on every mutation — so a new date
+   * `syncGeneratedReminders` recomputes it on every mutation â€” so a new date
    * written here would be overwritten within the second and the user would
    * watch it snap back. Refusing, with the reason, is the honest answer.
    */
@@ -316,6 +316,57 @@ describe('reminders', () => {
     expect(h.app.todayList().items.filter((i) => i.source === 'rolled-over').length).toBe(dueToday);
   });
 
+  it("a culture's media change expires with its day instead of piling up", () => {
+    const h = harness('2026-07-30T09:00');
+    const b = sampleBoard(h);
+    // A culture with a media change every three days, started weeks ago.
+    h.app.setExperiment(b.experiment, {
+      sampleCount: 6,
+      durationDays: 28,
+      seedingDate: '2026-07-01',
+      mediaChangeEveryDays: 3,
+      mediaPhases: [],
+      stagesDone: [],
+    });
+
+    const generated = h.app.state.reminders.filter((r) => r.source.kind === 'experiment');
+    expect(generated.length).toBeGreaterThan(5);
+
+    // Weeks later, with none of them ticked: the day is not buried under them.
+    h.clock.set('2026-08-11T09:00');
+    const stale = generated.filter((r) => r.date < '2026-08-11');
+    expect(stale.length).toBeGreaterThan(1);
+    const onToday = new Set(h.app.todayList().items.map((i) => i.key));
+    expect(stale.filter((r) => onToday.has(`reminder:${r.id}`))).toEqual([]);
+
+    // But they are still true, and still counted against the experiment.
+    const view = h.app.node(b.experiment).experiment!;
+    expect(view.missed.length).toBe(stale.length);
+  });
+
+  it('a media change due today is still on today', () => {
+    const h = harness('2026-07-30T09:00');
+    const b = sampleBoard(h);
+    h.app.setExperiment(b.experiment, {
+      sampleCount: 6,
+      durationDays: 28,
+      seedingDate: '2026-07-30',
+      mediaChangeEveryDays: 3,
+      mediaPhases: [],
+      stagesDone: [],
+    });
+
+    // Expiring after its day must not mean never showing up on it. Seeding day
+    // itself is a task rather than a reminder, so take the first stage after it.
+    const due = [...h.app.state.reminders]
+      .filter((r) => r.source.kind === 'experiment' && r.date > '2026-07-30')
+      .sort((a, b2) => (a.date < b2.date ? -1 : 1))[0]!;
+    expect(due).toBeDefined();
+
+    h.clock.set(`${due.date}T09:00`);
+    expect(h.app.todayList().items.map((i) => i.key)).toContain(`reminder:${due.id}`);
+  });
+
   it('can be planned relative to now', () => {
     const h = harness('2026-07-30T09:00');
     const b = sampleBoard(h);
@@ -380,7 +431,7 @@ describe('the journal', () => {
   it('attaches a note to a node', () => {
     const h = harness();
     const b = sampleBoard(h);
-    h.app.capture('Warped at 60 °C', b.draft);
+    h.app.capture('Warped at 60 Â°C', b.draft);
     expect(h.app.journal()[0]!.nodeName).toBe('Draft geometry');
   });
 
@@ -388,15 +439,15 @@ describe('the journal', () => {
     const h = harness('2026-07-30T09:00');
     const b = sampleBoard(h);
 
-    h.app.capture('Warped at 60 °C', b.draft);
+    h.app.capture('Warped at 60 Â°C', b.draft);
     h.clock.set('2026-07-30T14:00');
-    h.app.capture('Reprinted at 55 °C, better', b.draft);
+    h.app.capture('Reprinted at 55 Â°C, better', b.draft);
     h.app.capture('Unrelated thought');
     h.app.capture('About the other one', b.review);
 
     expect(h.app.notebook(b.draft).map((n) => n.text)).toEqual([
-      'Reprinted at 55 °C, better',
-      'Warped at 60 °C',
+      'Reprinted at 55 Â°C, better',
+      'Warped at 60 Â°C',
     ]);
     // The Journal still shows all four; a notebook is a view, not a silo.
     expect(h.app.journal()).toHaveLength(4);
@@ -408,10 +459,10 @@ describe('the journal', () => {
     const { id } = h.app.capture('Gel looked cloudy', b.draft);
 
     h.clock.set('2026-08-06T11:00');
-    h.app.editNote(id, 'Gel looked cloudy — it was the buffer, not the gel');
+    h.app.editNote(id, 'Gel looked cloudy â€” it was the buffer, not the gel');
 
     const [entry] = h.app.notebook(b.draft);
-    expect(entry!.text).toBe('Gel looked cloudy — it was the buffer, not the gel');
+    expect(entry!.text).toBe('Gel looked cloudy â€” it was the buffer, not the gel');
     // The observation still belongs to the day it was made.
     expect(entry!.at.slice(0, 10)).toBe('2026-07-30');
     expect(h.app.journal('2026-07')).toHaveLength(1);
