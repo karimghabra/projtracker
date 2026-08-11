@@ -1,6 +1,9 @@
 import { createProject, expect, test } from './fixtures.ts';
 
-/** Narrowing the ready pool to the project you are actually standing in. */
+/**
+ * The ready pool is browsed, not scrolled: one level at a time, with counts
+ * saying where the work is before you go in.
+ */
 
 const elac = {
   name: 'ELAC',
@@ -12,7 +15,7 @@ const estim = {
 };
 
 test.describe('the ready pool', () => {
-  test('narrows to one project and back', async ({ h }) => {
+  test('opens on projects, not on every task', async ({ h }) => {
     const { page } = h;
     await page.getByTestId('nav-projects').click();
     await createProject(page, elac);
@@ -20,46 +23,62 @@ test.describe('the ready pool', () => {
     await page.getByTestId('nav-home').click();
 
     const pool = page.getByTestId('ready-panel');
-    await expect(pool.getByText('Twist yarn')).toBeVisible();
-    await expect(pool.getByText('Mount camera')).toBeVisible();
+    await expect(pool).toContainText('ELAC');
+    await expect(pool).toContainText('E-Stim');
+    // The leaves are two levels down and must not be on the first screen.
+    await expect(pool.getByText('Twist yarn')).toHaveCount(0);
+    await expect(pool.getByText('Mount camera')).toHaveCount(0);
+  });
 
-    await page.getByTestId('ready-projects').getByText('ELAC').click();
+  test('descends to the work and back out again', async ({ h }) => {
+    const { page } = h;
+    await page.getByTestId('nav-projects').click();
+    await createProject(page, elac);
+    await createProject(page, estim);
+    await page.getByTestId('nav-home').click();
+
+    const pool = page.getByTestId('ready-panel');
+    await pool.getByText('ELAC', { exact: true }).click();
+
+    // One milestone holding one goal is a corridor, not a choice, so picking
+    // the project lands on its work. The crumbs still name what was walked
+    // through.
     await expect(pool.getByText('Twist yarn')).toBeVisible();
+    await expect(page.getByTestId('ready-crumbs')).toContainText('Braids');
+    // Nothing from the other project came with us.
     await expect(pool.getByText('Mount camera')).toHaveCount(0);
 
-    await page.getByTestId('ready-project-all').click();
-    await expect(pool.getByText('Mount camera')).toBeVisible();
+    await page.getByTestId('ready-crumb-all').click();
+    await expect(pool).toContainText('E-Stim');
   });
 
-  test('drops the project from the breadcrumb once you have said which', async ({ h }) => {
+  test('adds a task to today from where you found it', async ({ h }) => {
+    const { page } = h;
+    await page.getByTestId('nav-projects').click();
+    await createProject(page, elac);
+    await page.getByTestId('nav-home').click();
+
+    // One project, so there is nothing to choose: it opens on the work.
+    const pool = page.getByTestId('ready-panel');
+    await pool.getByRole('button', { name: 'Add Twist yarn to today' }).click();
+
+    await expect(page.getByTestId('today-list')).toContainText('Twist yarn');
+  });
+
+  test('remembers where you were across a reload', async ({ h }) => {
     const { page } = h;
     await page.getByTestId('nav-projects').click();
     await createProject(page, elac);
     await createProject(page, estim);
     await page.getByTestId('nav-home').click();
 
-    const row = page.getByTestId('ready-panel').locator('.row', { hasText: 'Twist yarn' });
-    await expect(row.locator('.row-sub')).toContainText('ELAC');
+    const pool = page.getByTestId('ready-panel');
+    await pool.getByText('ELAC', { exact: true }).click();
+    await expect(pool.getByText('Twist yarn')).toBeVisible();
 
-    await page.getByTestId('ready-projects').getByText('ELAC').click();
-    // The immediate parent is what tells rows apart; the project is now said
-    // once, at the top, instead of on every line.
-    await expect(row.locator('.row-sub')).toHaveText('Fabricate');
-  });
-
-  test('remembers the project across a reload', async ({ h }) => {
-    const { page } = h;
-    await page.getByTestId('nav-projects').click();
-    await createProject(page, elac);
-    await createProject(page, estim);
-    await page.getByTestId('nav-home').click();
-
-    await page.getByTestId('ready-projects').getByText('ELAC').click();
     await page.reload();
     await page.waitForSelector('.shell');
-
-    const pool = page.getByTestId('ready-panel');
-    await expect(pool.getByText('Twist yarn')).toBeVisible();
-    await expect(pool.getByText('Mount camera')).toHaveCount(0);
+    await expect(page.getByTestId('ready-panel').getByText('Twist yarn')).toBeVisible();
+    await expect(page.getByTestId('ready-crumbs')).toContainText('ELAC');
   });
 });

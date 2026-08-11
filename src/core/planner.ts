@@ -28,20 +28,25 @@ import { derivedStatus, isDone } from './graph.ts';
 export type TodaySource = 'listed' | 'planned' | 'reminder' | 'rolled-over';
 
 /**
- * Whether missing this one's day is the end of it.
+ * Whether this is a culture's schedule rather than a job somebody is taking on.
  *
- * The same distinction the sequence graph already draws between an order you
- * set and an order we guessed: a statement outranks a guess. Applied to dates,
- * one you typed is a commitment and stays owed; one the app worked out from a
- * culture's schedule is a prediction, and a prediction that has passed is not a
- * debt. There is no version of tomorrow in which day 7's media change gets done.
+ * An experiment's stages — media changes, the switch to differentiation, the
+ * endpoint — are arithmetic over a seeding date. They describe what is
+ * happening to a culture, and in a lab with more than one pair of hands they
+ * are frequently not happening at *your* hands at all. Putting them on your
+ * to-do list asserts something nobody said.
+ *
+ * So they are schedule: on the calendar, and on the experiment, where the
+ * question they answer is "where is this culture up to". They are never a
+ * to-do item. If one is genuinely yours today, it goes on the day the same way
+ * anything else does — by you saying so.
  *
  * Protocol steps are deliberately not included. A run is a procedure in flight
- * — the scaffolds are in the solution right now — so a wash missed at 13:00
- * yesterday is still a wash that has to happen, and it keeps rolling forward.
- * That is a different kind of lateness from a culture that has moved on.
+ * — the scaffolds are in the solution right now, because you put them there —
+ * so a wash missed at 13:00 yesterday is still a wash that has to happen, and
+ * it keeps rolling forward.
  */
-export function expiresWithItsDay(reminder: Reminder): boolean {
+export function isCultureSchedule(reminder: Reminder): boolean {
   return reminder.source.kind === 'experiment';
 }
 
@@ -119,16 +124,12 @@ export function todayItems(state: State, index: GraphIndex, date: DateOnly): Tod
   // A protocol step missed at 13:00 yesterday must not disappear at midnight:
   // the scaffolds are in the solution now and the wash still has to happen.
   //
-  // A culture's media change is not that. It is a prediction the app made from
-  // "every three days", and if it did not happen on the 14th it did not happen
-  // — there is no version of tomorrow in which the 14th's media change gets
-  // done. Ten identical rows claiming you are a month late for something nobody
-  // can do is not a record of anything; it buries the four you can still act on.
-  //
-  // The missed ones are not discarded. They stay on the calendar and are counted
-  // against their experiment, where "this culture missed three media changes" is
-  // a fact worth knowing.
+  // A culture's schedule is not on this list at all — see isCultureSchedule.
+  // It is not discarded either: it is on the calendar and on the experiment,
+  // which is where "where is this culture up to" is actually asked.
   for (const reminder of state.reminders) {
+    // A culture's own schedule is not this list. See isCultureSchedule.
+    if (isCultureSchedule(reminder)) continue;
     // A reminder ticked today stays on the list, struck through. Ticking a box
     // should look like progress; having the row vanish looks like a mistake.
     if (reminder.done && reminder.doneAt?.slice(0, 10) !== date) continue;
@@ -142,8 +143,7 @@ export function todayItems(state: State, index: GraphIndex, date: DateOnly): Tod
     // conference that is over is over. A generated one expires for the same
     // reason: its day was the whole of its claim. What you typed yourself rolls
     // forward until you deal with it.
-    const expires =
-      (reminder.spanDays !== undefined && reminder.spanDays > 1) || expiresWithItsDay(reminder);
+    const expires = reminder.spanDays !== undefined && reminder.spanDays > 1;
     if (late > 0 && (reminder.done || expires)) continue;
 
     const key = `reminder:${reminder.id}`;
@@ -210,7 +210,7 @@ export function openCount(items: TodayItem[]): number {
 export function missedFor(state: State, nodeId: string, today: DateOnly): Reminder[] {
   const day = dayNumber(today);
   return state.reminders
-    .filter((r) => r.nodeId === nodeId && expiresWithItsDay(r) && !r.done)
+    .filter((r) => r.nodeId === nodeId && isCultureSchedule(r) && !r.done)
     .filter((r) => dayNumber(r.date) + Math.max(0, (r.spanDays ?? 1) - 1) < day)
     .sort((a, b) => (a.date < b.date ? -1 : 1));
 }
@@ -222,6 +222,10 @@ export function missedFor(state: State, nodeId: string, today: DateOnly): Remind
 export function upcomingReminders(state: State, from: DateOnly, days = 60): Reminder[] {
   const start = dayNumber(from);
   return state.reminders
+    // Same reason they are not on today: a culture's schedule is not a queue of
+    // things you owe, so it does not belong in the waiting room either. Twenty
+    // future media changes is what the calendar and the experiment are for.
+    .filter((r) => !isCultureSchedule(r))
     .filter((r) => !r.done)
     .filter((r) => {
       const day = dayNumber(r.date);

@@ -344,7 +344,7 @@ describe('reminders', () => {
     expect(view.missed.length).toBe(stale.length);
   });
 
-  it('a media change due today is still on today', () => {
+  it('a media change is never on today, not even on its own day', () => {
     const h = harness('2026-07-30T09:00');
     const b = sampleBoard(h);
     h.app.setExperiment(b.experiment, {
@@ -356,15 +356,19 @@ describe('reminders', () => {
       stagesDone: [],
     });
 
-    // Expiring after its day must not mean never showing up on it. Seeding day
-    // itself is a task rather than a reminder, so take the first stage after it.
+    // It is a culture's schedule, not a job anyone took on — often not even
+    // done by the person reading this list. On its own day it is on the
+    // calendar and nowhere near the to-do.
     const due = [...h.app.state.reminders]
       .filter((r) => r.source.kind === 'experiment' && r.date > '2026-07-30')
       .sort((a, b2) => (a.date < b2.date ? -1 : 1))[0]!;
     expect(due).toBeDefined();
 
     h.clock.set(`${due.date}T09:00`);
-    expect(h.app.todayList().items.map((i) => i.key)).toContain(`reminder:${due.id}`);
+    expect(h.app.todayList().items.map((i) => i.key)).not.toContain(`reminder:${due.id}`);
+
+    const day = h.app.calendar(due.date).find((d) => d.date === due.date);
+    expect(day!.events.some((e) => e.title === due.title)).toBe(true);
   });
 
   it('can be planned relative to now', () => {

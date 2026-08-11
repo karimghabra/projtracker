@@ -321,6 +321,72 @@ export function readyView(index: GraphIndex, today: DateOnly): ReadyRow[] {
 }
 
 /**
+ * The ready pool as a tree rather than a list.
+ *
+ * A flat pool answers "what is unblocked anywhere", which is never the question
+ * — and at forty items it is a scrolling list, which is the thing the dashboard
+ * cannot afford. Filtered to ready work only, the hierarchy is small: five
+ * projects, a handful of milestones each, and the leaves at the bottom. Every
+ * level is short enough to read at a glance, and the counts say where the work
+ * is before you go looking for it.
+ *
+ * Containers with no ready work inside them are absent entirely, so descending
+ * never leads to a dead end.
+ */
+export interface ReadyBranch {
+  id: NodeId;
+  name: string;
+  kind: NodeKind;
+  /** Ready leaves at or below this node. */
+  count: number;
+  children: ReadyBranch[];
+  /** Present when this node is itself one of the ready leaves. */
+  row?: ReadyRow;
+}
+
+export function readyTree(index: GraphIndex, today: DateOnly): ReadyBranch[] {
+  // Anything already on the day is spoken for. Offering it again in the pool
+  // puts the same task on the screen twice with two checkboxes, which is how
+  // you end up wondering which one you already ticked.
+  const onToday = new Set(todayItems(index.state, index, today).map((i) => i.node?.id));
+  const rows = readyView(index, today).filter((row) => !onToday.has(row.id));
+  const byId = new Map<NodeId, ReadyBranch>();
+  const roots: ReadyBranch[] = [];
+
+  /** The branch for a node, creating it and its ancestors on the way up. */
+  const branchFor = (id: NodeId): ReadyBranch => {
+    const existing = byId.get(id);
+    if (existing) return existing;
+
+    const node = index.state.nodes[id]!;
+    const branch: ReadyBranch = { id, name: node.name, kind: node.kind, count: 0, children: [] };
+    byId.set(id, branch);
+
+    if (node.parent) branchFor(node.parent).children.push(branch);
+    else roots.push(branch);
+    return branch;
+  };
+
+  for (const row of rows) {
+    const leaf = branchFor(row.id);
+    leaf.row = row;
+    // Count it against itself and everything it sits under.
+    for (let at: NodeId | null = row.id; at; at = index.state.nodes[at]?.parent ?? null) {
+      byId.get(at)!.count += 1;
+    }
+  }
+
+  // Siblings in board order, which is the order the work is meant to happen in.
+  const rank = new Map(index.order.map((id, at) => [id, at]));
+  const sort = (list: ReadyBranch[]): ReadyBranch[] => {
+    list.sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0));
+    for (const child of list) sort(child.children);
+    return list;
+  };
+  return sort(roots);
+}
+
+/**
  * What has been started and not finished, oldest first.
  *
  * Oldest first on purpose: something in progress for six hours is ordinary,

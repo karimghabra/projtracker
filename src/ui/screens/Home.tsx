@@ -10,7 +10,7 @@ import { useState } from 'react';
 import { formatDayMonth, formatRelativeDay } from '../../core/dates.ts';
 import { formatOffset } from '../../core/protocols.ts';
 import { BATCH_STATES, isTerminalState } from '../../core/model.ts';
-import type { CalendarSpan, TodayItemView } from '../../commands/views.ts';
+import type { CalendarSpan, ReadyBranch, TodayItemView } from '../../commands/views.ts';
 import { useApp } from '../state/store.ts';
 import { Calendar, DayPanel } from '../components/Calendar.tsx';
 import { UpcomingPanel } from '../components/UpcomingPanel.tsx';
@@ -567,48 +567,66 @@ function InProgressPanel() {
   );
 }
 
-const READY_PROJECT_KEY = 'protracker:readyProject';
+const READY_PATH_KEY = 'protracker:readyPath';
 
+/**
+ * The ready pool, browsed rather than scrolled.
+ *
+ * Forty unblocked items is a scrolling list however it is styled, and a
+ * dashboard cannot afford one. Filtered to ready work the hierarchy is small —
+ * five projects, a few milestones each — so showing one level at a time keeps
+ * every screen short and never hides anything behind a fold. The counts say
+ * where the work is before you go in, and a container with nothing ready in it
+ * is not shown at all, so descending never dead-ends.
+ */
 function ReadyPanel() {
   const { app, run } = useApp();
   const [open, setOpen] = useState(
     () => window.localStorage.getItem('protracker:ready') !== 'closed',
   );
-  const [project, setProject] = useState<string | null>(
-    () => window.localStorage.getItem(READY_PROJECT_KEY),
-  );
-  const ready = app.ready();
-  const onToday = new Set(app.todayList().items.map((i) => i.id));
-  const unblocked = ready.filter((row) => !onToday.has(row.id));
-
-  /*
-    In the lab you are in one context at a time — at the electrospinner, or
-    doing a media change — and the question is "what can I do on ELAC now",
-    not "what is unblocked anywhere". The chips are the graph screen's, because
-    that is where they were already learned.
-  */
-  const projects: { id: string; name: string }[] = [];
-  for (const row of unblocked) {
-    if (row.projectId && row.projectName && !projects.some((p) => p.id === row.projectId)) {
-      projects.push({ id: row.projectId, name: row.projectName });
+  const [path, setPath] = useState<string[]>(() => {
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(READY_PATH_KEY) ?? '[]');
+      return Array.isArray(saved) ? (saved as string[]) : [];
+    } catch {
+      return [];
     }
-  }
-  // A filter pinned to a project that has nothing ready would show an empty
-  // pool with no way to see that is why.
-  const filter = projects.some((p) => p.id === project) ? project : null;
-  const available = filter ? unblocked.filter((row) => row.projectId === filter) : unblocked;
+  });
 
-  const pick = (id: string | null) => {
-    setProject(id);
-    if (id) window.localStorage.setItem(READY_PROJECT_KEY, id);
-    else window.localStorage.removeItem(READY_PROJECT_KEY);
+  const tree = app.readyTree();
+  const total = tree.reduce((sum, branch) => sum + branch.count, 0);
+
+  // Walk the saved path as far as it still exists. Finishing the last task in a
+  // goal should return you to its milestone, not strand you on an empty screen.
+  const trail: ReadyBranch[] = [];
+  let level = tree;
+  for (const id of path) {
+    const found = level.find((branch) => branch.id === id);
+    if (!found) break;
+    trail.push(found);
+    level = found.children;
+  }
+
+  // Walk through any level that offers a single container and nothing else. A
+  // corridor of one-door rooms is not navigation, and on a board with one
+  // project it would put three clicks between you and your only work. The
+  // crumbs still name every level walked through, so you can come back up into
+  // one.
+  while (level.length === 1 && !level[0]!.row) {
+    trail.push(level[0]!);
+    level = level[0]!.children;
+  }
+
+  const go = (next: string[]) => {
+    setPath(next);
+    window.localStorage.setItem(READY_PATH_KEY, JSON.stringify(next));
   };
 
-  // Hidden only on a genuinely empty board, where it would sit under the
-  // get-started prompt saying nothing. Work with no project above it still
-  // counts as work, so the test is "is there anything ready", not "is there a
-  // project".
-  if (app.tree().length === 0 && unblocked.length === 0) return null;
+  if (app.tree().length === 0 && total === 0) return null;
+
+  const here = trail.length ? trail[trail.length - 1]!.children : tree;
+  const leaves = here.filter((branch) => branch.row);
+  const branches = here.filter((branch) => !branch.row);
 
   return (
     <section className="panel" data-testid="ready-panel">
@@ -629,43 +647,54 @@ function ReadyPanel() {
         <IconCheck size={15} />
         <h2>Ready to work on</h2>
         <span className="spacer" />
-        <span className="faint mono">{available.length}</span>
+        <span className="faint mono">{trail.length ? trail[trail.length - 1]!.count : total}</span>
       </div>
-      {open && projects.length > 1 && (
-        <div className="inline wrap" style={{ padding: '6px 10px 0' }} data-testid="ready-projects">
-          <button
-            className={filter === null ? 'chip accent chip-button' : 'chip chip-button'}
-            aria-pressed={filter === null}
-            data-testid="ready-project-all"
-            onClick={() => pick(null)}
-          >
-            All
+
+      {open && trail.length > 0 && (
+        <div className="inline wrap crumbs" data-testid="ready-crumbs">
+          <button className="btn ghost sm" data-testid="ready-crumb-all" onClick={() => go([])}>
+            All work
           </button>
-          {projects.map((entry) => (
+          {trail.map((branch, at) => (
             <button
-              key={entry.id}
-              className={filter === entry.id ? 'chip accent chip-button' : 'chip chip-button'}
-              aria-pressed={filter === entry.id}
-              data-testid={`ready-project-${entry.id}`}
-              onClick={() => pick(filter === entry.id ? null : entry.id)}
+              key={branch.id}
+              className="btn ghost sm"
+              data-testid={`ready-crumb-${branch.id}`}
+              onClick={() => go(trail.slice(0, at + 1).map((b) => b.id))}
             >
-              {entry.name}
+              › {branch.name}
             </button>
           ))}
         </div>
       )}
+
       {open && (
-      <div className="panel-body tight">
-        {available.length === 0 ? (
-          <Empty title={filter ? 'Nothing ready in this project' : 'Nothing is unblocked right now'}>
-            {filter
-              ? 'Its work is either done, on today already, or waiting on something else. Pick All to see the rest.'
-              : 'Everything is either done, on today already, or waiting on something else. The graph shows what.'}
-          </Empty>
-        ) : (
-          <div className="list">
-            {available.slice(0, 12).map((row) => (
-              <div className="row" key={row.id} data-testid={`ready-${row.id}`}>
+        <div className="panel-body tight">
+          {total === 0 ? (
+            <Empty title="Nothing is unblocked right now">
+              Everything is either done, on today already, or waiting on something else. The graph
+              shows what.
+            </Empty>
+          ) : (
+            <div className="list">
+              {branches.map((branch) => (
+                <button
+                  className="row nav-row"
+                  key={branch.id}
+                  data-testid={`ready-into-${branch.id}`}
+                  onClick={() => go([...trail.map((b) => b.id), branch.id])}
+                >
+                  <div className="grow" style={{ minWidth: 0 }}>
+                    <div className="row-title">{branch.name}</div>
+                    <div className="row-sub">{branch.kind}</div>
+                  </div>
+                  <span className="chip">{branch.count}</span>
+                  <IconChevronRight size={13} />
+                </button>
+              ))}
+
+              {leaves.map(({ row }) => row!).map((row) => (
+                <div className="row" key={row.id} data-testid={`ready-${row.id}`}>
                 {/*
                   Finishing something you never started is normal: you did it at
                   the bench and are recording it. It should not need a trip
@@ -687,16 +716,9 @@ function ReadyPanel() {
                       onCommit={(next) => run((a) => a.updateNode(row.id, { name: next }), { silent: true })}
                     />
                   </div>
-                  {/* The full path is longer and heavier than the task name it
-                      belongs to. Once you have said which project, repeating
-                      it on every row is noise: the immediate parent is what
-                      tells them apart. */}
-                  <div className="row-sub">
-                    {(() => {
-                      const trail = row.path.split(' › ').slice(0, -1);
-                      return filter ? trail.slice(-1).join(' › ') : trail.join(' › ');
-                    })()}
-                  </div>
+                  {/* No breadcrumb on the row: the crumbs above already say
+                      where you are, and repeating the path on every line was
+                      heavier than the task names it sat under. */}
                 </div>
                 {row.stepsTotal > 0 && (
                   <span className="chip">
@@ -718,15 +740,10 @@ function ReadyPanel() {
                 >
                   <IconPlus size={12} /> Today
                 </button>
-              </div>
-            ))}
-            {available.length > 12 && (
-              <p className="faint" style={{ padding: '4px 8px', margin: 0 }}>
-                and {available.length - 12} more — the whole pool is on the Projects screen.
-              </p>
-            )}
-          </div>
-        )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </section>

@@ -1,9 +1,9 @@
-/**
+﻿/**
  * The command layer: the only thing in the system that writes.
  *
  * Every mutating verb runs inside `store.mutate`, which snapshots first, so a
  * verb that throws leaves state and disk untouched and every successful verb is
- * one undo step. Verbs return a delta describing what changed — the CLI prints
+ * one undo step. Verbs return a delta describing what changed â€” the CLI prints
  * it, the UI uses it to say what happened ("done; unblocked 2 tasks") rather
  * than silently refreshing.
  *
@@ -62,6 +62,7 @@ import type {
   InventoryView,
   NodeView,
   ProgressRow,
+  ReadyBranch,
   ReadyRow,
   SheetRow,
   TodayView,
@@ -76,6 +77,7 @@ import {
   progressView,
   experimentsView,
   inProgressView,
+  readyTree,
   readyView,
   sheetView,
   todayView,
@@ -166,7 +168,7 @@ export interface AddNodeOptions {
    *
    * Normally supplying a number means you stated it. The importer is the
    * exception: it always has a number to pass, but when the workbook had no
-   * Seq column that number came from row order — which is a guess, and has to
+   * Seq column that number came from row order â€” which is a guess, and has to
    * be recorded as one so it will yield to a link drawn later.
    */
   seqSource?: SeqSource;
@@ -298,15 +300,20 @@ export class App {
     return inProgressView(this.index, this.today);
   }
 
+  /** The ready pool as a hierarchy, for browsing rather than scrolling. */
+  readyTree(): ReadyBranch[] {
+    return readyTree(this.index, this.today);
+  }
+
   todayList(date: DateOnly = this.today): TodayView {
     return todayView(this.index, date);
   }
 
   /**
-   * The days a "put this off until…" control offers as shortcuts.
+   * The days a "put this off untilâ€¦" control offers as shortcuts.
    *
    * Here rather than in a component because a client computes nothing about
-   * dates — and because "next week" is a decision about what the phrase means,
+   * dates â€” and because "next week" is a decision about what the phrase means,
    * which belongs where the rest of the calendar arithmetic lives.
    */
   plannerDates(): { today: DateOnly; tomorrow: DateOnly; nextWeek: DateOnly } {
@@ -458,7 +465,7 @@ export class App {
     // Worked out *before* the mutation, because a mutation is a history entry
     // and an edit that changes nothing must not cost one. Several editors
     // commit on blur regardless, and pressing Undo or Redo blurs whatever was
-    // focused — so a no-op recorded here would clear the redo stack with the
+    // focused â€” so a no-op recorded here would clear the redo stack with the
     // very click that was trying to use it.
     const changed = nodeChanges(existing, patch);
     if (!changed.length) return { ok: true, message: 'No change.' };
@@ -575,7 +582,7 @@ export class App {
     return this.setStatus(id, 'in_progress', 'Start');
   }
 
-  /** in_progress → active. Pause never invents a state; the graph derives it again. */
+  /** in_progress â†’ active. Pause never invents a state; the graph derives it again. */
   pause(id: NodeId): Delta {
     return this.setStatus(id, 'active', 'Pause');
   }
@@ -589,7 +596,7 @@ export class App {
   }
 
   /**
-   * Set or clear a completion from a single piece of text — what the
+   * Set or clear a completion from a single piece of text â€” what the
    * spreadsheet's Completed column and the CLI both need. Empty reopens it.
    */
   setCompletion(id: NodeId, when: string): Delta {
@@ -605,7 +612,7 @@ export class App {
     const period = parsePeriod(when, this.today);
     if (!period) {
       throw invalid(
-        `Cannot read "${when}" as a time. Try a date, a month, a quarter or a year — 2026-08-14, Aug 2026, Q3 2026, 2026.`,
+        `Cannot read "${when}" as a time. Try a date, a month, a quarter or a year â€” 2026-08-14, Aug 2026, Q3 2026, 2026.`,
       );
     }
 
@@ -658,10 +665,10 @@ export class App {
   /**
    * Close out a container by finishing the work inside it.
    *
-   * A project is not a thing that can be ticked on its own: §2.4 makes a
+   * A project is not a thing that can be ticked on its own: Â§2.4 makes a
    * container's completion derived from its contents, which is what stops "done"
    * from being a claim nobody checked. So this writes nothing onto the container
-   * — it completes every unfinished leaf beneath it and lets the container
+   * â€” it completes every unfinished leaf beneath it and lets the container
    * follow. One decision by the user, so one undo step.
    */
   completeSubtree(id: NodeId, when?: string): Delta & { completed: number } {
@@ -721,8 +728,8 @@ export class App {
    * Complete a task, and report what it freed. The count is the point: it turns
    * ticking something off from bookkeeping into feedback.
    *
-   * `when` accepts anything `parsePeriod` understands — a date, a month, a
-   * quarter, a year — for back-filling work that was finished long before
+   * `when` accepts anything `parsePeriod` understands â€” a date, a month, a
+   * quarter, a year â€” for back-filling work that was finished long before
    * anyone started recording it here. Omitted means now, to the minute.
    */
   complete(id: NodeId, when?: string): Delta & { unblocked: string[] } {
@@ -730,7 +737,7 @@ export class App {
     if (!node) throw notFound('node', id);
     if (isContainerKind(node.kind) && !completesDirectly(this.index, id)) {
       throw notAllowed(
-        `A ${node.kind} completes when everything inside it does — tick its tasks instead.`,
+        `A ${node.kind} completes when everything inside it does â€” tick its tasks instead.`,
       );
     }
     if (node.status === 'done' && !when) throw conflict(`"${node.name}" is already done.`);
@@ -738,7 +745,7 @@ export class App {
     const period = when === undefined ? null : parsePeriod(when, this.today);
     if (when !== undefined && !period) {
       throw invalid(
-        `Cannot read "${when}" as a time. Try a date, a month, a quarter or a year — 2026-08-14, Aug 2026, Q3 2026, 2026.`,
+        `Cannot read "${when}" as a time. Try a date, a month, a quarter or a year â€” 2026-08-14, Aug 2026, Q3 2026, 2026.`,
       );
     }
 
@@ -765,7 +772,7 @@ export class App {
       return {
         ok: true as const,
         message: unblocked.length
-          ? `Done. That unblocked ${unblocked.length} item(s): ${unblocked.slice(0, 3).join(', ')}${unblocked.length > 3 ? '…' : ''}`
+          ? `Done. That unblocked ${unblocked.length} item(s): ${unblocked.slice(0, 3).join(', ')}${unblocked.length > 3 ? 'â€¦' : ''}`
           : 'Done.',
         unblocked,
       };
@@ -779,7 +786,7 @@ export class App {
     const delta = this.updateNode(id, { waitingOn: { reason: reason.trim(), until } });
     // An expected arrival is worth a nudge on the day, so it does not sit
     // waiting forever because nobody looked.
-    if (until) this.addReminder(`${reason.trim()} — expected`, until, { nodeId: id });
+    if (until) this.addReminder(`${reason.trim()} â€” expected`, until, { nodeId: id });
     return delta;
   }
 
@@ -807,12 +814,12 @@ export class App {
           ? 'Something cannot wait for itself.'
           : report.reason === 'nested'
             ? 'One of these contains the other, so it would be waiting for its own contents.'
-            : `That would make a loop: ${names.join(' → ')}.`;
+            : `That would make a loop: ${names.join(' â†’ ')}.`;
       throw new CommandError('cycle', because, { path: report.path });
     }
 
     const now = this.now;
-    return this.mutate(`Link "${from.name}" → "${to.name}"`, (draft) => {
+    return this.mutate(`Link "${from.name}" â†’ "${to.name}"`, (draft) => {
       const id = allocateId(draft, 'd');
       draft.deps.push({ id, from: fromId, to: toId, createdAt: now, note });
       return { ok: true as const, message: `"${to.name}" now waits for "${from.name}".`, id };
@@ -825,7 +832,7 @@ export class App {
     const from = this.state.nodes[dep.from]?.name ?? dep.from;
     const to = this.state.nodes[dep.to]?.name ?? dep.to;
 
-    return this.mutate(`Unlink "${from}" → "${to}"`, (draft) => {
+    return this.mutate(`Unlink "${from}" â†’ "${to}"`, (draft) => {
       draft.deps = draft.deps.filter((d) => d.id !== depId);
       return { ok: true as const, message: `"${to}" no longer waits for "${from}".` };
     });
@@ -847,7 +854,7 @@ export class App {
           ? 'Something cannot wait for itself.'
           : report.reason === 'nested'
             ? 'One contains the other.'
-            : `Loop: ${names.join(' → ')}`,
+            : `Loop: ${names.join(' â†’ ')}`,
     };
   }
 
@@ -890,7 +897,7 @@ export class App {
       tags.unshift(match[1]!);
       name = name.slice(0, match.index).trimEnd();
     }
-    if (!name) throw invalid('That is only tags — give it a name too.');
+    if (!name) throw invalid('That is only tags â€” give it a name too.');
 
     const now = this.now;
     return this.mutate(`Quick-add "${name}"`, (draft) => {
@@ -921,15 +928,15 @@ export class App {
    * Start an experiment without first deciding where it belongs.
    *
    * A culture gets seeded because the cells were ready, not because a goal
-   * existed to hang it on — and by the time you are at the hood, "which goal is
+   * existed to hang it on â€” and by the time you are at the hood, "which goal is
    * this?" is the question that stops it being recorded at all. So an
    * experiment may sit at the top level exactly as a quick-added task does, and
    * be filed later.
    *
-   * This is a widening of §2.1, which had experiments only under a goal. The
+   * This is a widening of Â§2.1, which had experiments only under a goal. The
    * hierarchy still means what it did; it is no longer the only way in. The
-   * storage layer already tolerated it — `serializeAll` writes every root node
-   * to its own file — and the ready pool and calendar pick it up unchanged.
+   * storage layer already tolerated it â€” `serializeAll` writes every root node
+   * to its own file â€” and the ready pool and calendar pick it up unchanged.
    */
   experimentQuickAdd(name: string, def: Partial<ExperimentDef> = {}): Delta & { id: NodeId } {
     const clean = name.trim();
@@ -980,7 +987,7 @@ export class App {
     return this.mutate(`Remove "${node.name}" from ${date}`, (draft) => {
       // Only today's own entry is closed. A rolled-over item keeps its original
       // open entry and gets a tombstone for today instead, because "not today"
-      // is a statement about today — saying it should not mean never again.
+      // is a statement about today â€” saying it should not mean never again.
       const own = draft.planner.find((e) => e.date === date && e.nodeId === id && !e.outcome);
       if (own) own.outcome = 'deferred';
       else draft.planner.push({ date, nodeId: id, order: 0, outcome: 'deferred' });
@@ -1005,7 +1012,7 @@ export class App {
     });
   }
 
-  /** Plan a task for a specific day — the planner's most basic act. */
+  /** Plan a task for a specific day â€” the planner's most basic act. */
   planFor(nodeId: NodeId, date: DateOnly | null): Delta {
     if (date && !isDateOnly(date)) throw invalid(`"${date}" is not a date (expected YYYY-MM-DD).`);
     const node = this.state.nodes[nodeId];
@@ -1042,7 +1049,7 @@ export class App {
     });
   }
 
-  /** "Follow this up in three days" — planned when the thought occurs. */
+  /** "Follow this up in three days" â€” planned when the thought occurs. */
   remindIn(nodeId: NodeId, days: number, title?: string): Delta & { id: string } {
     const node = this.state.nodes[nodeId];
     if (!node) throw notFound('node', nodeId);
@@ -1090,7 +1097,7 @@ export class App {
    * Move a reminder to another day.
    *
    * Only a manual one. A protocol step's date is its run's start plus a fixed
-   * offset, and an experiment stage's is its seeding date plus a day count —
+   * offset, and an experiment stage's is its seeding date plus a day count â€”
    * both are regenerated on every mutation, so a new date written here would be
    * overwritten within the second and the user would watch it snap back. Worse,
    * moving one step of a protocol without the rest would be a claim about the
@@ -1155,7 +1162,7 @@ export class App {
   /**
    * Change what a note says, however long ago it was written.
    *
-   * A lab notebook gets amended — a reading recorded wrong, a conclusion that
+   * A lab notebook gets amended â€” a reading recorded wrong, a conclusion that
    * turned out to be the opposite. The entry keeps its `at`, because that is
    * when the observation happened and rewriting it would misplace the note in
    * its own day; only the text moves. Editing an old one rewrites that month's
@@ -1357,12 +1364,12 @@ export class App {
     });
   }
 
-  /** "I fabricated n of type t" — the one action the inventory page is built around. */
+  /** "I fabricated n of type t" â€” the one action the inventory page is built around. */
   addBatch(typeId: string, count: number, options: { fabricatedOn?: DateOnly; label?: string; notes?: string } = {}): Delta & { id: string } {
     const type = this.state.scaffoldTypes.find((t) => t.id === typeId);
     if (!type) throw notFound('scaffold type', typeId);
-    // Fractions are fine for something measured — half a millilitre is
-    // ordinary — and nonsense for something counted.
+    // Fractions are fine for something measured â€” half a millilitre is
+    // ordinary â€” and nonsense for something counted.
     const problem = quantityProblem(count, type);
     if (problem) throw invalid(problem);
     count = roundQuantity(count);
@@ -1415,12 +1422,12 @@ export class App {
     if (clean === batch.state) return { ok: true, message: 'No change.' };
     const now = this.now;
 
-    return this.mutate(`Batch → ${clean}`, (draft) => {
+    return this.mutate(`Batch â†’ ${clean}`, (draft) => {
       const target = draft.batches.find((b) => b.id === id)!;
       target.state = clean;
       target.history.push({ state: clean, at: now, note });
       // Setting a state by hand takes the batch out of whatever run was moving
-      // it — you have overruled the protocol. That used to be phrased as "any
+      // it â€” you have overruled the protocol. That used to be phrased as "any
       // state except crosslinking", which only worked while crosslinking was
       // the one thing a run could do.
       target.runId = undefined;
@@ -1531,7 +1538,7 @@ export class App {
     }
     if (nodeId && !this.state.nodes[nodeId]) throw notFound('node', nodeId);
     // Every step's time is this plus an offset, so unreadable text here does not
-    // fail — it writes a run whose every reminder is dated NaN. The UI cannot
+    // fail â€” it writes a run whose every reminder is dated NaN. The UI cannot
     // produce one (it uses a picker); the CLI's --at can.
     if (startedAt !== undefined && !isStamp(startedAt)) {
       throw invalid(`Cannot read "${startedAt}" as a time. Use YYYY-MM-DDTHH:MM.`);
@@ -1589,7 +1596,7 @@ export class App {
       return {
         ok: true as const,
         message: advanced
-          ? 'Last step done — those scaffolds are now crosslinked.'
+          ? 'Last step done â€” those scaffolds are now crosslinked.'
           : done
             ? 'Step done.'
             : 'Step reopened.',
@@ -1649,7 +1656,7 @@ export class App {
   }
 
   /**
-   * Bring a workbook in. One transaction, so an import is one undo step —
+   * Bring a workbook in. One transaction, so an import is one undo step â€”
    * changing your mind about four hundred rows should take one keystroke.
    */
   applyImport(plan: ImportPlan, decisions: Record<string, ImportAction> = {}): Delta & { created: number } {
@@ -1812,7 +1819,7 @@ export class App {
    * Apply the changes a person ticked in the spreadsheet review.
    *
    * One transaction, so an afternoon of edits made on a phone is one undo away
-   * — which is the only thing that makes accepting them comfortable.
+   * â€” which is the only thing that makes accepting them comfortable.
    *
    * Nothing is inferred here. `reconcile` decided what each change means and a
    * person decided which of them to take; this only carries them out, and says
@@ -1833,7 +1840,7 @@ export class App {
             app.addNode(change.create.parentId, change.create.name, {
               seq: change.create.seq,
               // A row's position in a spreadsheet is a guess about order, not a
-              // statement of it — the same rule the importer follows.
+              // statement of it â€” the same rule the importer follows.
               seqSource: change.create.seq === undefined ? 'assumed' : 'user',
             });
           } else if (change.nodeId && change.edit) {
