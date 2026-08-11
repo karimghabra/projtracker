@@ -61,11 +61,14 @@ test.describe('the day list', () => {
     await page.getByLabel('Add a task to today').fill('Long job');
     await page.getByRole('button', { name: 'Add', exact: true }).click();
 
-    await page.getByRole('button', { name: 'Start Long job' }).click();
-    await expect(page.getByRole('button', { name: 'Pause Long job' })).toBeVisible();
+    // Scoped to the day's list: a started task also appears in the In progress
+    // panel, which offers its own Pause for the same task.
+    const list = page.getByTestId('today-list');
+    await list.getByRole('button', { name: 'Start Long job' }).click();
+    await expect(list.getByRole('button', { name: 'Pause Long job' })).toBeVisible();
 
-    await page.getByRole('button', { name: 'Pause Long job' }).click();
-    await expect(page.getByRole('button', { name: 'Start Long job' })).toBeVisible();
+    await list.getByRole('button', { name: 'Pause Long job' }).click();
+    await expect(list.getByRole('button', { name: 'Start Long job' })).toBeVisible();
   });
 });
 

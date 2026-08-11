@@ -31,6 +31,7 @@ usage: pt [--vault DIR] [--json] <command> [args]
   seeing what to do
     today                     the day's list
     ready                     everything unblocked right now
+    doing                     what you started and have not finished
     upcoming [--days N]       reminders and dates coming up
     progress                  which projects have gone quiet
     tree [ref]                the whole hierarchy
@@ -225,6 +226,17 @@ async function run(
       if (json) return out(rows), 0;
       if (rows.length === 0) return out('Nothing is unblocked right now.'), 0;
       for (const row of rows) out(`${row.id.padEnd(6)} ${row.name}  ${dim(row.path)}`);
+      return 0;
+    }
+
+    case 'doing': {
+      const rows = app.inProgress();
+      if (json) return out(rows), 0;
+      if (rows.length === 0) return out('Nothing is started right now.'), 0;
+      for (const row of rows) {
+        const since = row.startedAt ? formatDayMonth(row.startedAt.slice(0, 10), app.today) : '';
+        out(`${row.id.padEnd(6)} ${row.name}  ${dim(since ? `since ${since}` : row.path)}`);
+      }
       return 0;
     }
 

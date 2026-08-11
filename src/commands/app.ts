@@ -75,6 +75,7 @@ import {
   nodeView,
   progressView,
   experimentsView,
+  inProgressView,
   readyView,
   sheetView,
   todayView,
@@ -290,6 +291,11 @@ export class App {
 
   ready(): ReadyRow[] {
     return readyView(this.index, this.today);
+  }
+
+  /** Started and not finished, longest-running first. */
+  inProgress(): ReadyRow[] {
+    return inProgressView(this.index, this.today);
   }
 
   todayList(date: DateOnly = this.today): TodayView {
