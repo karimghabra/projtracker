@@ -270,8 +270,10 @@ test.describe('protocol reminders reach the same places', () => {
 
     await page.getByTestId('nav-home').click();
     const today = await h.today();
-    // Week view, which has the width to say what each thing is.
-    await expect(page.getByTestId(`day-${today}`)).toContainText('Prepare MES buffer');
+    await expect(page.getByTestId(`day-${today}`).locator('.calendar-mark')).toHaveAttribute(
+      'title',
+      /Prepare MES buffer/,
+    );
     await expect(page.getByTestId('today-list')).toContainText('Prepare MES buffer');
   });
 });

@@ -64,7 +64,9 @@ test.describe('a protocol run started in the evening', () => {
     await expect(list.getByText('Wash in distilled water (3 changes)')).toHaveCount(0);
 
     // It is on tomorrow, on the calendar, rather than lost.
-    await expect(page.getByTestId(`day-${await h.addDays(1)}`)).toContainText('Wash in distilled');
+    await expect(
+      page.getByTestId(`day-${await h.addDays(1)}`).locator('.calendar-mark'),
+    ).toHaveAttribute('title', /Wash in distilled/);
   });
 
   test('an overnight step still appears, on the day it is actually due', async ({ h }) => {
