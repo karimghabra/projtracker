@@ -33,6 +33,7 @@ import {
   blockersOf,
   completesDirectly,
   derivedStatus,
+  inProgressLeaves,
   isDone,
   progressOf,
   rootProjects,
@@ -317,6 +318,23 @@ export function readyView(index: GraphIndex, today: DateOnly): ReadyRow[] {
     stepsDone: node.steps.filter((s) => s.done).length,
     stepsTotal: node.steps.length,
   }));
+}
+
+/**
+ * What has been started and not finished, oldest first.
+ *
+ * Oldest first on purpose: something in progress for six hours is ordinary,
+ * and something in progress for three weeks is the thing that stalled. Sorting
+ * by how long it has been open puts the question at the top of the list.
+ */
+export function inProgressView(index: GraphIndex, today: DateOnly): ReadyRow[] {
+  return inProgressLeaves(index, today)
+    .map((node) => ({
+      ...nodeView(index, node.id, today),
+      stepsDone: node.steps.filter((s) => s.done).length,
+      stepsTotal: node.steps.length,
+    }))
+    .sort((a, b) => (a.startedAt ?? '') .localeCompare(b.startedAt ?? ''));
 }
 
 // --------------------------------------------------------------- calendar

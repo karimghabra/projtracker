@@ -61,6 +61,7 @@ export function HomeScreen({ onNavigate }: { onNavigate: (view: ViewName) => voi
     <div className="dash">
       <div className="dash-col">
         <TodayPanel />
+        <InProgressPanel />
         <ReadyPanel />
         <ProjectsPanel onNavigate={onNavigate} />
       </div>
@@ -503,6 +504,68 @@ function StartProtocolDialog({
 }
 
 // ------------------------------------------------------------------ ready
+
+/**
+ * What you have physically started and not finished: a braid part-woven, a
+ * print on the bed, a culture mid-run.
+ *
+ * Above the ready pool, because what you already started outranks what you
+ * could start. Sorted longest-running first and stating how long — six hours
+ * is ordinary, three weeks is the thing that stalled, and that is the whole
+ * reason to have the panel rather than a badge.
+ */
+function InProgressPanel() {
+  const { app, run } = useApp();
+  const rows = app.inProgress();
+  if (!rows.length) return null;
+
+  return (
+    <section className="panel" data-testid="in-progress-panel">
+      <div className="panel-head">
+        <IconPlay size={15} />
+        <h2>In progress</h2>
+        <span className="spacer" />
+        <span className="faint mono">{rows.length}</span>
+      </div>
+      <div className="panel-body tight">
+        <div className="list">
+          {rows.map((row) => (
+            <div className="row" key={row.id} data-testid={`doing-${row.id}`}>
+              <input
+                type="checkbox"
+                className="check"
+                checked={false}
+                aria-label={`Complete ${row.name}`}
+                data-testid={`doing-complete-${row.id}`}
+                onChange={() => run((a) => a.complete(row.id))}
+              />
+              <div className="grow" style={{ minWidth: 0 }}>
+                <div className="row-title">{row.name}</div>
+                <div className="row-sub">
+                  {row.startedAt
+                    ? `started ${formatRelativeDay(row.startedAt.slice(0, 10), app.today)}`
+                    : row.path.split(' › ').slice(0, -1).slice(-1).join('')}
+                </div>
+              </div>
+              {row.stepsTotal > 0 && (
+                <span className="chip">
+                  {row.stepsDone}/{row.stepsTotal}
+                </span>
+              )}
+              <button
+                className="btn sm"
+                onClick={() => run((a) => a.pause(row.id))}
+                aria-label={`Pause ${row.name}`}
+              >
+                Pause
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
 
 const READY_PROJECT_KEY = 'protracker:readyProject';
 
