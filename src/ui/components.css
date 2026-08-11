@@ -29,7 +29,7 @@
 
 .calendar-weekday {
   padding: 2px 4px;
-  font-size: 10.5px;
+  font-size: var(--text-xs);
   font-weight: 600;
   color: var(--text-faint);
   text-transform: uppercase;
@@ -80,7 +80,7 @@
 .calendar-daynum {
   display: flex;
   justify-content: space-between;
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   margin-bottom: 2px;
@@ -94,8 +94,8 @@
 
 .calendar-event {
   padding: 1px 4px;
-  border-radius: 3px;
-  font-size: 10px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
   line-height: 1.35;
   white-space: nowrap;
   overflow: hidden;
@@ -110,7 +110,105 @@
 .calendar-event.ok { background: var(--ok-soft); color: var(--ok); }
 .calendar-event.done { opacity: 0.5; text-decoration: line-through; }
 
-.calendar-more { font-size: 10px; color: var(--text-faint); padding-left: 4px; }
+.calendar-more { font-size: var(--text-xs); color: var(--text-faint); padding-left: 4px; }
+
+/*
+  Month cells: one mark per kind, counted. A ninety-pixel cell cannot hold a
+  title, and a clipped title is worse than no title — it looks like information
+  while carrying none. Colour and a number survive the width.
+*/
+.calendar-marks {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 2px 0;
+}
+
+.calendar-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: var(--text-xs);
+  font-weight: 550;
+  line-height: 1;
+  color: var(--text-muted);
+}
+
+.calendar-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-pill);
+  background: currentColor;
+  flex: none;
+}
+
+.calendar-mark.accent { color: var(--accent); }
+.calendar-mark.info { color: var(--info); }
+.calendar-mark.warn { color: var(--warn); }
+.calendar-mark.ok { color: var(--ok); }
+.calendar-mark.done { opacity: 0.45; }
+
+/* ----------------------------------------------------------------- themes */
+
+.theme-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.theme-swatch {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  text-align: left;
+}
+
+.theme-swatch:hover { border-color: var(--border-strong); }
+
+.theme-swatch.on {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+/*
+  The preview carries its own data-theme, so it renders in the palette it is
+  offering. `system` has no attribute and therefore inherits the current one —
+  which is exactly what choosing it would do.
+*/
+.theme-preview {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+
+.theme-bar {
+  height: 3px;
+  border-radius: var(--radius-pill);
+  background: var(--text-muted);
+}
+
+.theme-dot {
+  height: 5px;
+  width: 10px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+}
 
 .calendar-legend {
   display: flex;
@@ -127,7 +225,7 @@
 .day-detail-list {
   margin: 6px 0 0;
   padding-left: 18px;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .day-detail-list li.done { color: var(--text-faint); text-decoration: line-through; }
@@ -145,7 +243,7 @@
   border: 0;
   background: transparent;
   color: var(--text-muted);
-  font-size: 11.5px;
+  font-size: var(--text-xs);
   cursor: pointer;
 }
 
@@ -232,7 +330,7 @@
   padding: 2px 4px;
   text-align: center;
   font-variant-numeric: tabular-nums;
-  font-size: 12px;
+  font-size: var(--text-sm);
   background: transparent;
   border-color: transparent;
 }
@@ -280,7 +378,7 @@
   gap: var(--space-2);
   padding: 9px 12px;
   border-radius: var(--radius);
-  font-size: 13px;
+  font-size: var(--text-sm);
   background: var(--muted-soft);
 }
 
@@ -303,7 +401,7 @@
   gap: var(--space-3);
   padding: 4px 10px;
   border-bottom: 1px solid var(--border);
-  font-size: 12.5px;
+  font-size: var(--text-sm);
 }
 
 .timeline-row:last-child { border-bottom: 0; }
@@ -361,7 +459,7 @@
 .graph-canvas svg { display: block; }
 
 .graph-band-label {
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 650;
   fill: var(--text-muted);
   text-transform: uppercase;
@@ -369,14 +467,14 @@
 }
 
 .graph-node-kind {
-  font-size: 9.5px;
+  font-size: var(--text-xs);
   fill: var(--text-faint);
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
 
-.graph-node-name { font-size: 13px; font-weight: 600; fill: var(--text); }
-.graph-node-status { font-size: 10px; fill: var(--text-muted); }
+.graph-node-name { font-size: var(--text-sm); font-weight: 600; fill: var(--text); }
+.graph-node-status { font-size: var(--text-xs); fill: var(--text-muted); }
 
 /* Labels sit on top of the card, so they must not swallow clicks meant for it. */
 .graph-node-kind,
@@ -413,7 +511,7 @@ g:hover > .graph-port { opacity: 1; }
   padding: var(--space-2) var(--space-4);
   border-top: 1px solid var(--border);
   background: var(--bg-raised);
-  font-size: 11.5px;
+  font-size: var(--text-xs);
   color: var(--text-muted);
   flex: none;
 }
@@ -432,12 +530,12 @@ g:hover > .graph-port { opacity: 1; }
   border-bottom: 1px solid var(--border);
   background: var(--bg-raised);
   flex: none;
-  font-size: 12.5px;
+  font-size: var(--text-sm);
 }
 
 .sheet-toolbar .spacer { flex: 1; }
 .sheet-scroll { flex: 1; overflow: auto; }
-.sheet { font-size: 12.5px; }
+.sheet { font-size: var(--text-sm); }
 
 .sheet-row { display: flex; border-bottom: 1px solid var(--border); }
 
@@ -447,7 +545,7 @@ g:hover > .graph-port { opacity: 1; }
   z-index: 2;
   background: var(--bg-sunken);
   font-weight: 650;
-  font-size: 11px;
+  font-size: var(--text-xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-muted);
@@ -528,12 +626,12 @@ g:hover > .graph-port { opacity: 1; }
 
 /* ------------------------------------------------------------------ table */
 
-.table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
 
 .table th {
   padding: 5px 8px;
   text-align: left;
-  font-size: 10.5px;
+  font-size: var(--text-xs);
   font-weight: 650;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -545,7 +643,7 @@ g:hover > .graph-port { opacity: 1; }
 .table tr:last-child td { border-bottom: 0; }
 .table tbody tr:hover { background: var(--bg-hover); }
 
-.sm-select { padding: 2px 6px; font-size: 12px; }
+.sm-select { padding: 2px 6px; font-size: var(--text-sm); }
 
 .run-card {
   padding: var(--space-3);
@@ -559,7 +657,7 @@ g:hover > .graph-port { opacity: 1; }
 /* ---------------------------------------------------------------- journal */
 
 .journal-day {
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 650;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -578,10 +676,10 @@ kbd {
   padding: 1px 5px;
   border: 1px solid var(--border-strong);
   border-bottom-width: 2px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--bg-sunken);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 
 /* ------------------------------------------------------------ day groups */
@@ -604,7 +702,7 @@ kbd {
   border-bottom: 1px solid var(--border);
   background: transparent;
   font: inherit;
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   color: var(--text-muted);
   text-align: left;
   cursor: pointer;
@@ -619,7 +717,7 @@ kbd {
 
 .group-label {
   padding: 8px 8px 2px;
-  font-size: 10.5px;
+  font-size: var(--text-xs);
   font-weight: 650;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -647,7 +745,7 @@ kbd {
   border-bottom: 1px solid var(--border);
   background: var(--accent-soft);
   color: var(--accent);
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   flex: none;
 }
 
@@ -655,7 +753,7 @@ kbd {
   border: 0;
   cursor: pointer;
   font: inherit;
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 550;
 }
 
@@ -674,7 +772,7 @@ kbd {
 .flip { transform: rotate(180deg); }
 
 .graph-node-count {
-  font-size: 9px;
+  font-size: var(--text-xs);
   font-weight: 700;
   fill: var(--text-muted);
   text-anchor: middle;
@@ -682,7 +780,7 @@ kbd {
 }
 
 .graph-edge-count {
-  font-size: 9.5px;
+  font-size: var(--text-xs);
   font-weight: 700;
   fill: var(--accent);
   text-anchor: middle;

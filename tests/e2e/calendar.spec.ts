@@ -9,6 +9,12 @@
 import { createProject, expect, test } from './fixtures.ts';
 
 test.describe('planning from the calendar', () => {
+  // These pick days several ahead, and some in the next month, so they need
+  // the six-week grid rather than the week the panel now opens on.
+  test.beforeEach(async ({ h }) => {
+    await h.page.getByTestId('calendar-span-month').click();
+  });
+
   test('clicking a day opens a panel for that day', async ({ h }) => {
     const { page } = h;
     const target = await h.addDays(5);
@@ -33,7 +39,7 @@ test.describe('planning from the calendar', () => {
 
     // It appears in the day panel, in the calendar cell, and in Coming up.
     await expect(page.getByTestId('day-events')).toContainText('Book the rheometer');
-    await expect(page.getByTestId(`day-${target}`)).toContainText('Book the rheometer');
+    await expect(page.getByTestId(`day-${target}`).locator('.calendar-mark')).toHaveAttribute('title', /Book the rheometer/);
     await expect(page.getByTestId('upcoming-panel')).toContainText('Book the rheometer');
 
     // But not on today, because that is not what you said.
@@ -77,11 +83,11 @@ test.describe('planning from the calendar', () => {
     await page.getByTestId(`day-${target}`).click();
     await page.getByTestId('day-add-task').fill('Maybe not');
     await page.getByTestId('day-add-task').press('Enter');
-    await expect(page.getByTestId(`day-${target}`)).toContainText('Maybe not');
+    await expect(page.getByTestId(`day-${target}`).locator('.calendar-mark')).toHaveAttribute('title', /Maybe not/);
 
     // Both the day panel and Coming up offer this; use the one in front of you.
     await page.getByTestId('day-panel').getByRole('button', { name: 'Unplan Maybe not' }).click();
-    await expect(page.getByTestId(`day-${target}`)).not.toContainText('Maybe not');
+    await expect(page.getByTestId(`day-${target}`).locator('.calendar-mark[title*="Maybe not"]')).toHaveCount(0);
     await expect(page.getByTestId('upcoming-panel')).not.toContainText('Maybe not');
   });
 
@@ -98,7 +104,7 @@ test.describe('planning from the calendar', () => {
     await page.getByTestId('detail-planned').fill(target);
 
     await page.getByTestId('nav-home').click();
-    await expect(page.getByTestId(`day-${target}`)).toContainText('Calibrate the load cell');
+    await expect(page.getByTestId(`day-${target}`).locator('.calendar-mark')).toHaveAttribute('title', /Calibrate the load cell/);
 
     await page.getByTestId(`day-${target}`).click();
     await expect(page.getByTestId('day-events')).toContainText('Calibrate the load cell');
@@ -126,7 +132,10 @@ test.describe('planning from the calendar', () => {
 
     await page.getByTestId('day-add-task').fill('Next month task');
     await page.getByTestId('day-add-task').press('Enter');
-    await expect(page.getByTestId(target!)).toContainText('Next month task');
+    await expect(page.getByTestId(target!).locator('.calendar-mark')).toHaveAttribute(
+      'title',
+      /Next month task/,
+    );
 
     // Paging did not lose the month you were on.
     await expect(page.getByTestId('calendar-month')).toHaveText(label!);
@@ -148,7 +157,7 @@ test.describe('planning from the calendar', () => {
     await page.getByTestId('day-add-task').press('Enter');
 
     await page.reload();
-    await expect(page.getByTestId(`day-${target}`)).toContainText('Persisted plan');
+    await expect(page.getByTestId(`day-${target}`).locator('.calendar-mark')).toHaveAttribute('title', /Persisted plan/);
   });
 
   test('undo removes a day plan', async ({ h }) => {
@@ -157,10 +166,10 @@ test.describe('planning from the calendar', () => {
     await page.getByTestId(`day-${target}`).click();
     await page.getByTestId('day-add-task').fill('Undo me');
     await page.getByTestId('day-add-task').press('Enter');
-    await expect(page.getByTestId(`day-${target}`)).toContainText('Undo me');
+    await expect(page.getByTestId(`day-${target}`).locator('.calendar-mark')).toHaveAttribute('title', /Undo me/);
 
     await page.getByTestId('undo').click();
-    await expect(page.getByTestId(`day-${target}`)).not.toContainText('Undo me');
+    await expect(page.getByTestId(`day-${target}`).locator('.calendar-mark[title*="Undo me"]')).toHaveCount(0);
   });
 
   test('the calendar shows it can take something', async ({ h }) => {

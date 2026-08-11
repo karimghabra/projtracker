@@ -9,6 +9,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type React from 'react';
 import { formatRelativeDay, MONTH_NAMES, WEEKDAY_NAMES, weekdayIndex } from '../core/dates.ts';
 import { useApp } from './state/store.ts';
+import { THEMES, applyTheme, isDark, nextTheme, storedTheme } from './themes.ts';
 import { Toasts } from './components/ui.tsx';
 import {
   IconChevronLeft,
@@ -65,7 +66,7 @@ function readHash(): ViewName {
 export function AppShell() {
   const { app, run } = useApp();
   const [view, setView] = useState<ViewName>(readHash);
-  const [theme, setTheme] = useState(() => document.documentElement.dataset['theme'] ?? 'system');
+  const [theme, setTheme] = useState(storedTheme);
   const [showSettings, setShowSettings] = useState(false);
   const [showBackup, setShowBackup] = useState(false);
   const [collapsed, setCollapsed] = useState(
@@ -134,10 +135,9 @@ export function AppShell() {
   }, [go, run]);
 
   const cycleTheme = () => {
-    const next = theme === 'dark' ? 'light' : 'dark';
+    const next = nextTheme(theme);
     setTheme(next);
-    document.documentElement.dataset['theme'] = next;
-    window.localStorage.setItem('protracker:theme', next);
+    applyTheme(next);
   };
 
   const today = app.today;
@@ -247,10 +247,11 @@ export function AppShell() {
           <button
             className="btn ghost icon"
             onClick={cycleTheme}
-            title="Switch theme"
+            title={`Theme: ${THEMES.find((t) => t.id === theme)?.name ?? theme}. Click for the next one.`}
             aria-label="Switch theme"
+            data-testid="cycle-theme"
           >
-            {theme === 'dark' ? <IconSun /> : <IconMoon />}
+            {isDark(theme) ? <IconSun /> : <IconMoon />}
           </button>
         </header>
 

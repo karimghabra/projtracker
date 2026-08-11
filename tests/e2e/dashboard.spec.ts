@@ -11,17 +11,19 @@
 import { createProject, expect, test } from './fixtures.ts';
 
 test.describe('the calendar can be smaller, or absent', () => {
-  test('shows six weeks by default and one week on request', async ({ h }) => {
+  test('shows one week by default and six on request', async ({ h }) => {
     const { page } = h;
     const cells = page.locator('.calendar-day');
 
-    await expect(cells).toHaveCount(42);
-
-    await page.getByTestId('calendar-span-week').click();
+    // A week by default: a month cell is too narrow to say what is in it, and
+    // this panel is here to be read at a glance.
     await expect(cells).toHaveCount(7);
 
     await page.getByTestId('calendar-span-month').click();
     await expect(cells).toHaveCount(42);
+
+    await page.getByTestId('calendar-span-week').click();
+    await expect(cells).toHaveCount(7);
   });
 
   test('a week can be turned off entirely, and the panel keeps its head', async ({ h }) => {

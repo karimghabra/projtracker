@@ -37,7 +37,10 @@ export function HomeScreen({ onNavigate }: { onNavigate: (view: ViewName) => voi
   const { app } = useApp();
   const [pickedDay, setPickedDay] = useState<string | null>(null);
   const [calendarSpan, setCalendarSpan] = useState<'off' | CalendarSpan>(
-    () => (window.localStorage.getItem('protracker:calendar') as 'off' | CalendarSpan) ?? 'month',
+    // Week by default: a month cell is too narrow to say what is in it, and
+    // the point of having the calendar on this screen is reading it at a
+    // glance rather than clicking into a day to find out.
+    () => (window.localStorage.getItem('protracker:calendar') as 'off' | CalendarSpan) ?? 'week',
   );
   const hasProjects = app.tree().length > 0;
 

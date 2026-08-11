@@ -5,6 +5,7 @@ import './components.css';
 import { AppShell } from './AppShell.tsx';
 import { UiStore, initStore } from './state/store.ts';
 import { chooseVault } from './state/vault.ts';
+import { applyTheme, storedTheme } from './themes.ts';
 
 const choice = chooseVault();
 const store = new UiStore(choice.vault, choice.location);
@@ -22,10 +23,8 @@ initStore(store);
 };
 
 // Theme is remembered across launches; the system preference is the default.
-const stored = window.localStorage.getItem('protracker:theme');
-if (stored === 'light' || stored === 'dark') {
-  document.documentElement.dataset['theme'] = stored;
-}
+// Applied before the first render so the app never flashes the wrong palette.
+applyTheme(storedTheme());
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

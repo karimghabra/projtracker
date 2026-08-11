@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { useApp } from '../state/store.ts';
 import { Modal } from '../components/ui.tsx';
+import { THEMES, applyTheme, storedTheme } from '../themes.ts';
 
 export function SettingsDialog({
   onClose,
@@ -9,6 +11,7 @@ export function SettingsDialog({
   onBackup: () => void;
 }) {
   const { app, store } = useApp();
+  const [theme, setTheme] = useState(storedTheme);
   const state = app.state;
   // Absent in the browser build, which has no filesystem to point anywhere.
   const bridge = window.protracker;
@@ -108,6 +111,39 @@ export function SettingsDialog({
           >
             Back up, sync or restore…
           </button>
+        </div>
+      </div>
+
+      <hr className="sep" />
+
+      <div className="field">
+        <label>Theme</label>
+        <span className="hint">
+          Applies straight away, and is remembered. The status colours mean the same thing in all
+          of them — green is done, amber is waiting, blue is in progress.
+        </span>
+        <div className="theme-grid" data-testid="theme-picker">
+          {THEMES.map((entry) => (
+            <button
+              key={entry.id}
+              className={entry.id === theme ? 'theme-swatch on' : 'theme-swatch'}
+              aria-pressed={entry.id === theme}
+              data-testid={`theme-${entry.id}`}
+              title={entry.note}
+              onClick={() => {
+                setTheme(entry.id);
+                applyTheme(entry.id);
+              }}
+            >
+              {/* The preview paints itself in the theme it offers, so the row
+                  is a set of samples rather than a list of words. */}
+              <span className="theme-preview" data-theme={entry.id === 'system' ? undefined : entry.id}>
+                <span className="theme-bar" />
+                <span className="theme-dot" />
+              </span>
+              {entry.name}
+            </button>
+          ))}
         </div>
       </div>
 
