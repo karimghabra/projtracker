@@ -43,8 +43,41 @@ const LEVELS = [
   { id: 'all', label: 'Everything', openTo: 99 },
 ] as const;
 
-/** The default: open down to tasks, because this screen is the work editor. */
-const DEFAULT_LEVEL = 3;
+/**
+ * The default: milestones, and no further.
+ *
+ * This screen is the work editor, which argued for opening down to tasks — and
+ * that holds right up until the board is real. Five projects and two hundred
+ * tasks is thirteen screens of scroll, most of it finished work, with the fifth
+ * project eleven screens down. Landing folded and opening what you want is the
+ * right way round once a tree grows, and the level you choose is remembered so
+ * anyone who wants everything says so once.
+ */
+const DEFAULT_LEVEL = 1;
+const LEVEL_KEY = 'protracker:treeLevel';
+const HIDE_DONE_KEY = 'protracker:treeHideDone';
+
+function storedLevel(): number {
+  // Read as a string first: Number(null) is 0, which is a perfectly valid
+  // level, so coercing before the null check silently pins a fresh install to
+  // "Projects" instead of the default.
+  const raw = window.localStorage.getItem(LEVEL_KEY);
+  if (raw === null) return DEFAULT_LEVEL;
+  const index = Number(raw);
+  return Number.isInteger(index) && index >= 0 && index < LEVELS.length ? index : DEFAULT_LEVEL;
+}
+
+/**
+ * Finished work, dropped from the tree entirely.
+ *
+ * A done container has every child done, so removing it removes the subtree and
+ * nothing open is ever hidden by accident.
+ */
+function withoutFinished(nodes: TreeNode[]): TreeNode[] {
+  return nodes
+    .filter((node) => node.derived !== 'done')
+    .map((node) => ({ ...node, children: withoutFinished(node.children) }));
+}
 
 /**
  * A bulk expand or collapse. The nonce is what makes pressing the same button
@@ -79,18 +112,25 @@ export function ProjectsScreen({
   }, [selectId, onSelectionUsed]);
   const [wizard, setWizard] = useState(false);
   const [importing, setImporting] = useState(false);
-  const [level, setLevel] = useState(DEFAULT_LEVEL);
-  const [bulk, setBulk] = useState<Bulk>({ openTo: LEVELS[DEFAULT_LEVEL]!.openTo, nonce: 0 });
-  const tree = app.tree();
+  const [level, setLevel] = useState(storedLevel);
+  const [bulk, setBulk] = useState<Bulk>(() => ({ openTo: LEVELS[storedLevel()]!.openTo, nonce: 0 }));
+  const [hideDone, setHideDone] = useState(
+    () => window.localStorage.getItem(HIDE_DONE_KEY) === 'yes',
+  );
+  const full = app.tree();
+  const tree = hideDone ? withoutFinished(full) : full;
 
   const showTo = (index: number) => {
     setLevel(index);
+    window.localStorage.setItem(LEVEL_KEY, String(index));
     setBulk({ openTo: LEVELS[index]!.openTo, nonce: bulk.nonce + 1 });
   };
 
   const selectedNode = selected && app.state.nodes[selected] ? app.node(selected) : null;
 
-  if (tree.length === 0) {
+  // `full`, not `tree`: hiding every finished project is not the same as
+  // having none, and the get-started prompt would be a lie.
+  if (full.length === 0) {
     return (
       <>
         <Empty
@@ -137,6 +177,20 @@ export function ProjectsScreen({
               </button>
             ))}
           </div>
+          <label className="inline nowrap faint" style={{ gap: 5 }}>
+            <input
+              type="checkbox"
+              className="check"
+              checked={hideDone}
+              data-testid="tree-hide-done"
+              onChange={(event) => {
+                const next = event.target.checked;
+                setHideDone(next);
+                window.localStorage.setItem(HIDE_DONE_KEY, next ? 'yes' : 'no');
+              }}
+            />
+            Hide finished
+          </label>
           <span className="spacer" />
           <ExportButton />
           <ImportButton onOpen={() => setImporting(true)} />
@@ -243,10 +297,17 @@ function TreeRow({
           }}
         />
 
-        <span className={`chip kind-chip ${node.kind === 'experiment' ? 'info' : ''}`}>
-          {node.kind === 'experiment' ? <IconFlask size={10} /> : null}
-          {node.kind}
-        </span>
+        {/*
+          Indentation already says what kind a row is, and repeating it three
+          hundred times says it again in the most expensive place on the screen.
+          An experiment is the one distinction the shape does not carry, so it
+          keeps a mark — an icon rather than a word.
+        */}
+        {node.kind === 'experiment' && (
+          <span className="chip kind-chip info" title="Experiment">
+            <IconFlask size={10} />
+          </span>
+        )}
 
         <span className="grow" style={{ minWidth: 0 }}>
           <InlineEdit
@@ -262,7 +323,9 @@ function TreeRow({
             <ProgressBar done={node.progress.done} total={node.progress.total} />
           </span>
         )}
-        <HealthChip health={node.health} />
+        {/* Health describes work in flight. On something already finished it is
+            a second badge carrying no second fact. */}
+        {node.derived !== 'done' && <HealthChip health={node.health} />}
         <StatusChip status={node.derived} />
 
         <span className="tree-actions" onClick={(event) => event.stopPropagation()}>

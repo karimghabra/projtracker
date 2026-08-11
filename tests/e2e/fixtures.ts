@@ -22,6 +22,17 @@ export const test = base.extend<{ h: Harness }>({
   h: async ({ page }, use, testInfo) => {
     const namespace = `t${Date.now()}-${counter++}-${testInfo.workerIndex}`;
 
+    /*
+      The project tree opens to milestones and remembers what you last chose.
+      Most specs here were written against a fully expanded tree and are about
+      something else entirely — renaming, planning, the notebook — so they say
+      "expanded" out loud rather than riding on whatever the default happens to
+      be. Specs that are about the default set it themselves.
+    */
+    await page.addInitScript(() => {
+      window.localStorage.setItem('protracker:treeLevel', '3');
+    });
+
     const harness: Harness = {
       page,
       async goto(view = 'home') {
