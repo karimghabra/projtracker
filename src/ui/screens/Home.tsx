@@ -38,10 +38,15 @@ export function HomeScreen({ onNavigate }: { onNavigate: (view: ViewName) => voi
   const { app } = useApp();
   const [pickedDay, setPickedDay] = useState<string | null>(null);
   const [calendarSpan, setCalendarSpan] = useState<'off' | CalendarSpan>(
-    // Week by default: a month cell is too narrow to say what is in it, and
-    // the point of having the calendar on this screen is reading it at a
-    // glance rather than clicking into a day to find out.
-    () => (window.localStorage.getItem('protracker:calendar') as 'off' | CalendarSpan) ?? 'week',
+    /*
+      Month by default, still. Switching to the week was the obvious answer to
+      cells too narrow for text, and it is wrong: this panel is half the screen
+      wide, so a week is seven columns of about seventy pixels and truncates
+      exactly as badly. Now that the month counts by kind instead of clipping
+      titles, it is the better of the two — same legibility, five times the
+      span. The week keeps its text, and its narrowness, for anyone who wants it.
+    */
+    () => (window.localStorage.getItem('protracker:calendar') as 'off' | CalendarSpan) ?? 'month',
   );
   const hasProjects = app.tree().length > 0;
 

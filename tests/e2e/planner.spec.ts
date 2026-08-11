@@ -112,10 +112,12 @@ test.describe('planning ahead', () => {
     await page.getByTestId('detail-planned').fill(target);
 
     await page.getByTestId('nav-home').click();
-    // Only assert when the target is still in this month's grid.
+    // Only assert when the target is still in this month's grid. The month
+    // marks each day by kind rather than printing titles that will not fit, so
+    // the title is on the mark.
     const cell = page.getByTestId(`day-${target}`);
     if (await cell.count()) {
-      await expect(cell).toContainText('Calendar task');
+      await expect(cell.locator('.calendar-mark')).toHaveAttribute('title', /Calendar task/);
     }
   });
 });
