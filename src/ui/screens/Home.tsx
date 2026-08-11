@@ -9,6 +9,7 @@
 import { useState } from 'react';
 import { formatDayMonth, formatRelativeDay } from '../../core/dates.ts';
 import { formatOffset } from '../../core/protocols.ts';
+import { BATCH_STATES, isTerminalState } from '../../core/model.ts';
 import type { CalendarSpan, TodayItemView } from '../../commands/views.ts';
 import { useApp } from '../state/store.ts';
 import { Calendar, DayPanel } from '../components/Calendar.tsx';
@@ -101,6 +102,7 @@ export function HomeScreen({ onNavigate }: { onNavigate: (view: ViewName) => voi
 
         <UpcomingPanel />
         <ExperimentsPanel />
+        <ScaffoldsPanel onNavigate={onNavigate} />
         <CapturePanel />
         <ProgressPanel empty={!hasProjects} />
       </div>
@@ -840,6 +842,69 @@ function ProgressPanel({ empty }: { empty: boolean }) {
           ))}
         </div>
 
+      </div>
+    </section>
+  );
+}
+
+// -------------------------------------------------------------- scaffolds
+
+/**
+ * What is in the fabrication pipeline, and which stage it is at.
+ *
+ * Grouped by stage rather than by batch, because the question this answers is
+ * "what is crosslinking right now" — you are standing in the lab deciding what
+ * to touch, not auditing an inventory. Terminal stages are left out: consumed
+ * and discarded are not pipeline, they are history.
+ */
+function ScaffoldsPanel({ onNavigate }: { onNavigate: (view: ViewName) => void }) {
+  const { app } = useApp();
+  const inventory = app.inventory();
+
+  const live = inventory.batches.filter((batch) => !isTerminalState(batch.state));
+  if (!live.length) return null;
+
+  const stages: { state: string; count: number; items: string[] }[] = [];
+  for (const batch of live) {
+    const found = stages.find((stage) => stage.state === batch.state);
+    const label = `${batch.count} × ${batch.typeName}`;
+    if (found) {
+      found.count += batch.count;
+      found.items.push(label);
+    } else {
+      stages.push({ state: batch.state, count: batch.count, items: [label] });
+    }
+  }
+  // The suggested order first, so the panel reads the way the work flows;
+  // anything the lab invented for itself follows.
+  const rank = (state: string) => {
+    const at = BATCH_STATES.indexOf(state);
+    return at === -1 ? BATCH_STATES.length : at;
+  };
+  stages.sort((a, b) => rank(a.state) - rank(b.state) || a.state.localeCompare(b.state));
+
+  return (
+    <section className="panel" data-testid="scaffolds-panel">
+      <div className="panel-head">
+        <IconFlask size={15} />
+        <h2>In the pipeline</h2>
+        <span className="spacer" />
+        <button className="btn ghost sm" onClick={() => onNavigate('inventory')}>
+          Scaffolds
+        </button>
+      </div>
+      <div className="panel-body tight">
+        <div className="list">
+          {stages.map((stage) => (
+            <div className="row" key={stage.state} data-testid={`pipeline-${stage.state}`}>
+              <div className="grow" style={{ minWidth: 0 }}>
+                <div className="row-title">{stage.state}</div>
+                <div className="row-sub">{stage.items.join(', ')}</div>
+              </div>
+              <span className="chip">{stage.count}</span>
+            </div>
+          ))}
+        </div>
       </div>
     </section>
   );
