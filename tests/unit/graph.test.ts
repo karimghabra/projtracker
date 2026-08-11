@@ -112,11 +112,19 @@ describe('blocking flows through containers', () => {
   it('rolls completion up but never marks an empty container done', () => {
     const h = harness();
     const project = h.app.addProject('P').id;
+
+    // Nothing in it at all: no work to count, and emphatically not finished.
+    expect(isDone(buildIndex(h.app.state), project)).toBe(false);
+    expect(progressOf(buildIndex(h.app.state), project)).toBeNull();
+
     const m = h.app.addNode(project, 'M', { seq: 1 }).id;
     const g = h.app.addNode(m, 'G', { seq: 1 }).id;
 
     expect(isDone(buildIndex(h.app.state), project)).toBe(false);
-    expect(progressOf(buildIndex(h.app.state), project)).toBeNull();
+    // A goal that was never broken down is still a unit of work, so it counts
+    // as one and reads as undone — rather than vanishing from the tally, which
+    // is what let a milestone of empty goals wait for nothing forever.
+    expect(progressOf(buildIndex(h.app.state), project)).toEqual({ done: 0, total: 1 });
 
     const t1 = h.app.addNode(g, 'T1', { seq: 1 }).id;
     const t2 = h.app.addNode(g, 'T2', { seq: 2 }).id;
@@ -141,6 +149,24 @@ describe('blocking flows through containers', () => {
     // And it goes back, the same way a task does.
     h.app.reopen(g);
     expect(isDone(buildIndex(h.app.state), g)).toBe(false);
+  });
+
+  it('rolls a milestone up from goals that hold no tasks', () => {
+    const h = harness();
+    const project = h.app.addProject('P').id;
+    const m = h.app.addNode(project, 'M', { seq: 1 }).id;
+    const g1 = h.app.addNode(m, 'G1', { seq: 1 }).id;
+    const g2 = h.app.addNode(m, 'G2', { seq: 2 }).id;
+
+    h.app.complete(g1);
+    expect(isDone(buildIndex(h.app.state), m)).toBe(false);
+    expect(progressOf(buildIndex(h.app.state), m)).toEqual({ done: 1, total: 2 });
+
+    // The milestone is finished by its contents even when those contents are
+    // goals rather than tasks. It must not need a statement of its own.
+    h.app.complete(g2);
+    expect(isDone(buildIndex(h.app.state), m)).toBe(true);
+    expect(isDone(buildIndex(h.app.state), project)).toBe(true);
   });
 
   it('stops completing directly the moment the goal gains a task', () => {
