@@ -63,9 +63,16 @@ test.describe('importing a workbook', () => {
     });
     await page.getByTestId('confirm-import').click();
 
+    // The kind is read off the row's own label rather than a chip: the tree
+    // stopped printing "goal" three hundred times, and what the import
+    // actually has to get right is the kind of thing it created.
     const tree = page.getByTestId('tree');
-    await expect(tree.locator('.tree-row', { hasText: 'CAD design' }).first()).toContainText('goal');
-    await expect(tree.locator('.tree-row', { hasText: 'Draft geometry' }).first()).toContainText('task');
+    await expect(
+      tree.locator('.tree-row', { hasText: 'CAD design' }).first().getByLabel(/^Name of goal:/),
+    ).toBeVisible();
+    await expect(
+      tree.locator('.tree-row', { hasText: 'Draft geometry' }).first().getByLabel(/^Name of task:/),
+    ).toBeVisible();
   });
 
   test('strikethrough came in as done, and the order still gates', async ({ h }) => {
