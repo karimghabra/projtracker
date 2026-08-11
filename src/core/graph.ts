@@ -291,11 +291,27 @@ function statementReachability(index: GraphIndex): Reachability {
 // ---------------------------------------------------------------- rollup
 
 /**
+ * Whether this node's own status is what says it is finished.
+ *
+ * True for every leaf, and for a container with no work inside it. A goal you
+ * scaffolded and then delivered without ever itemising has nothing to be
+ * finished *by*, so the only statement available is its own — and without this
+ * it could never be marked done at all.
+ */
+export function completesDirectly(index: GraphIndex, id: NodeId): boolean {
+  const node = index.state.nodes[id];
+  if (!node) return false;
+  if (!isContainerKind(node.kind)) return true;
+  return leavesOf(index, id).every((n) => n.status === 'dropped');
+}
+
+/**
  * Whether a node counts as finished.
  *
- * A leaf is done when it says so. A container is done when it has at least one
- * non-dropped descendant leaf and every one of them is done — an empty project
- * is *not* done, because a project you just created must not read as complete.
+ * A leaf is done when it says so. A container with work inside it is done when
+ * every non-dropped leaf is — and a container with nothing inside falls back to
+ * its own status, which is `active` on anything freshly created, so a project
+ * you just made still does not read as complete.
  */
 export function isDone(index: GraphIndex, id: NodeId): boolean {
   const node = index.state.nodes[id];
@@ -303,7 +319,7 @@ export function isDone(index: GraphIndex, id: NodeId): boolean {
   if (!isContainerKind(node.kind)) return node.status === 'done';
 
   const leaves = leavesOf(index, id).filter((n) => n.status !== 'dropped');
-  if (leaves.length === 0) return false;
+  if (leaves.length === 0) return node.status === 'done';
   return leaves.every((n) => n.status === 'done');
 }
 
@@ -320,10 +336,16 @@ export function leavesOf(index: GraphIndex, id: NodeId): Node[] {
   return out;
 }
 
-/** Fraction complete, ignoring dropped work. Returns null when there is nothing to count. */
+/**
+ * Fraction complete, ignoring dropped work. Null when there is nothing to
+ * count — except for a container the user has explicitly closed, which counts
+ * as the one thing it is, so that finishing it registers somewhere.
+ */
 export function progressOf(index: GraphIndex, id: NodeId): { done: number; total: number } | null {
   const leaves = leavesOf(index, id).filter((n) => n.status !== 'dropped');
-  if (leaves.length === 0) return null;
+  if (leaves.length === 0) {
+    return index.state.nodes[id]?.status === 'done' ? { done: 1, total: 1 } : null;
+  }
   return { done: leaves.filter((n) => n.status === 'done').length, total: leaves.length };
 }
 

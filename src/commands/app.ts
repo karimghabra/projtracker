@@ -38,7 +38,7 @@ import {
   resolveNode,
   uniqueSlug,
 } from '../core/model.ts';
-import { buildIndex, isDone, wouldCreateCycle } from '../core/graph.ts';
+import { buildIndex, completesDirectly, isDone, wouldCreateCycle } from '../core/graph.ts';
 import type { GraphIndex } from '../core/graph.ts';
 import { emptyExperiment, stagesOf, validateExperiment } from '../core/experiments.ts';
 import { isRunComplete, scheduleRun } from '../core/protocols.ts';
@@ -592,7 +592,7 @@ export class App {
     if (!when.trim()) {
       return node.status === 'done' ? this.reopen(id) : { ok: true, message: 'Not completed.' };
     }
-    if (isContainerKind(node.kind)) {
+    if (isContainerKind(node.kind) && !completesDirectly(this.index, id)) {
       throw notAllowed(`A ${node.kind} completes when everything inside it does.`);
     }
 
@@ -723,7 +723,7 @@ export class App {
   complete(id: NodeId, when?: string): Delta & { unblocked: string[] } {
     const node = this.state.nodes[id];
     if (!node) throw notFound('node', id);
-    if (isContainerKind(node.kind)) {
+    if (isContainerKind(node.kind) && !completesDirectly(this.index, id)) {
       throw notAllowed(
         `A ${node.kind} completes when everything inside it does — tick its tasks instead.`,
       );
