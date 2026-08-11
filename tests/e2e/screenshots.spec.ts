@@ -37,12 +37,22 @@ test.describe('screenshots', () => {
       ],
     });
 
-    // Some work actually done, so nothing looks like a fresh install.
-    await page.getByTestId('ready-panel').getByRole('button', { name: /Add Draft geometry/ }).click();
-    await page.getByRole('checkbox', { name: /Complete Draft geometry/ }).check();
-    await page.getByTestId('ready-panel').getByRole('button', { name: /Add Peer review/ }).click();
-    await page.getByTestId('ready-panel').getByRole('button', { name: /Add Order FBS/ }).click();
-    await page.getByRole('button', { name: /Start Order FBS/ }).click();
+    /*
+      Some work actually done, so nothing looks like a fresh install. Driven
+      through the app handle rather than the ready panel: the pool is a
+      navigator now, and what this spec is about is how a populated board
+      photographs, not how many clicks it took to populate it.
+    */
+    await page.evaluate(() => {
+      const pt = (window as unknown as { __pt: { app: any; run: (fn: (a: any) => unknown) => void } }).__pt;
+      const find = (name: string) =>
+        Object.values(pt.app.state.nodes).find((n: any) => n.name === name) as any;
+      pt.run((a) => a.todayAdd(find('Draft geometry').id));
+      pt.run((a) => a.complete(find('Draft geometry').id));
+      pt.run((a) => a.todayAdd(find('Peer review').id));
+      pt.run((a) => a.todayAdd(find('Order FBS').id));
+      pt.run((a) => a.start(find('Order FBS').id));
+    });
 
     await page.getByLabel('Add a task to today').fill('Chase the PO with purchasing #admin');
     await page.getByRole('button', { name: 'Add', exact: true }).click();

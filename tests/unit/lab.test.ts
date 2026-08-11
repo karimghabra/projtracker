@@ -75,7 +75,7 @@ describe('experiment timelines', () => {
 });
 
 describe('experiments in the app', () => {
-  it('puts every stage into the calendar and the to-do list', () => {
+  it('puts every stage on the calendar, and none of them on the to-do list', () => {
     const h = harness('2026-08-03T08:00');
     const b = sampleBoard(h);
     h.app.setExperiment(b.experiment, {
@@ -87,14 +87,16 @@ describe('experiments in the app', () => {
       endpoint: 'Harvest for qPCR',
     });
 
-    // Seeding day: the reminder is on today's list without anyone adding it.
-    // The row carries the step; the experiment's name is the group heading, so
-    // a dozen stages do not repeat it a dozen times.
-    const [row] = h.app.todayList().items;
-    expect(row!.title).toBe('Seed 12 samples');
-    expect(row!.group).toMatchObject({ label: 'Osteogenic culture' });
+    // A culture's schedule is not a to-do list. These stages describe what is
+    // happening to the culture, and in a lab with more than one pair of hands
+    // they are often not happening at yours — so seeding day does not silently
+    // become a task assigned to you.
+    expect(h.app.todayList().items).toEqual([]);
 
-    // The endpoint shows on the calendar for its month.
+    // They are on the calendar, which is where a schedule belongs. Seeding day
+    // and the endpoint both.
+    const seedDay = h.app.calendar('2026-08-03').find((d) => d.date === '2026-08-03');
+    expect(seedDay!.events.some((e) => e.title.includes('Seed 12 samples'))).toBe(true);
     const endDay = h.app.calendar('2026-08-17').find((d) => d.date === '2026-08-17');
     expect(endDay!.events.some((e) => e.kind === 'experiment-end')).toBe(true);
   });
@@ -104,7 +106,9 @@ describe('experiments in the app', () => {
     const b = sampleBoard(h);
     h.app.setExperiment(b.experiment, { sampleCount: 6, seedingDate: '2026-08-03', durationDays: 7 });
 
-    const reminderId = h.app.todayList().items[0]!.id;
+    // Reached through the experiment rather than the day's list, which is no
+    // longer where a culture's stages appear.
+    const reminderId = h.app.state.reminders.find((r) => r.source.kind === 'experiment')!.id;
     h.app.completeReminder(reminderId);
     expect(h.app.node(b.experiment).experiment!.def.stagesDone).toContain('seed');
 
@@ -161,8 +165,9 @@ describe('an experiment that belongs to no project', () => {
     h.app.setExperiment(id, { sampleCount: 6, seedingDate: '2026-08-03', durationDays: 14 });
 
     expect(h.app.node(id).experiment!.endsOn).toBe('2026-08-17');
-    // And its stages are on the day's list, exactly as a filed one's would be.
-    expect(h.app.todayList().items.some((i) => i.title.includes('Seed'))).toBe(true);
+    // And its stages are on the calendar, exactly as a filed one's would be.
+    const day = h.app.calendar('2026-08-03').find((d) => d.date === '2026-08-03');
+    expect(day!.events.some((e) => e.title.includes('Seed'))).toBe(true);
   });
 
   it('survives a reload, in a file of its own', () => {
