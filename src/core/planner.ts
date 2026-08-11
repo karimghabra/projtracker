@@ -27,6 +27,24 @@ import { derivedStatus, isDone } from './graph.ts';
 
 export type TodaySource = 'listed' | 'planned' | 'reminder' | 'rolled-over';
 
+/**
+ * Whether missing this one's day is the end of it.
+ *
+ * The same distinction the sequence graph already draws between an order you
+ * set and an order we guessed: a statement outranks a guess. Applied to dates,
+ * one you typed is a commitment and stays owed; one the app worked out from a
+ * culture's schedule is a prediction, and a prediction that has passed is not a
+ * debt. There is no version of tomorrow in which day 7's media change gets done.
+ *
+ * Protocol steps are deliberately not included. A run is a procedure in flight
+ * — the scaffolds are in the solution right now — so a wash missed at 13:00
+ * yesterday is still a wash that has to happen, and it keeps rolling forward.
+ * That is a different kind of lateness from a culture that has moved on.
+ */
+export function expiresWithItsDay(reminder: Reminder): boolean {
+  return reminder.source.kind === 'experiment';
+}
+
 export interface TodayItem {
   /** `node:<id>` or `reminder:<id>` — unique within a day's list. */
   key: string;
@@ -96,11 +114,20 @@ export function todayItems(state: State, index: GraphIndex, date: DateOnly): Tod
   }
 
   // Reminders that have come due, including multi-day ones still in their span
-  // — and anything that came due earlier and was never dealt with.
+  // — and anything you set that came due earlier and was never dealt with.
   //
-  // A protocol step missed at 13:00 yesterday must not disappear at midnight.
-  // Nothing dated is allowed to vanish silently; overdue items roll forward
-  // the same way unfinished tasks do, and say how late they are.
+  // A protocol step missed at 13:00 yesterday must not disappear at midnight:
+  // the scaffolds are in the solution now and the wash still has to happen.
+  //
+  // A culture's media change is not that. It is a prediction the app made from
+  // "every three days", and if it did not happen on the 14th it did not happen
+  // — there is no version of tomorrow in which the 14th's media change gets
+  // done. Ten identical rows claiming you are a month late for something nobody
+  // can do is not a record of anything; it buries the four you can still act on.
+  //
+  // The missed ones are not discarded. They stay on the calendar and are counted
+  // against their experiment, where "this culture missed three media changes" is
+  // a fact worth knowing.
   for (const reminder of state.reminders) {
     // A reminder ticked today stays on the list, struck through. Ticking a box
     // should look like progress; having the row vanish looks like a mistake.
@@ -111,10 +138,12 @@ export function todayItems(state: State, index: GraphIndex, date: DateOnly): Tod
 
     if (day < start) continue;
     const late = day - end;
-    // A reminder given an explicit span is saying "show me on these days" —
-    // a conference that is over is over. Everything else is a thing to be
-    // done, and rolls forward until it is.
-    const expires = reminder.spanDays !== undefined && reminder.spanDays > 1;
+    // A reminder given an explicit span is saying "show me on these days" — a
+    // conference that is over is over. A generated one expires for the same
+    // reason: its day was the whole of its claim. What you typed yourself rolls
+    // forward until you deal with it.
+    const expires =
+      (reminder.spanDays !== undefined && reminder.spanDays > 1) || expiresWithItsDay(reminder);
     if (late > 0 && (reminder.done || expires)) continue;
 
     const key = `reminder:${reminder.id}`;
@@ -169,6 +198,21 @@ export function todayItems(state: State, index: GraphIndex, date: DateOnly): Tod
 /** What the user still has to do today, for a count on a badge. */
 export function openCount(items: TodayItem[]): number {
   return items.filter((i) => !i.done).length;
+}
+
+/**
+ * Generated events for one node whose day went by without them being ticked.
+ *
+ * The counterpart to letting them expire off Today: they stop being a debt but
+ * they do not stop being true, and a culture that missed three media changes is
+ * a culture you should look at.
+ */
+export function missedFor(state: State, nodeId: string, today: DateOnly): Reminder[] {
+  const day = dayNumber(today);
+  return state.reminders
+    .filter((r) => r.nodeId === nodeId && expiresWithItsDay(r) && !r.done)
+    .filter((r) => dayNumber(r.date) + Math.max(0, (r.spanDays ?? 1) - 1) < day)
+    .sort((a, b) => (a.date < b.date ? -1 : 1));
 }
 
 /**
