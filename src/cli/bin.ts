@@ -22,6 +22,7 @@ import { readBackupFile, readWorkbookFile } from '../store/excel.ts';
 import { exportWorkbook } from '../store/excelExport.ts';
 import { APP_VERSION } from '../core/version.ts';
 import { NodeVault } from '../store/nodeVault.ts';
+import { holdsVault } from '../desktop/vaultLocation.ts';
 
 const HELP = `protracker — a lab project tracker
 
@@ -118,9 +119,33 @@ function parseArgs(argv: string[]): Args {
   return { positional, flags };
 }
 
-function vaultPath(flags: Args['flags']): string {
-  if (typeof flags['vault'] === 'string') return flags['vault'];
-  return process.env['PROTRACKER_VAULT'] ?? join(homedir(), '.protracker', 'vault');
+interface VaultChoice {
+  path: string;
+  /** How we arrived at it, which is what makes a warning worth printing. */
+  source: 'flag' | 'env' | 'default';
+}
+
+function vaultPath(flags: Args['flags']): VaultChoice {
+  if (typeof flags['vault'] === 'string') return { path: flags['vault'], source: 'flag' };
+  const fromEnv = process.env['PROTRACKER_VAULT'];
+  if (fromEnv) return { path: fromEnv, source: 'env' };
+  return { path: join(homedir(), '.protracker', 'vault'), source: 'default' };
+}
+
+/**
+ * Say so when we are about to work in a folder that is not a vault yet.
+ *
+ * NodeVault creates its directory on demand, which is right for `pt add` in a
+ * fresh install and dangerous everywhere else: with no --vault and no
+ * PROTRACKER_VAULT, a mistyped or unset environment silently produces an empty
+ * vault, and every command then succeeds against nothing at all.
+ */
+function warnAboutNewVault(choice: VaultChoice): void {
+  if (holdsVault(choice.path)) return;
+  process.stderr.write(`Note: ${choice.path} is not a vault yet, so this one is new and empty.\n`);
+  if (choice.source === 'default') {
+    process.stderr.write('      Pass --vault DIR, or set PROTRACKER_VAULT, if you meant another.\n');
+  }
 }
 
 async function main(argv: string[]): Promise<number> {
@@ -132,7 +157,12 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
 
-  const root = vaultPath(flags);
+  const choice = vaultPath(flags);
+  const root = choice.path;
+  // Before NodeVault's constructor creates the directory and the answer stops
+  // being knowable.
+  const isNew = !holdsVault(root);
+  if (!json) warnAboutNewVault(choice);
   const app = new App(new NodeVault(root), systemClock);
   const out = (value: unknown) => {
     process.stdout.write(`${typeof value === 'string' ? value : JSON.stringify(value, null, 2)}\n`);
@@ -144,7 +174,7 @@ async function main(argv: string[]): Promise<number> {
   };
 
   try {
-    return await run(app, positional, flags, root, json, out, ref);
+    return await run(app, positional, flags, root, json, out, ref, isNew);
   } catch (error) {
     const failure = toCommandError(error);
     if (json) out({ ok: false, code: failure.code, message: failure.message, ...failure.details });
@@ -161,6 +191,7 @@ async function run(
   json: boolean,
   out: (value: unknown) => void,
   ref: (token: string | undefined) => string,
+  isNew: boolean,
 ): Promise<number> {
   const [command, ...rest] = positional;
   const say = (delta: { message: string }) => out(json ? delta : delta.message);
@@ -504,6 +535,16 @@ async function run(
     case 'backup': {
       const file = rest[0];
       if (!file) throw new Error('Where to? pt backup "Protracker backup.xlsx"');
+      // A backup of a vault that did not exist a moment ago is a file full of
+      // nothing that reports success, and the next destructive step trusts it.
+      // Refusing is the only safe answer: this is the one command where being
+      // wrong about which vault you are in cannot be noticed later.
+      if (isNew) {
+        throw new Error(
+          `${root} was empty, so there is nothing to back up. ` +
+            'Pass --vault DIR, or set PROTRACKER_VAULT, to name the vault you meant.',
+        );
+      }
       // The same workbook `export` writes, plus the vault itself on a hidden
       // sheet. Scriptable on purpose: this is the form that belongs in a cron
       // job, and a backup nobody has to remember to take is the only kind that
