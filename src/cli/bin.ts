@@ -13,6 +13,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { App } from '../commands/app.ts';
+import type { TreeNode } from '../commands/views.ts';
 import { notFound, toCommandError } from '../commands/errors.ts';
 import { formatDayMonth, systemClock } from '../core/dates.ts';
 import type { Protocol } from '../core/model.ts';
@@ -42,6 +43,10 @@ usage: pt [--vault DIR] [--json] <command> [args]
     seq <ref> <n>             set the order number (a statement, not a guess)
     start|pause|done|drop|reopen <ref>
     done <ref> [--in PERIOD]  back-fill: --in Q3, --in "Aug 2026", --in 2025
+    done <ref>... [--under REF] [--undated] --in PERIOD
+                              several at once, as one undo step. --undated
+                              picks only what was completed with no period,
+                              which is what a back-fill is correcting.
     plan <ref> <YYYY-MM-DD|none>
     wait <ref> <reason> [--until DATE]
     arrived <ref>
@@ -294,7 +299,24 @@ async function run(
       return say(app.pause(ref(rest[0]))), 0;
     case 'done': {
       const when = typeof flags['in'] === 'string' ? flags['in'] : undefined;
-      return say(app.complete(ref(rest[0]), when)), 0;
+      const under = typeof flags['under'] === 'string' ? ref(flags['under']) : null;
+      const undated = flags['undated'] === true;
+
+      const targets = selectForCompletion(app, rest, under, undated);
+      if (!targets.length) {
+        throw new Error(
+          undated
+            ? 'Nothing there is completed without a period. Nothing to re-date.'
+            : 'Which one? Give a name, a ref or an id, or --under a parent.',
+        );
+      }
+
+      // One target keeps the single-item verb, which reports what the
+      // completion freed and refuses a second completion of the same thing.
+      // Several go through completeMany, which is one undo step however many
+      // there are — the whole reason a backfill is worth doing at all.
+      if (targets.length === 1 && !undated) return say(app.complete(targets[0]!, when)), 0;
+      return say(app.completeMany(targets, when ?? app.today)), 0;
     }
     case 'drop':
       return say(app.drop(ref(rest[0]))), 0;
@@ -547,6 +569,43 @@ function hours(value: string | boolean | undefined, question: string): number {
   const n = Number(value);
   if (typeof value !== 'string' || !Number.isFinite(n)) throw new Error(question);
   return n;
+}
+
+/**
+ * What `done` should act on: the refs given, everything under a parent, or
+ * both — narrowed to work already completed without a period when `--undated`
+ * is passed.
+ *
+ * `--undated` is the selection a backfill actually wants. A completion carrying
+ * a minute-precision stamp from the day it was typed in is not a record of when
+ * the work happened, and "everything in that state" is tedious to name by hand.
+ */
+function selectForCompletion(
+  app: App,
+  tokens: string[],
+  under: string | null,
+  undated: boolean,
+): string[] {
+  const ids: string[] = tokens.map((token) => app.resolve(token).id);
+
+  if (under) {
+    const walk = (nodes: TreeNode[]): void => {
+      for (const node of nodes) {
+        if (!node.children.length) ids.push(node.id);
+        walk(node.children);
+      }
+    };
+    walk(app.tree(under));
+  }
+
+  const unique = [...new Set(ids)];
+  if (!undated) return unique;
+
+  return unique.filter((id) => {
+    const node = app.state.nodes[id];
+    // Done, but with no period recorded — so `doneAt` is when it was typed in.
+    return node?.status === 'done' && node.donePrecision === undefined;
+  });
 }
 
 /** Dim text, but only when a terminal is going to interpret it. */
