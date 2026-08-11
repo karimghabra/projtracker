@@ -634,10 +634,9 @@ export class App {
     const period = parsePeriod(when, this.today);
     if (!period) throw invalid(`Cannot read "${when}" as a time.`);
 
-    const eligible = ids.filter((id) => {
-      const node = this.state.nodes[id];
-      return node && !isContainerKind(node.kind);
-    });
+    // A container that holds work is finished by that work, so it is not its
+    // own target here. One holding none completes by its own statement, and is.
+    const eligible = ids.filter((id) => this.state.nodes[id] && completesDirectly(this.index, id));
     if (!eligible.length) throw invalid('Nothing selected that can be completed.');
 
     return this.transaction(`Complete ${eligible.length} items`, (app) => {

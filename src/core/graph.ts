@@ -323,7 +323,18 @@ export function isDone(index: GraphIndex, id: NodeId): boolean {
   return leaves.every((n) => n.status === 'done');
 }
 
-/** Every leaf under a node, or the node itself when it is already a leaf. */
+/**
+ * Every unit of work under a node, or the node itself when it is already one.
+ *
+ * A unit of work is anything with nothing inside it: a task, an experiment, or
+ * a container that was never broken down. Counting that last case is what lets
+ * completion roll up through goals that hold no tasks — a milestone whose three
+ * goals are all ticked is finished, and without this it would ignore them and
+ * wait forever.
+ *
+ * A container with no descendants at all still yields nothing, so a project you
+ * just created has no work in it rather than one imaginary unit.
+ */
 export function leavesOf(index: GraphIndex, id: NodeId): Node[] {
   const node = index.state.nodes[id];
   if (!node) return [];
@@ -331,7 +342,9 @@ export function leavesOf(index: GraphIndex, id: NodeId): Node[] {
   const out: Node[] = [];
   for (const descendantId of index.descendants.get(id) ?? []) {
     const child = index.state.nodes[descendantId];
-    if (child && !isContainerKind(child.kind)) out.push(child);
+    if (!child) continue;
+    const childless = (index.children.get(child.id) ?? []).length === 0;
+    if (!isContainerKind(child.kind) || childless) out.push(child);
   }
   return out;
 }
