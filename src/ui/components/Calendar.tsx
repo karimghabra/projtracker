@@ -32,6 +32,38 @@ const KIND_TONE: Record<CalendarEvent['kind'], string> = {
   'experiment-end': 'ok',
 };
 
+/** Legend order, so a day's marks always appear in the same sequence. */
+const KIND_ORDER: CalendarEvent['kind'][] = [
+  'planned',
+  'reminder',
+  'experiment-stage',
+  'protocol-step',
+  'experiment-end',
+];
+
+interface KindCount {
+  kind: CalendarEvent['kind'];
+  total: number;
+  done: number;
+  /** What the dot stands for, for the tooltip — the titles that no longer fit. */
+  titles: string[];
+}
+
+function countByKind(events: CalendarEvent[]): KindCount[] {
+  const out: KindCount[] = [];
+  for (const kind of KIND_ORDER) {
+    const matching = events.filter((event) => event.kind === kind);
+    if (!matching.length) continue;
+    out.push({
+      kind,
+      total: matching.length,
+      done: matching.filter((event) => event.done).length,
+      titles: matching.map((event) => (event.time ? `${event.time} ${event.title}` : event.title)),
+    });
+  }
+  return out;
+}
+
 export function Calendar({
   selected,
   onPickDay,
@@ -139,20 +171,43 @@ export function Calendar({
                 <span>{Number(day.date.slice(8, 10))}</span>
                 {onPickDay && <span className="calendar-add" aria-hidden="true">+</span>}
               </div>
-              <div className="calendar-events">
-                {day.events.slice(0, 3).map((event) => (
-                  <div
-                    key={event.id}
-                    className={`calendar-event ${KIND_TONE[event.kind]} ${event.done ? 'done' : ''}`}
-                    title={`${event.title}${event.time ? ` at ${event.time}` : ''}`}
-                  >
-                    {event.title}
-                  </div>
-                ))}
-                {day.events.length > 3 && (
-                  <div className="calendar-more">+{day.events.length - 3} more</div>
-                )}
-              </div>
+              {/*
+                A month cell is about ninety pixels wide, which clips every
+                title before the word that distinguishes it — six different
+                media changes all read "Change ...", and the rest is "+7 more".
+                Colour survives that width where text does not, so the month
+                counts by kind and the week, which has room, still says what
+                each thing is.
+              */}
+              {week ? (
+                <div className="calendar-events">
+                  {day.events.slice(0, 3).map((event) => (
+                    <div
+                      key={event.id}
+                      className={`calendar-event ${KIND_TONE[event.kind]} ${event.done ? 'done' : ''}`}
+                      title={`${event.title}${event.time ? ` at ${event.time}` : ''}`}
+                    >
+                      {event.title}
+                    </div>
+                  ))}
+                  {day.events.length > 3 && (
+                    <div className="calendar-more">+{day.events.length - 3} more</div>
+                  )}
+                </div>
+              ) : (
+                <div className="calendar-marks">
+                  {countByKind(day.events).map(({ kind, total, done, titles }) => (
+                    <span
+                      key={kind}
+                      className={`calendar-mark ${KIND_TONE[kind]} ${done === total ? 'done' : ''}`}
+                      title={titles.join('\n')}
+                    >
+                      <span className="calendar-dot" aria-hidden="true" />
+                      {total > 1 && total}
+                    </span>
+                  ))}
+                </div>
+              )}
             </button>
           );
         })}

@@ -14,9 +14,23 @@
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   --font-mono: 'SF Mono', 'Cascadia Mono', 'JetBrains Mono', Consolas, monospace;
 
-  --radius-sm: 5px;
-  --radius: 8px;
-  --radius-lg: 12px;
+  /*
+     Four steps, and nothing below twelve pixels.
+     This screen had thirteen sizes between 9px and 16px, which is not a scale —
+     it is what happens when each component picks a number. Nine-pixel text is
+     also just unreadable, and it is being read in a lab, standing up.
+  */
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-md: 14px;
+  --text-lg: 16px;
+
+  /* Two radii and a pill. Five, eight, twelve and ninety-nine drew four
+     different corner shapes on surfaces that were doing the same job. */
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: var(--radius);
+  --radius-pill: 999px;
 
   --space-1: 4px;
   --space-2: 8px;
@@ -36,7 +50,7 @@
 
 /* Light is the default; the lab is usually bright. */
 :root,
-:root[data-theme='light'] {
+[data-theme='light'] {
   --bg: #f7f7f8;
   --bg-raised: #ffffff;
   --bg-sunken: #f0f0f2;
@@ -70,7 +84,7 @@
   --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.14);
 }
 
-:root[data-theme='dark'] {
+[data-theme='dark'] {
   --bg: #101013;
   --bg-raised: #18181b;
   --bg-sunken: #0b0b0d;
@@ -104,8 +118,158 @@
   --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.65);
 }
 
+/*
+ * Everything past here is a theme, and a theme is only ever a block of tokens.
+ * No component knows any of these names, which is why adding one is additive
+ * and cannot break a layout.
+ *
+ * The status hues are re-stated in each rather than inherited: green, amber and
+ * blue carry meaning on the graph and in the tree, and a palette that makes two
+ * of them hard to tell apart has broken the board, not merely the mood.
+ */
+
+/* Warm paper. Light without the blue-white glare of a screen at 2am. */
+[data-theme='sepia'] {
+  --bg: #f3ede1;
+  --bg-raised: #fbf7ef;
+  --bg-sunken: #e9e1d1;
+  --bg-hover: rgba(90, 65, 30, 0.06);
+  --bg-active: rgba(90, 65, 30, 0.1);
+
+  --text: #2c2418;
+  --text-muted: #6b5c46;
+  --text-faint: #94836a;
+
+  --border: #ded3bf;
+  --border-strong: #c3b399;
+
+  --accent: #9a5b21;
+  --accent-hover: #7d4917;
+  --accent-soft: #f4e4d0;
+  --accent-text: #fdf9f2;
+
+  --ok: #4a6f2c;
+  --ok-soft: #e2ecd3;
+  --warn: #9c6212;
+  --warn-soft: #f7e6c8;
+  --danger: #a33427;
+  --danger-soft: #f7dfda;
+  --info: #2a5f80;
+  --info-soft: #d8e8f2;
+  --muted-soft: #e6ddcc;
+
+  --shadow-sm: 0 1px 2px rgba(80, 60, 30, 0.09);
+  --shadow: 0 2px 8px rgba(80, 60, 30, 0.12);
+  --shadow-lg: 0 12px 32px rgba(80, 60, 30, 0.18);
+}
+
+/* Deep blue-black. The dark theme for a dark room. */
+[data-theme='midnight'] {
+  --bg: #0b1020;
+  --bg-raised: #141b30;
+  --bg-sunken: #070b17;
+  --bg-hover: rgba(150, 180, 255, 0.07);
+  --bg-active: rgba(150, 180, 255, 0.12);
+
+  --text: #e8ecf8;
+  --text-muted: #9aa6c4;
+  --text-faint: #6b7899;
+
+  --border: #232c47;
+  --border-strong: #36426a;
+
+  --accent: #7dd3fc;
+  --accent-hover: #bae6fd;
+  --accent-soft: #10283f;
+  --accent-text: #06121f;
+
+  --ok: #5eead4;
+  --ok-soft: #073b38;
+  --warn: #fcd34d;
+  --warn-soft: #3d2f08;
+  --danger: #fb7185;
+  --danger-soft: #431521;
+  --info: #a5b4fc;
+  --info-soft: #1e1f4b;
+  --muted-soft: #1c2439;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.55);
+  --shadow: 0 2px 10px rgba(0, 0, 0, 0.6);
+  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.7);
+}
+
+/* Cold green on near-black, for the incubator room at 11pm. */
+[data-theme='terminal'] {
+  --bg: #0a0f0c;
+  --bg-raised: #101713;
+  --bg-sunken: #060a08;
+  --bg-hover: rgba(120, 255, 180, 0.06);
+  --bg-active: rgba(120, 255, 180, 0.11);
+
+  --text: #d6f5e3;
+  --text-muted: #86b39a;
+  --text-faint: #5c806e;
+
+  --border: #1d2a23;
+  --border-strong: #2f4438;
+
+  --accent: #4ade80;
+  --accent-hover: #86efac;
+  --accent-soft: #0d2b1a;
+  --accent-text: #04150c;
+
+  --ok: #22d3ee;
+  --ok-soft: #06282e;
+  --warn: #facc15;
+  --warn-soft: #2e2707;
+  --danger: #f87171;
+  --danger-soft: #3a1414;
+  --info: #93c5fd;
+  --info-soft: #10233c;
+  --muted-soft: #16201a;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.6);
+  --shadow: 0 2px 10px rgba(0, 0, 0, 0.65);
+  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.75);
+}
+
+/* Higher contrast than the rest, for a bright bench or a projector. */
+[data-theme='contrast'] {
+  --bg: #ffffff;
+  --bg-raised: #ffffff;
+  --bg-sunken: #f2f2f2;
+  --bg-hover: rgba(0, 0, 0, 0.07);
+  --bg-active: rgba(0, 0, 0, 0.12);
+
+  --text: #000000;
+  --text-muted: #333333;
+  --text-faint: #595959;
+
+  --border: #9c9c9c;
+  --border-strong: #4d4d4d;
+
+  --accent: #0033cc;
+  --accent-hover: #002499;
+  --accent-soft: #dde5ff;
+  --accent-text: #ffffff;
+
+  --ok: #0a6120;
+  --ok-soft: #cdeed5;
+  --warn: #8a4b00;
+  --warn-soft: #ffe6c2;
+  --danger: #a30000;
+  --danger-soft: #ffd9d9;
+  --info: #00457a;
+  --info-soft: #cfe6f7;
+  --muted-soft: #e4e4e4;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.22);
+  --shadow: 0 2px 8px rgba(0, 0, 0, 0.26);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.34);
+}
+
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme='light']) {
+  :root:not([data-theme]) {
     --bg: #101013;
     --bg-raised: #18181b;
     --bg-sunken: #0b0b0d;
@@ -148,9 +312,16 @@ body,
   margin: 0;
 }
 
+/* On html as well as body: nothing visible inherits from html, but leaving it
+   at the browser default means any future element parented there quietly gets
+   Times New Roman. */
+html {
+  font-family: var(--font-sans);
+}
+
 body {
   font-family: var(--font-sans);
-  font-size: 14px;
+  font-size: var(--text-md);
   line-height: 1.5;
   color: var(--text);
   background: var(--bg);
@@ -164,9 +335,21 @@ h1, h2, h3, h4 {
   letter-spacing: -0.01em;
 }
 
-button {
+/*
+ * Form controls and SVG text do not inherit type from their container, so
+ * without this they fall through to the browser's defaults — which is where
+ * Arial and Times New Roman were coming from. Neither was ever chosen.
+ */
+button,
+input,
+select,
+textarea {
   font: inherit;
   color: inherit;
+}
+
+svg text {
+  font-family: var(--font-sans);
 }
 
 :focus-visible {
@@ -184,7 +367,7 @@ button {
 }
 ::-webkit-scrollbar-thumb {
   background: var(--border-strong);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   border: 2px solid transparent;
   background-clip: content-box;
 }
@@ -246,7 +429,7 @@ button {
   transform: translate(11px, -10px);
   margin-left: 0;
   padding: 0 4px;
-  font-size: 10px;
+  font-size: var(--text-xs);
 }
 
 .sidebar-toggle {
@@ -273,7 +456,7 @@ button {
   gap: var(--space-2);
   padding: var(--space-2) var(--space-2) var(--space-4);
   font-weight: 650;
-  font-size: 15px;
+  font-size: var(--text-lg);
   letter-spacing: -0.02em;
 }
 
@@ -283,10 +466,10 @@ button {
   width: 24px;
   height: 24px;
   flex: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--accent);
   color: var(--accent-text);
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 700;
 }
 
@@ -299,7 +482,7 @@ button {
   border-radius: var(--radius);
   background: transparent;
   color: var(--text-muted);
-  font-size: 13.5px;
+  font-size: var(--text-md);
   font-weight: 500;
   text-align: left;
   cursor: pointer;
@@ -324,10 +507,10 @@ button {
 .nav-item .count {
   margin-left: auto;
   padding: 1px 6px;
-  border-radius: 99px;
+  border-radius: var(--radius-pill);
   background: var(--accent);
   color: var(--accent-text);
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
@@ -356,7 +539,7 @@ button {
 }
 
 .topbar h1 {
-  font-size: 16px;
+  font-size: var(--text-lg);
 }
 
 .topbar .spacer {
@@ -365,7 +548,7 @@ button {
 
 .topbar .today-date {
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
 }
 
@@ -457,7 +640,7 @@ button {
 }
 
 .panel-head h2 {
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 650;
   letter-spacing: 0.01em;
 }
@@ -490,7 +673,7 @@ button {
   border-radius: var(--radius);
   background: var(--bg-raised);
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
@@ -546,7 +729,7 @@ button {
 
 .btn.sm {
   padding: 3px 8px;
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 .btn.icon {
@@ -601,7 +784,7 @@ button {
   margin-bottom: var(--space-3);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  font-size: 13px;
+  font-size: var(--text-sm);
   line-height: 1.45;
 }
 
@@ -623,7 +806,7 @@ button {
   background: var(--bg);
   color: var(--text);
   font: inherit;
-  font-size: 13.5px;
+  font-size: var(--text-md);
   transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
 }
 
@@ -653,13 +836,13 @@ button {
 }
 
 .field > label {
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-weight: 550;
   color: var(--text-muted);
 }
 
 .field .hint {
-  font-size: 11.5px;
+  font-size: var(--text-xs);
   color: var(--text-faint);
 }
 
@@ -703,7 +886,7 @@ button {
 }
 
 .row-sub {
-  font-size: 11.5px;
+  font-size: var(--text-xs);
   color: var(--text-faint);
 }
 
@@ -727,7 +910,7 @@ button {
   height: 17px;
   margin: 0;
   border: 1.5px solid var(--border-strong);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: var(--bg-raised);
   cursor: pointer;
   display: grid;
@@ -761,10 +944,10 @@ button {
   align-items: center;
   gap: 4px;
   padding: 1px 7px;
-  border-radius: 99px;
+  border-radius: var(--radius-pill);
   background: var(--muted-soft);
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 550;
   white-space: nowrap;
 }
@@ -784,7 +967,7 @@ button {
 }
 
 .kind-chip {
-  font-size: 10px;
+  font-size: var(--text-xs);
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
@@ -802,14 +985,14 @@ button {
 }
 
 .empty h3 {
-  font-size: 14px;
+  font-size: var(--text-md);
   color: var(--text);
 }
 
 .empty p {
   margin: 0;
   max-width: 340px;
-  font-size: 13px;
+  font-size: var(--text-sm);
   line-height: 1.6;
 }
 
@@ -818,7 +1001,7 @@ button {
   place-items: center;
   width: 44px;
   height: 44px;
-  border-radius: 12px;
+  border-radius: var(--radius);
   background: var(--bg-sunken);
   color: var(--text-faint);
 }
@@ -846,7 +1029,7 @@ button {
   border-radius: var(--radius);
   background: var(--bg-raised);
   box-shadow: var(--shadow-lg);
-  font-size: 13px;
+  font-size: var(--text-sm);
   pointer-events: auto;
   animation: toast-in 180ms var(--ease);
 }
@@ -909,7 +1092,7 @@ button {
 
 .modal-head h2 {
   flex: 1;
-  font-size: 15px;
+  font-size: var(--text-lg);
 }
 
 .modal-body {
@@ -937,7 +1120,7 @@ button {
 
 .muted { color: var(--text-muted); }
 .faint { color: var(--text-faint); }
-.mono { font-family: var(--font-mono); font-size: 12px; }
+.mono { font-family: var(--font-mono); font-size: var(--text-sm); }
 .nowrap { white-space: nowrap; }
 .stack { display: flex; flex-direction: column; gap: var(--space-3); }
 .stack.tight { gap: var(--space-2); }

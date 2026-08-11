@@ -27,6 +27,8 @@ test.describe('setting a reminder', () => {
     const { page } = h;
     const target = await h.addDays(9);
 
+    // Nine days out is past the week the calendar opens on.
+    await page.getByTestId('calendar-span-month').click();
     await page.getByTestId(`day-${target}`).click();
     await page.getByTestId('day-add-reminder').click();
 
@@ -34,7 +36,7 @@ test.describe('setting a reminder', () => {
     await page.getByTestId('reminder-title').fill('Collect the samples');
     await page.getByTestId('save-reminder').click();
 
-    await expect(page.getByTestId(`day-${target}`)).toContainText('Collect the samples');
+    await expect(page.getByTestId(`day-${target}`).locator('.calendar-mark')).toHaveAttribute('title', /Collect the samples/);
   });
 
   test('Enter saves it', async ({ h }) => {
@@ -135,15 +137,17 @@ test.describe('a reminder over its life', () => {
     const second = await h.addDays(3);
     const after = await h.addDays(5);
 
+    // Five days out can fall past the week the calendar opens on.
+    await page.getByTestId('calendar-span-month').click();
     await page.getByTestId(`day-${start}`).click();
     await page.getByTestId('day-add-reminder').click();
     await page.getByTestId('reminder-title').fill('Away at a workshop');
     await page.getByTestId('reminder-span').fill('3');
     await page.getByTestId('save-reminder').click();
 
-    await expect(page.getByTestId(`day-${start}`)).toContainText('Away at a workshop');
-    await expect(page.getByTestId(`day-${second}`)).toContainText('Away at a workshop');
-    await expect(page.getByTestId(`day-${after}`)).not.toContainText('Away at a workshop');
+    await expect(page.getByTestId(`day-${start}`).locator('.calendar-mark')).toHaveAttribute('title', /Away at a workshop/);
+    await expect(page.getByTestId(`day-${second}`).locator('.calendar-mark')).toHaveAttribute('title', /Away at a workshop/);
+    await expect(page.getByTestId(`day-${after}`).locator('.calendar-mark[title*="Away at a workshop"]')).toHaveCount(0);
   });
 
   test('can be deleted again', async ({ h }) => {
@@ -266,6 +270,7 @@ test.describe('protocol reminders reach the same places', () => {
 
     await page.getByTestId('nav-home').click();
     const today = await h.today();
+    // Week view, which has the width to say what each thing is.
     await expect(page.getByTestId(`day-${today}`)).toContainText('Prepare MES buffer');
     await expect(page.getByTestId('today-list')).toContainText('Prepare MES buffer');
   });
