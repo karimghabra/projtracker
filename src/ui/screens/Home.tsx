@@ -494,20 +494,48 @@ function StartProtocolDialog({
 
 // ------------------------------------------------------------------ ready
 
+const READY_PROJECT_KEY = 'protracker:readyProject';
+
 function ReadyPanel() {
   const { app, run } = useApp();
   const [open, setOpen] = useState(
     () => window.localStorage.getItem('protracker:ready') !== 'closed',
   );
+  const [project, setProject] = useState<string | null>(
+    () => window.localStorage.getItem(READY_PROJECT_KEY),
+  );
   const ready = app.ready();
   const onToday = new Set(app.todayList().items.map((i) => i.id));
-  const available = ready.filter((row) => !onToday.has(row.id));
+  const unblocked = ready.filter((row) => !onToday.has(row.id));
+
+  /*
+    In the lab you are in one context at a time — at the electrospinner, or
+    doing a media change — and the question is "what can I do on ELAC now",
+    not "what is unblocked anywhere". The chips are the graph screen's, because
+    that is where they were already learned.
+  */
+  const projects: { id: string; name: string }[] = [];
+  for (const row of unblocked) {
+    if (row.projectId && row.projectName && !projects.some((p) => p.id === row.projectId)) {
+      projects.push({ id: row.projectId, name: row.projectName });
+    }
+  }
+  // A filter pinned to a project that has nothing ready would show an empty
+  // pool with no way to see that is why.
+  const filter = projects.some((p) => p.id === project) ? project : null;
+  const available = filter ? unblocked.filter((row) => row.projectId === filter) : unblocked;
+
+  const pick = (id: string | null) => {
+    setProject(id);
+    if (id) window.localStorage.setItem(READY_PROJECT_KEY, id);
+    else window.localStorage.removeItem(READY_PROJECT_KEY);
+  };
 
   // Hidden only on a genuinely empty board, where it would sit under the
   // get-started prompt saying nothing. Work with no project above it still
   // counts as work, so the test is "is there anything ready", not "is there a
   // project".
-  if (app.tree().length === 0 && available.length === 0) return null;
+  if (app.tree().length === 0 && unblocked.length === 0) return null;
 
   return (
     <section className="panel" data-testid="ready-panel">
@@ -530,12 +558,36 @@ function ReadyPanel() {
         <span className="spacer" />
         <span className="faint mono">{available.length}</span>
       </div>
+      {open && projects.length > 1 && (
+        <div className="inline wrap" style={{ padding: '6px 10px 0' }} data-testid="ready-projects">
+          <button
+            className={filter === null ? 'chip accent chip-button' : 'chip chip-button'}
+            aria-pressed={filter === null}
+            data-testid="ready-project-all"
+            onClick={() => pick(null)}
+          >
+            All
+          </button>
+          {projects.map((entry) => (
+            <button
+              key={entry.id}
+              className={filter === entry.id ? 'chip accent chip-button' : 'chip chip-button'}
+              aria-pressed={filter === entry.id}
+              data-testid={`ready-project-${entry.id}`}
+              onClick={() => pick(filter === entry.id ? null : entry.id)}
+            >
+              {entry.name}
+            </button>
+          ))}
+        </div>
+      )}
       {open && (
       <div className="panel-body tight">
         {available.length === 0 ? (
-          <Empty title="Nothing is unblocked right now">
-            Everything is either done, on today already, or waiting on something else. The graph
-            shows what.
+          <Empty title={filter ? 'Nothing ready in this project' : 'Nothing is unblocked right now'}>
+            {filter
+              ? 'Its work is either done, on today already, or waiting on something else. Pick All to see the rest.'
+              : 'Everything is either done, on today already, or waiting on something else. The graph shows what.'}
           </Empty>
         ) : (
           <div className="list">
@@ -562,7 +614,16 @@ function ReadyPanel() {
                       onCommit={(next) => run((a) => a.updateNode(row.id, { name: next }), { silent: true })}
                     />
                   </div>
-                  <div className="row-sub">{row.path.split(' › ').slice(0, -1).join(' › ')}</div>
+                  {/* The full path is longer and heavier than the task name it
+                      belongs to. Once you have said which project, repeating
+                      it on every row is noise: the immediate parent is what
+                      tells them apart. */}
+                  <div className="row-sub">
+                    {(() => {
+                      const trail = row.path.split(' › ').slice(0, -1);
+                      return filter ? trail.slice(-1).join(' › ') : trail.join(' › ');
+                    })()}
+                  </div>
                 </div>
                 {row.stepsTotal > 0 && (
                   <span className="chip">
