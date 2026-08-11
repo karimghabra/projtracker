@@ -14,7 +14,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { addDays, dateOf, diffDays } from '@core/dates.ts';
-import { buildIndex, isDone, wouldCreateCycle } from '@core/graph.ts';
+import { buildIndex, isDone, leavesOf, wouldCreateCycle } from '@core/graph.ts';
 import { isContainerKind } from '@core/model.ts';
 import { loadState } from '@store/store.ts';
 import { serializeAll } from '@store/serialize.ts';
@@ -350,6 +350,22 @@ describe('sixty days of use', () => {
           expect(app.state.nodes[reminder.source.nodeId]?.experiment).toBeDefined();
         }
         if (reminder.nodeId) expect(app.state.nodes[reminder.nodeId]).toBeDefined();
+      }
+
+      // 7b. A container's completion comes from exactly one place. Either it
+      // holds work and the work decides, or it holds none and its own status
+      // does — never both, and never neither, which is the state a childless
+      // goal used to be stuck in.
+      for (const node of Object.values(app.state.nodes)) {
+        if (!isContainerKind(node.kind)) continue;
+        const view = app.node(node.id);
+        if (view.completesDirectly) {
+          expect(isDone(index, node.id)).toBe(node.status === 'done');
+        } else {
+          const leaves = leavesOf(index, node.id).filter((n) => n.status !== 'dropped');
+          expect(leaves.length).toBeGreaterThan(0);
+          expect(isDone(index, node.id)).toBe(leaves.every((n) => n.status === 'done'));
+        }
       }
 
       // 8. Batch bookkeeping adds up.

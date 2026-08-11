@@ -125,6 +125,40 @@ describe('blocking flows through containers', () => {
     h.app.complete(t2);
     expect(isDone(buildIndex(h.app.state), project)).toBe(true);
   });
+
+  it('lets a goal with nothing in it be finished by its own statement', () => {
+    const h = harness();
+    const project = h.app.addProject('P').id;
+    const m = h.app.addNode(project, 'M', { seq: 1 }).id;
+    const g = h.app.addNode(m, 'G', { seq: 1 }).id;
+
+    // Shipped, never itemised. Before this it could not be closed at all.
+    expect(isDone(buildIndex(h.app.state), g)).toBe(false);
+    h.app.complete(g);
+    expect(isDone(buildIndex(h.app.state), g)).toBe(true);
+    expect(progressOf(buildIndex(h.app.state), g)).toEqual({ done: 1, total: 1 });
+
+    // And it goes back, the same way a task does.
+    h.app.reopen(g);
+    expect(isDone(buildIndex(h.app.state), g)).toBe(false);
+  });
+
+  it('stops completing directly the moment the goal gains a task', () => {
+    const h = harness();
+    const project = h.app.addProject('P').id;
+    const m = h.app.addNode(project, 'M', { seq: 1 }).id;
+    const g = h.app.addNode(m, 'G', { seq: 1 }).id;
+    h.app.complete(g);
+
+    const t = h.app.addNode(g, 'T', { seq: 1 }).id;
+    // The goal now has contents, so those are what say whether it is finished —
+    // its stale own-status must not outrank them.
+    expect(isDone(buildIndex(h.app.state), g)).toBe(false);
+    expect(() => h.app.complete(g)).toThrow(/completes when everything inside it does/);
+
+    h.app.complete(t);
+    expect(isDone(buildIndex(h.app.state), g)).toBe(true);
+  });
 });
 
 describe('explicit edges outrank guesses', () => {

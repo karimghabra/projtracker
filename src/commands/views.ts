@@ -31,6 +31,7 @@ import { encodePeriod, formatPeriod } from '../core/periods.ts';
 import type { GraphIndex } from '../core/graph.ts';
 import {
   blockersOf,
+  completesDirectly,
   derivedStatus,
   isDone,
   progressOf,
@@ -91,6 +92,12 @@ export interface NodeView {
   blockers: BlockerView[];
   progress: { done: number; total: number } | null;
   childCount: number;
+  /**
+   * Whether ticking this off is a statement about the node itself rather than a
+   * request to finish what is inside it. True for leaves, and for a container
+   * holding no work — the client needs to know which box it is drawing.
+   */
+  completesDirectly: boolean;
   createdAt: string;
   startedAt?: string;
   doneAt?: string;
@@ -138,6 +145,7 @@ export function nodeView(index: GraphIndex, id: NodeId, today: DateOnly): NodeVi
     })),
     progress: isContainerKind(node.kind) ? progressOf(index, node.id) : null,
     childCount: (index.children.get(node.id) ?? []).length,
+    completesDirectly: completesDirectly(index, node.id),
     createdAt: node.createdAt,
     startedAt: node.startedAt,
     doneAt: node.doneAt,

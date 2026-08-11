@@ -363,19 +363,24 @@ function TreeRow({
 /**
  * Ticking something off without opening the detail pane.
  *
- * A leaf completes directly. A container has no completion of its own — it is
- * finished when its contents are (§2.4) — so its box asks the command layer to
- * finish the work inside instead, behind a confirmation, and reads as checked
- * once that has happened.
+ * A leaf completes directly. A container that holds work has no completion of
+ * its own — it is finished when its contents are (§2.4) — so its box asks the
+ * command layer to finish the work inside instead, behind a confirmation.
+ *
+ * A container holding no work is the third case: there is nothing inside to be
+ * finished by, so the tick is a statement about the container itself and goes
+ * straight through, exactly as a leaf's does. Without it, a goal you delivered
+ * without itemising can never be closed.
  */
 function CompleteBox({ node, onBulk }: { node: TreeNode; onBulk: () => void }) {
   const { run } = useApp();
   const done = node.derived === 'done';
   const container = node.kind !== 'task' && node.kind !== 'experiment';
+  const rollsUp = container && !node.completesDirectly;
 
   const label = done
     ? `Reopen ${node.name}`
-    : container
+    : rollsUp
       ? `Finish everything in ${node.name}`
       : `Complete ${node.name}`;
 
@@ -384,15 +389,13 @@ function CompleteBox({ node, onBulk }: { node: TreeNode; onBulk: () => void }) {
       type="checkbox"
       className="check"
       checked={done}
-      disabled={container && done}
+      disabled={rollsUp && done}
       aria-label={label}
-      title={
-        container && done ? `Finished because everything inside it is.` : label
-      }
+      title={rollsUp && done ? `Finished because everything inside it is.` : label}
       data-testid={`complete-${node.id}`}
       onClick={(event) => event.stopPropagation()}
       onChange={() => {
-        if (container) onBulk();
+        if (rollsUp) onBulk();
         else if (done) run((a) => a.reopen(node.id));
         else run((a) => a.complete(node.id));
       }}
