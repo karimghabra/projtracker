@@ -932,6 +932,49 @@ function ProgressPanel({ empty }: { empty: boolean }) {
   );
 }
 
+/**
+ * The date a reseed starts from, defaulting to today.
+ *
+ * Reseeding usually happens at the bench on the day it happens, so today is
+ * one keystroke away and any other day is still typeable.
+ */
+function ReseedField({
+  name,
+  today,
+  onDone,
+}: {
+  name: string;
+  today: string;
+  onDone: (date: string | null) => void;
+}) {
+  const [date, setDate] = useState(today);
+  return (
+    <form
+      className="inline"
+      onSubmit={(event) => {
+        event.preventDefault();
+        onDone(date);
+      }}
+    >
+      <input
+        className="input"
+        type="date"
+        autoFocus
+        value={date}
+        aria-label={`Day ${name} was reseeded`}
+        data-testid="reseed-date"
+        onChange={(event) => setDate(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') onDone(null);
+        }}
+      />
+      <button className="btn primary sm" type="submit" data-testid="save-reseed">
+        Reseed
+      </button>
+    </form>
+  );
+}
+
 // -------------------------------------------------------------- scaffolds
 
 /**
@@ -1010,6 +1053,7 @@ function ExperimentsPanel() {
   const experiments = app.experiments();
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
+  const [reseeding, setReseeding] = useState<string | null>(null);
 
   return (
     <section className="panel" data-testid="experiments-panel">
@@ -1057,19 +1101,57 @@ function ExperimentsPanel() {
           </Empty>
         ) : (
           <div className="list">
-            {experiments.map((node) => (
-              <div className="row" key={node.id} data-testid={`experiment-${node.id}`}>
-                <div className="grow" style={{ minWidth: 0 }}>
-                  <div className="row-title">{node.name}</div>
-                  <div className="row-sub">{node.experiment!.summary}</div>
+            {/*
+              Four facts, which are the four that get asked about a culture at
+              the bench: when it went in, what it is made of, how many cells it
+              got, and what is next. Everything else lives on the experiment.
+            */}
+            {experiments.map((node) => {
+              const exp = node.experiment!;
+              const made = [
+                exp.def.sampleCount ? `${exp.def.sampleCount} scaffolds` : null,
+                exp.def.cellsPerScaffold
+                  ? `${exp.def.cellsPerScaffold.toLocaleString()} cells each`
+                  : null,
+              ].filter(Boolean);
+
+              return (
+                <div className="row" key={node.id} data-testid={`experiment-${node.id}`}>
+                  <div className="grow" style={{ minWidth: 0 }}>
+                    <div className="row-title">{node.name}</div>
+                    <div className="row-sub">
+                      {exp.def.seedingDate
+                        ? `seeded ${formatDayMonth(exp.def.seedingDate, app.today)}`
+                        : 'not seeded yet'}
+                      {made.length ? ` · ${made.join(' · ')}` : ''}
+                    </div>
+                  </div>
+                  {exp.next && (
+                    <span className="chip info nowrap" data-testid={`experiment-next-${node.id}`}>
+                      {exp.next.label} {formatDayMonth(exp.next.date, app.today)}
+                    </span>
+                  )}
+                  <button
+                    className="btn sm"
+                    data-testid={`reseed-${node.id}`}
+                    aria-label={`Reseed ${node.name}`}
+                    onClick={() => setReseeding(reseeding === node.id ? null : node.id)}
+                  >
+                    Reseed
+                  </button>
+                  {reseeding === node.id && (
+                    <ReseedField
+                      name={node.name}
+                      today={app.today}
+                      onDone={(date) => {
+                        if (date && run((a) => a.reseed(node.id, date))) setReseeding(null);
+                        else if (!date) setReseeding(null);
+                      }}
+                    />
+                  )}
                 </div>
-                {node.experiment!.endsOn && (
-                  <span className="chip info nowrap">
-                    ends {formatDayMonth(node.experiment!.endsOn, app.today)}
-                  </span>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

@@ -72,6 +72,8 @@ export interface ExperimentView {
    * being true: a culture that missed three media changes wants looking at.
    */
   missed: { date: DateOnly; title: string }[];
+  /** The next stage still ahead of it — usually the phase switch. */
+  next?: { date: DateOnly; label: string };
 }
 
 export interface NodeView {
@@ -176,6 +178,9 @@ export function nodeView(index: GraphIndex, id: NodeId, today: DateOnly): NodeVi
       phase: status.phase,
       state: status.state,
       missed: missedFor(state, node.id, today).map((r) => ({ date: r.date, title: r.title })),
+      next: stagesOf(node.experiment)
+        .filter((stage) => stage.date >= today && !node.experiment!.stagesDone.includes(stage.id))
+        .map((stage) => ({ date: stage.date, label: stage.label }))[0],
     };
   }
   return view;
@@ -1102,20 +1107,45 @@ export interface ProgressRow {
 }
 
 /**
- * Cultures that are running or about to, soonest to finish first.
+ * Cultures in the incubator now, and the ones about to be.
+ *
+ * "About to be" is the useful half and it is not a date — an experiment sits at
+ * the end of a goal, and the goal tells you: once the work before it has been
+ * started or finished, that culture is next. A board with twenty declared
+ * experiments has two or three in that state, and listing the other seventeen
+ * is how the panel became the tallest thing on the screen.
  *
  * Here rather than filtered in a component: which experiments count as ongoing,
  * and what order "ending soonest" means, are both derivations. A panel that
  * worked them out itself would be the bug invariant 2 describes.
  */
 export function experimentsView(index: GraphIndex, today: DateOnly): NodeView[] {
+  /** Something under the same goal is already under way. */
+  const goalIsMoving = (node: NodeView): boolean => {
+    if (!node.parent) return false;
+    return (index.children.get(node.parent) ?? []).some((sibling) => {
+      if (sibling.id === node.id) return false;
+      const status = derivedStatus(index, sibling.id, today);
+      return status === 'in_progress' || status === 'done';
+    });
+  };
+
   return index.order
     .map((id) => nodeView(index, id, today))
-    // Everything except what is over. An experiment with no dates yet is
-    // exactly the one this panel exists to catch: it was started from here and
-    // has not been given a timeline, and hiding it until it has one would mean
-    // it disappeared the moment it was created.
-    .filter((node) => node.experiment !== undefined && node.experiment.state !== 'finished')
+    .filter((node) => node.experiment !== undefined)
+    .filter((node) => {
+      // Closed out and gone. Ticking the experiment off is the gesture that
+      // says "this culture is dealt with", and nothing else removes it.
+      if (derivedStatus(index, node.id, today) === 'done') return false;
+      // Running: it is in the incubator, it has a clock on it, it is the panel.
+      if (node.experiment!.state === 'running') return true;
+      // Past its endpoint and not ticked off: it wants harvesting, or
+      // reseeding, and it is the one case where hiding it loses the thread.
+      if (node.experiment!.state === 'finished') return true;
+      // Next up: nothing is blocking it, or the rest of its goal has started.
+      const status = derivedStatus(index, node.id, today);
+      return status === 'ready' || status === 'in_progress' || goalIsMoving(node);
+    })
     .sort((a, b) => {
       // Something already running outranks something merely planned, and both
       // outrank something with no dates at all; within each, the one finishing

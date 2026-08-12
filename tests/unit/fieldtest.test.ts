@@ -407,7 +407,14 @@ describe('sixty days of use', () => {
         expect(node.experiment).toBeDefined();
         expect(app.node(node.id).path).toBe(node.name);
         const view = app.node(node.id).experiment!;
-        expect(app.experiments().some((e) => e.id === node.id) || view.state === 'finished').toBe(true);
+        // On the panel unless it has been ticked off, which is now the only
+        // thing that takes a culture off it — a passed endpoint leaves it
+        // there, because that is when you reseed or harvest.
+        expect(
+          app.experiments().some((e) => e.id === node.id) ||
+            app.node(node.id).derived === 'done',
+        ).toBe(true);
+        expect(view).toBeDefined();
         expect(app.node(node.id).blockers).toEqual([]);
       }
 

@@ -1263,6 +1263,29 @@ export class App {
 
   // ----------------------------------------------------------- experiments
 
+  /**
+   * Seed the same scaffolds again, from a given day.
+   *
+   * Not the same as editing the seeding date. Correcting a date says the
+   * culture always started then; reseeding says the last one is over and this
+   * is a new one on the same design, so the ticks from the old run are not
+   * facts about this one and the timeline starts again. Everything else —
+   * samples, cells, phases, duration — is the design, and stays.
+   */
+  reseed(nodeId: NodeId, on: DateOnly): Delta {
+    const node = this.state.nodes[nodeId];
+    if (!node) throw notFound('node', nodeId);
+    if (node.kind !== 'experiment') throw notAllowed(`"${node.name}" is not an experiment.`);
+    if (!isDateOnly(on)) throw invalid(`"${on}" is not a date. Use YYYY-MM-DD.`);
+
+    return this.transaction(`Reseed "${node.name}"`, (app) => {
+      app.setExperiment(nodeId, { seedingDate: on, stagesDone: [] });
+      // A reseeded culture is running again, whatever the last one ended as.
+      if (this.state.nodes[nodeId]!.status === 'done') app.reopen(nodeId);
+      return { ok: true as const, message: `Reseeded "${node.name}" on ${on}.` };
+    });
+  }
+
   setExperiment(nodeId: NodeId, def: Partial<ExperimentDef>): Delta {
     const node = this.state.nodes[nodeId];
     if (!node) throw notFound('node', nodeId);
