@@ -1,8 +1,9 @@
 import { expect, test } from './fixtures.ts';
 
 /**
- * The experiments panel: what is in the incubator or about to be, and reseeding
- * the same scaffolds when a run is over.
+ * The experiments panel is what is in the incubator. Reseeding is what happens
+ * when a run is over — which is the moment that culture leaves the panel and
+ * appears in the pool as `Collect X`, so the button lives on that row.
  */
 
 async function makeCulture(page: import('@playwright/test').Page, name: string) {
@@ -57,7 +58,7 @@ test.describe('the experiments panel', () => {
       return node.id;
     });
 
-    await page.getByTestId(`reseed-${id}`).click();
+    await page.getByTestId(`ready-reseed-${id}`).click();
     await page.getByTestId('reseed-date').fill('2026-06-01');
     await page.getByTestId('save-reseed').click();
 
@@ -87,7 +88,7 @@ test.describe('the experiments panel', () => {
       return node.id;
     });
 
-    await page.getByTestId(`reseed-${id}`).click();
+    await page.getByTestId(`ready-reseed-${id}`).click();
     await page.getByTestId('reseed-date').fill('2026-07-07');
     await page.getByTestId('save-reseed').click();
 

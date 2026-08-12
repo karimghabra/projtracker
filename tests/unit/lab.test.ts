@@ -202,46 +202,67 @@ describe('an experiment that belongs to no project', () => {
 });
 
 describe('the experiments panel reads', () => {
-  it('lists running cultures before planned ones, soonest to finish first', () => {
+  it('lists what is in the incubator, soonest to finish first', () => {
     const h = harness('2026-08-10T08:00');
     const running = h.app.experimentQuickAdd('Running late').id;
     const endingSooner = h.app.experimentQuickAdd('Running soon').id;
-    const planned = h.app.experimentQuickAdd('Not yet').id;
 
     h.app.setExperiment(running, { sampleCount: 1, seedingDate: '2026-08-01', durationDays: 40 });
     h.app.setExperiment(endingSooner, { sampleCount: 1, seedingDate: '2026-08-01', durationDays: 20 });
+
+    expect(h.app.experiments().map((n) => n.name)).toEqual(['Running soon', 'Running late']);
+  });
+
+  it('leaves a culture seeding on a later day to the calendar', () => {
+    const h = harness('2026-08-10T08:00');
+    const planned = h.app.experimentQuickAdd('Seeding in September').id;
     h.app.setExperiment(planned, { sampleCount: 1, seedingDate: '2026-09-01', durationDays: 10 });
 
-    expect(h.app.experiments().map((n) => n.name)).toEqual([
-      'Running soon',
-      'Running late',
-      'Not yet',
-    ]);
-  });
-
-  it('keeps a culture that has no dates yet, and puts it last', () => {
-    const h = harness('2026-08-10T08:00');
-    h.app.experimentQuickAdd('No dates yet');
-    const dated = h.app.experimentQuickAdd('Running').id;
-    h.app.setExperiment(dated, { sampleCount: 1, seedingDate: '2026-08-01', durationDays: 30 });
-
-    expect(h.app.experiments().map((n) => n.name)).toEqual(['Running', 'No dates yet']);
-    expect(h.app.experiments()[1]!.experiment!.summary).toBe('Not scheduled');
-  });
-
-  it('keeps a culture past its endpoint until you tick it off', () => {
-    const h = harness('2026-09-30T08:00');
-    const done = h.app.experimentQuickAdd('Finished').id;
-    h.app.setExperiment(done, { sampleCount: 1, seedingDate: '2026-08-01', durationDays: 7 });
-
-    // Past its end date and not dealt with. It wants harvesting, or reseeding
-    // the same scaffolds, and it is the one case where dropping it off the
-    // panel loses the thread.
-    expect(h.app.experiments().map((n) => n.id)).toEqual([done]);
-
-    // Ticking it off is the gesture that says the culture is dealt with.
-    h.app.complete(done);
+    // Not in the incubator, so not on the card; already dated, so not an open
+    // decision either. The day it was given carries it.
     expect(h.app.experiments()).toEqual([]);
+    expect(h.app.ready().some((r) => r.id === planned)).toBe(false);
+    expect(
+      h.app.state.reminders.some(
+        (r) => r.source.kind === 'experiment' && r.source.nodeId === planned,
+      ),
+    ).toBe(true);
+  });
+
+  it('sends a culture with no dates to the pool as something to seed', () => {
+    const h = harness('2026-08-10T08:00');
+    const loose = h.app.experimentQuickAdd('No dates yet').id;
+
+    expect(h.app.experiments()).toEqual([]);
+    const row = h.app.ready().find((r) => r.id === loose);
+    expect(row?.action).toBe('seed');
+  });
+
+  it('sends a culture past its endpoint to the pool as something to collect', () => {
+    const h = harness('2026-09-30T08:00');
+    const over = h.app.experimentQuickAdd('Finished').id;
+    h.app.setExperiment(over, { sampleCount: 1, seedingDate: '2026-08-01', durationDays: 7 });
+
+    // Off the card — the incubator is free — and in the pool as the act it
+    // wants, which is a pair of hands rather than a tick.
+    expect(h.app.experiments()).toEqual([]);
+    expect(h.app.ready().find((r) => r.id === over)?.action).toBe('collect');
+
+    // Ticking it off is still the gesture that says the culture is dealt with.
+    h.app.complete(over);
+    expect(h.app.experiments()).toEqual([]);
+    expect(h.app.ready().some((r) => r.id === over)).toBe(false);
+  });
+
+  it('says nothing at all about a culture in the incubator', () => {
+    const h = harness('2026-08-10T08:00');
+    const running = h.app.experimentQuickAdd('Mid-culture').id;
+    h.app.setExperiment(running, { sampleCount: 1, seedingDate: '2026-08-05', durationDays: 21 });
+
+    // The cells are in there and the clock runs whether or not anybody picks
+    // the row. Offering it as work was offering something that cannot be done.
+    expect(h.app.ready().some((r) => r.id === running)).toBe(false);
+    expect(h.app.experiments().map((n) => n.id)).toEqual([running]);
   });
 });
 

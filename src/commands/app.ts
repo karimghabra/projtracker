@@ -973,7 +973,14 @@ export class App {
         steps: [],
         experiment,
       };
-      return { ok: true as const, message: `Added experiment "${clean}".`, id };
+      // Say where it went. A culture with no seeding date is not in the
+      // incubator, so it is not on the card you just added it from — it is in
+      // the ready pool, waiting to be seeded. Without this the add looks like
+      // it failed.
+      const message = experiment.seedingDate
+        ? `Added experiment "${clean}".`
+        : `Added "${clean}". It is in the ready pool until you seed it.`;
+      return { ok: true as const, message, id };
     });
   }
 

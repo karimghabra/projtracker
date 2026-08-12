@@ -10,6 +10,9 @@ import { useState } from 'react';
 import { formatDayMonth, formatRelativeDay } from '../../core/dates.ts';
 import { formatOffset } from '../../core/protocols.ts';
 import { BATCH_STATES, isTerminalState } from '../../core/model.ts';
+import type { ExperimentDef } from '../../core/model.ts';
+import { validateExperiment } from '../../core/experiments.ts';
+import { ExperimentForm } from '../components/ExperimentForm.tsx';
 import type { CalendarSpan, ReadyBranch, TodayItemView } from '../../commands/views.ts';
 import { useApp } from '../state/store.ts';
 import { Calendar, DayPanel } from '../components/Calendar.tsx';
@@ -616,6 +619,10 @@ function ReadyPanel({
   const [open, setOpen] = useState(
     () => window.localStorage.getItem('protracker:ready') !== 'closed',
   );
+  /** The culture whose seeding form is open, if any. */
+  const [seeding, setSeeding] = useState<string | null>(null);
+  /** The finished culture being put back on the same scaffolds, if any. */
+  const [reseeding, setReseeding] = useState<string | null>(null);
 
   const tree = app.readyTree();
   const total = tree.reduce((sum, branch) => sum + branch.count, 0);
@@ -720,22 +727,43 @@ function ReadyPanel({
                   Finishing something you never started is normal: you did it at
                   the bench and are recording it. It should not need a trip
                   through the detail pane.
+
+                  A culture is not finished by ticking it. Seeding opens the
+                  form, because "how many scaffolds, which cells, how long" is
+                  the thing you know at that moment and never again as exactly;
+                  collecting is the tick that closes the culture out.
                 */}
                 <input
                   type="checkbox"
                   className="check"
                   checked={false}
-                  aria-label={`Complete ${row.name}`}
+                  aria-label={
+                    row.action === 'seed'
+                      ? `Seed ${row.name}`
+                      : row.action === 'collect'
+                        ? `Collect ${row.name}`
+                        : `Complete ${row.name}`
+                  }
                   data-testid={`ready-complete-${row.id}`}
-                  onChange={() => run((a) => a.complete(row.id))}
+                  onChange={() => {
+                    if (row.action === 'seed') setSeeding(row.id);
+                    else run((a) => a.complete(row.id));
+                  }}
                 />
                 <div className="grow" style={{ minWidth: 0 }}>
                   <div className="row-title">
-                    <InlineEdit
-                      value={row.name}
-                      ariaLabel={`Name of ${row.name}`}
-                      onCommit={(next) => run((a) => a.updateNode(row.id, { name: next }), { silent: true })}
-                    />
+                    {row.action ? (
+                      <span data-testid={`ready-action-${row.id}`}>
+                        <span className="verb">{row.action === 'seed' ? 'Seed' : 'Collect'}</span>{' '}
+                        {row.name}
+                      </span>
+                    ) : (
+                      <InlineEdit
+                        value={row.name}
+                        ariaLabel={`Name of ${row.name}`}
+                        onCommit={(next) => run((a) => a.updateNode(row.id, { name: next }), { silent: true })}
+                      />
+                    )}
                   </div>
                   {/* No breadcrumb on the row: the crumbs above already say
                       where you are, and repeating the path on every line was
@@ -753,6 +781,32 @@ function ReadyPanel({
                     {formatRelativeDay(row.plannedFor, app.today)}
                   </span>
                 )}
+                {/*
+                  A culture that has reached its endpoint is exactly where
+                  reseeding gets decided: you take this run off the scaffolds
+                  and put the next one on. The button used to live on the card,
+                  which is the one place a finished culture is no longer shown.
+                */}
+                {row.action === 'collect' && (
+                  <button
+                    className="btn sm"
+                    data-testid={`ready-reseed-${row.id}`}
+                    aria-label={`Reseed ${row.name}`}
+                    onClick={() => setReseeding(reseeding === row.id ? null : row.id)}
+                  >
+                    Reseed
+                  </button>
+                )}
+                {reseeding === row.id && (
+                  <ReseedField
+                    name={row.name}
+                    today={app.today}
+                    onDone={(date) => {
+                      if (date && run((a) => a.reseed(row.id, date))) setReseeding(null);
+                      else if (!date) setReseeding(null);
+                    }}
+                  />
+                )}
                 <PlanButton nodeId={row.id} name={row.name} plannedFor={row.plannedFor} />
                 <button
                   className="btn sm"
@@ -767,7 +821,62 @@ function ReadyPanel({
           )}
         </div>
       )}
+
+      {seeding && <SeedDialog nodeId={seeding} onClose={() => setSeeding(null)} />}
     </section>
+  );
+}
+
+/**
+ * Seeding a culture, at the moment you seed it.
+ *
+ * The form is the same one the detail pane shows, opened here because this is
+ * when the answers exist: how many scaffolds actually went in, which cells,
+ * how long it is running for. Written down a week later they are a guess.
+ *
+ * The date defaults to today and stays editable — cells go in on Saturday and
+ * get recorded on Monday, and a tracker that insists otherwise gets lied to.
+ * Saving is what makes the culture live: a seeding date is the difference
+ * between a plan and something in an incubator, so this dialog will not save
+ * without one.
+ */
+function SeedDialog({ nodeId, onClose }: { nodeId: string; onClose: () => void }) {
+  const { app, run } = useApp();
+  const node = app.node(nodeId);
+  const [draft, setDraft] = useState<ExperimentDef>(() => ({
+    ...node.experiment!.def,
+    seedingDate: node.experiment!.def.seedingDate ?? app.today,
+  }));
+
+  const problems = validateExperiment(draft);
+  const save = () => {
+    if (problems.length || !draft.seedingDate) return;
+    if (run((a) => a.setExperiment(nodeId, draft))) onClose();
+  };
+
+  return (
+    <Modal
+      title={`Seed ${node.name}`}
+      onClose={onClose}
+      footer={
+        <>
+          <span className="spacer" />
+          <button className="btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            className="btn primary"
+            disabled={problems.length > 0 || !draft.seedingDate}
+            data-testid="seed-save"
+            onClick={save}
+          >
+            Seeded
+          </button>
+        </>
+      }
+    >
+      <ExperimentForm value={draft} onChange={setDraft} />
+    </Modal>
   );
 }
 
@@ -1222,8 +1331,9 @@ function ExperimentsPanel() {
         )}
 
         {experiments.length === 0 ? (
-          <Empty title="No cultures running">
-            Start one here and give it its dates afterwards — the timeline follows from them.
+          <Empty title="Nothing in the incubator">
+            A culture appears here once it has been seeded. Start one here and it waits in the
+            ready pool until then.
           </Empty>
         ) : (
           <div className="list">
@@ -1245,6 +1355,20 @@ function ExperimentsPanel() {
                 <div className="row" key={node.id} data-testid={`experiment-${node.id}`}>
                   <div className="grow" style={{ minWidth: 0 }}>
                     <div className="row-title">{node.name}</div>
+                    {/*
+                      Which project it belongs to. Two cultures called "Cell
+                      infiltration" under different attempts are a real board,
+                      and on the card they were the same four words twice.
+                    */}
+                    {node.parentPath && (
+                      <div
+                        className="row-crumbs"
+                        title={node.parentPath}
+                        data-testid={`experiment-path-${node.id}`}
+                      >
+                        {node.parentPath}
+                      </div>
+                    )}
                     <div className="row-sub">
                       {exp.def.seedingDate
                         ? `seeded ${formatDayMonth(exp.def.seedingDate, app.today)}`

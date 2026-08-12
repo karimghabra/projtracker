@@ -32,6 +32,7 @@ usage: pt [--vault DIR] [--json] <command> [args]
     today                     the day's list
     ready                     everything unblocked right now
     doing                     what you started and have not finished
+    cultures                  what is in the incubator, ending soonest first
     upcoming [--days N]       reminders and dates coming up
     progress                  which projects have gone quiet
     tree [ref]                the whole hierarchy
@@ -225,7 +226,32 @@ async function run(
       const rows = app.ready();
       if (json) return out(rows), 0;
       if (rows.length === 0) return out('Nothing is unblocked right now.'), 0;
-      for (const row of rows) out(`${row.id.padEnd(6)} ${row.name}  ${dim(row.path)}`);
+      for (const row of rows) {
+        // A culture arrives as the act it is asking for, not as itself, and
+        // the list has to say which — "Osteogenic culture" alone reads as a
+        // task and is neither of the two things you can do to it.
+        const name = row.action === 'seed' ? `Seed ${row.name}`
+          : row.action === 'collect' ? `Collect ${row.name}`
+          : row.name;
+        out(`${row.id.padEnd(6)} ${name}  ${dim(row.path)}`);
+      }
+      return 0;
+    }
+
+    /**
+     * What is in the incubator, which `ready` deliberately no longer says: a
+     * running culture is not work you can pick up, and the pool is for work you
+     * can. Same list as the dashboard's card, same order — ending soonest
+     * first, because that is the one about to need hands.
+     */
+    case 'cultures': {
+      const rows = app.experiments();
+      if (json) return out(rows), 0;
+      if (rows.length === 0) return out('Nothing is in the incubator.'), 0;
+      for (const row of rows) {
+        out(`${row.id.padEnd(6)} ${row.name}  ${dim(row.experiment!.summary)}`);
+        if (row.parentPath) out(`${' '.repeat(7)}${dim(row.parentPath)}`);
+      }
       return 0;
     }
 

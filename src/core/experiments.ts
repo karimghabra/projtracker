@@ -170,6 +170,32 @@ export function experimentStatus(def: ExperimentDef, today: DateOnly): Experimen
   };
 }
 
+/**
+ * What a culture is actually asking of you today, if anything.
+ *
+ * An experiment is not one unit of work. It is two moments with a wait between
+ * them — seed it, then collect it — and the wait is the longest part. Treating
+ * the culture itself as a task put four cultures already in the incubator into
+ * the ready pool, offering work that cannot be done: the cells are in there and
+ * the clock runs whether or not anybody picks the row.
+ *
+ * Nothing while it is running, and nothing while it is dated: a seeding day in
+ * the future is a plan, and the calendar carries plans. `undefined` here means
+ * the pool says nothing about this culture at all.
+ */
+export type ExperimentAction = 'seed' | 'collect';
+
+export function experimentAction(def: ExperimentDef, today: DateOnly): ExperimentAction | undefined {
+  const { state } = experimentStatus(def, today);
+  // Past its endpoint and never ticked off: it wants harvesting.
+  if (state === 'finished') return 'collect';
+  if (state === 'running' || state === 'not-started') return undefined;
+  // No seeding date. Seeding is the next real act — unless the scaffolds it
+  // needs are still expected, in which case there is nothing to seed with.
+  if (def.scaffoldsExpected && def.scaffoldsExpected > today) return undefined;
+  return 'seed';
+}
+
 /** 'Day 9 of 21 · differentiation' — the one-line summary the UI shows. */
 export function describeExperiment(def: ExperimentDef, today: DateOnly): string {
   const status = experimentStatus(def, today);

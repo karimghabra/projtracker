@@ -129,6 +129,28 @@ describe('sixty days of use', () => {
         if (random() < 0.35) continue;
         const pick = ready[Math.floor(random() * ready.length)]!;
         if (app.state.nodes[pick.id]?.status === 'done') continue;
+
+        // A culture in the pool is one of two acts, never "tick it off". Seeding
+        // is when the numbers exist, so it writes them down and starts the
+        // clock; collecting is the tick that closes the culture out.
+        if (pick.action === 'seed') {
+          app.setExperiment(pick.id, {
+            ...app.node(pick.id).experiment!.def,
+            sampleCount: 6 + Math.floor(random() * 18),
+            cellLine: 'hMSC',
+            seedingDate: date,
+          });
+          experimentSeeded = true;
+          did.push(`seeded ${pick.name}`);
+          continue;
+        }
+        if (pick.action === 'collect') {
+          app.complete(pick.id);
+          completed += 1;
+          did.push(`collected ${pick.name}`);
+          continue;
+        }
+
         // Something planned for today is already on today's list; adding it
         // again is not something a person does, and the command layer says so.
         const alreadyOnToday = app.state.planner.some(
@@ -405,14 +427,40 @@ describe('sixty days of use', () => {
         expect(node.experiment).toBeDefined();
         expect(app.node(node.id).path).toBe(node.name);
         const view = app.node(node.id).experiment!;
-        // On the panel unless it has been ticked off, which is now the only
-        // thing that takes a culture off it — a passed endpoint leaves it
-        // there, because that is when you reseed or harvest.
-        expect(
-          app.experiments().some((e) => e.id === node.id) ||
-            app.node(node.id).derived === 'done',
-        ).toBe(true);
         expect(view).toBeDefined();
+
+        /*
+          A culture is always somewhere, and the whole risk of splitting it
+          across two surfaces is that it lands on neither. Every state has
+          exactly one home:
+
+            running          the panel — it is in the incubator, on a clock
+            finished         the pool, as "Collect X"
+            unplanned        the pool, as "Seed X"
+            not-started      the calendar, on the day you said you would seed
+            awaiting-scaffolds  the calendar, on the day they are due
+            ticked off       nowhere, which is the point of ticking it off
+        */
+        const onPanel = app.experiments().some((e) => e.id === node.id);
+        const inPool = app.ready().some((r) => r.id === node.id);
+        const dated = app.state.reminders.some(
+          (r) => r.source.kind === 'experiment' && r.source.nodeId === node.id,
+        );
+        const where = `${node.name} (${view.state}) day ${day}`;
+
+        if (app.node(node.id).derived === 'done') {
+          expect(onPanel, `${where} is ticked off but still on the panel`).toBe(false);
+          expect(inPool, `${where} is ticked off but still in the pool`).toBe(false);
+        } else if (view.state === 'running') {
+          expect(onPanel, `${where} is in the incubator and not on the panel`).toBe(true);
+          expect(inPool, `${where} is in the incubator and also in the pool`).toBe(false);
+        } else if (view.state === 'not-started' || view.state === 'awaiting-scaffolds') {
+          expect(dated, `${where} is dated but has nothing on the calendar`).toBe(true);
+          expect(inPool, `${where} is dated and also in the pool`).toBe(false);
+        } else {
+          expect(inPool, `${where} asks for an act and is not in the pool`).toBe(true);
+          expect(onPanel, `${where} is not in the incubator but is on the panel`).toBe(false);
+        }
         expect(app.node(node.id).blockers).toEqual([]);
       }
 

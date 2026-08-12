@@ -43,8 +43,14 @@ import {
   transitiveReduction,
 } from '../core/graph.ts';
 import type { ExperimentDef } from '../core/model.ts';
-import type { Stage } from '../core/experiments.ts';
-import { describeExperiment, endDateOf, experimentStatus, stagesOf } from '../core/experiments.ts';
+import type { ExperimentAction, Stage } from '../core/experiments.ts';
+import {
+  describeExperiment,
+  endDateOf,
+  experimentAction,
+  experimentStatus,
+  stagesOf,
+} from '../core/experiments.ts';
 import { scheduleRun } from '../core/protocols.ts';
 import { describeQuantity, summariseLots } from '../core/inventory.ts';
 import type { Reminder } from '../core/model.ts';
@@ -85,6 +91,13 @@ export interface NodeView {
   troubleshooting?: string;
   ref: string;
   path: string;
+  /**
+   * The path without the node's own name — "Fibrous Composites › Annulus
+   * Fibrosis › FiNC attempt". What a panel shows beside a name to say where it
+   * belongs, when repeating the name would be the loudest thing on the row.
+   * Empty on a project, which is where the path starts.
+   */
+  parentPath: string;
   parent: NodeId | null;
   projectId?: NodeId;
   projectName?: string;
@@ -132,6 +145,7 @@ export function nodeView(index: GraphIndex, id: NodeId, today: DateOnly): NodeVi
     troubleshooting: node.troubleshooting,
     ref: refOf(state, node.id),
     path: pathNameOf(state, node.id),
+    parentPath: node.parent ? pathNameOf(state, node.parent) : '',
     parent: node.parent,
     projectId: project?.id,
     projectName: project?.name,
@@ -316,14 +330,38 @@ function groupOf(
 export interface ReadyRow extends NodeView {
   stepsDone: number;
   stepsTotal: number;
+  /**
+   * Set when this row is a moment in a culture's life rather than a task: the
+   * node is the experiment, and the row offers seeding or collecting it.
+   */
+  action?: ExperimentAction;
 }
 
+/**
+ * The pool as work you could actually pick up.
+ *
+ * A culture reaches this list as the act it is asking for, never as itself.
+ * `readyLeaves` stays whole — it answers "what is unblocked", which is a
+ * different question and the one the graph is entitled to answer.
+ */
 export function readyView(index: GraphIndex, today: DateOnly): ReadyRow[] {
-  return readyLeaves(index, today).map((node) => ({
-    ...nodeView(index, node.id, today),
-    stepsDone: node.steps.filter((s) => s.done).length,
-    stepsTotal: node.steps.length,
-  }));
+  const rows: ReadyRow[] = [];
+  for (const node of readyLeaves(index, today)) {
+    const row: ReadyRow = {
+      ...nodeView(index, node.id, today),
+      stepsDone: node.steps.filter((s) => s.done).length,
+      stepsTotal: node.steps.length,
+    };
+    if (node.experiment) {
+      const action = experimentAction(node.experiment, today);
+      // In the incubator, or seeding on a day already chosen. Either way there
+      // is nothing here to pick up.
+      if (!action) continue;
+      row.action = action;
+    }
+    rows.push(row);
+  }
+  return rows;
 }
 
 /**
@@ -1110,29 +1148,25 @@ export interface ProgressRow {
 }
 
 /**
- * Cultures in the incubator now, and the ones about to be.
+ * Cultures in the incubator now. Only those.
  *
- * "About to be" is the useful half and it is not a date — an experiment sits at
- * the end of a goal, and the goal tells you: once the work before it has been
- * started or finished, that culture is next. A board with twenty declared
- * experiments has two or three in that state, and listing the other seventeen
- * is how the panel became the tallest thing on the screen.
+ * The panel used to carry "about to be" as well — anything ready, in progress,
+ * or whose goal had started. That is a list of decisions to make, and decisions
+ * belong in the ready pool where you go to choose what to do. This is the
+ * other question: what is alive, on a clock, and going to need hands whether or
+ * not I pick it. A culture waiting to be seeded reaches the pool as `Seed X`
+ * (see `readyView`); one past its endpoint reaches it as `Collect X`; between
+ * those two moments it lives here and nowhere else.
+ *
+ * Something you want in front of you before its day — seeding on Friday, say —
+ * is planned to that day like anything else, and the calendar carries it. The
+ * panel does not guess at intent.
  *
  * Here rather than filtered in a component: which experiments count as ongoing,
  * and what order "ending soonest" means, are both derivations. A panel that
  * worked them out itself would be the bug invariant 2 describes.
  */
 export function experimentsView(index: GraphIndex, today: DateOnly): NodeView[] {
-  /** Something under the same goal is already under way. */
-  const goalIsMoving = (node: NodeView): boolean => {
-    if (!node.parent) return false;
-    return (index.children.get(node.parent) ?? []).some((sibling) => {
-      if (sibling.id === node.id) return false;
-      const status = derivedStatus(index, sibling.id, today);
-      return status === 'in_progress' || status === 'done';
-    });
-  };
-
   return index.order
     .map((id) => nodeView(index, id, today))
     .filter((node) => node.experiment !== undefined)
@@ -1140,27 +1174,15 @@ export function experimentsView(index: GraphIndex, today: DateOnly): NodeView[] 
       // Closed out and gone. Ticking the experiment off is the gesture that
       // says "this culture is dealt with", and nothing else removes it.
       if (derivedStatus(index, node.id, today) === 'done') return false;
-      // Running: it is in the incubator, it has a clock on it, it is the panel.
-      if (node.experiment!.state === 'running') return true;
-      // Past its endpoint and not ticked off: it wants harvesting, or
-      // reseeding, and it is the one case where hiding it loses the thread.
-      if (node.experiment!.state === 'finished') return true;
-      // Next up: nothing is blocking it, or the rest of its goal has started.
-      const status = derivedStatus(index, node.id, today);
-      return status === 'ready' || status === 'in_progress' || goalIsMoving(node);
+      // In the incubator, with a clock on it. That is the whole card.
+      return node.experiment!.state === 'running';
     })
-    .sort((a, b) => {
-      // Something already running outranks something merely planned, and both
-      // outrank something with no dates at all; within each, the one finishing
-      // first.
-      const rank = (n: NodeView) =>
-        n.experiment?.state === 'running' ? 0 : n.experiment?.state === 'unplanned' ? 2 : 1;
-      return (
-        rank(a) - rank(b) ||
+    // The one finishing first, because that is the one about to need hands.
+    .sort(
+      (a, b) =>
         (a.experiment?.endsOn ?? '9999').localeCompare(b.experiment?.endsOn ?? '9999') ||
-        a.name.localeCompare(b.name)
-      );
-    });
+        a.name.localeCompare(b.name),
+    );
 }
 
 export function progressView(index: GraphIndex, today: DateOnly): ProgressRow[] {
