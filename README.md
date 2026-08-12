@@ -237,8 +237,8 @@ is itself a statement that the row is done.
 ```bash
 npm install
 npm run dev          # the app in a browser, no Electron needed
-npm test             # 329 unit tests, including 60 simulated days of use
-npm run test:e2e     # 230 end-to-end tests
+npm test             # 375 unit tests, including 60 simulated days of use
+npm run test:e2e     # 288 end-to-end tests
 npm run icon         # regenerate the app icon
 npm run pack         # a Windows installer in release/
 ```
