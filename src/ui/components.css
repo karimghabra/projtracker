@@ -149,6 +149,29 @@
 .calendar-mark.ok { color: var(--ok); }
 .calendar-mark.done { opacity: 0.45; }
 
+/* ------------------------------------------------------------ graph trace */
+
+/*
+ * Hovering a card lifts it and what it touches, and pushes the rest back.
+ * Opacity rather than colour, so it costs nothing to read in any theme — a
+ * traced card is still whatever colour its status made it.
+ */
+.graph-canvas .untraced {
+  opacity: 0.15;
+  transition: opacity var(--dur) var(--ease);
+}
+
+.graph-canvas .traced {
+  opacity: 1;
+  transition: opacity var(--dur) var(--ease);
+}
+
+/* The lit path reads as a path, not as several lines that happen to survive. */
+.graph-canvas .traced path,
+.graph-canvas .traced line {
+  stroke-width: 2.4;
+}
+
 /* ------------------------------------------------------------------ dials */
 
 .dial-row {

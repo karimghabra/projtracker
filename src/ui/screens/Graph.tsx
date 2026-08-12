@@ -162,11 +162,48 @@ export function GraphScreen() {
   const toggleBand = (id: string) =>
     setCollapsed(collapsed.includes(id) ? collapsed.filter((c) => c !== id) : [...collapsed, id]);
 
-  const fitToWidth = () => {
+  /**
+   * Fit the whole board, both ways.
+   *
+   * Fitting the width alone still left five projects stacked four screens deep,
+   * which is the complaint: you cannot keep track of a hierarchy you can only
+   * ever see a fifth of. Whichever axis is tighter wins.
+   */
+  const fitToWidth = useCallback(() => {
     const canvas = canvasRef.current;
-    if (!canvas || width === 0) return;
-    setZoom(Math.min(1.8, Math.max(0.3, +((canvas.clientWidth - 24) / width).toFixed(3))));
-  };
+    if (!canvas || width === 0 || height === 0) return;
+    const byWidth = (canvas.clientWidth - 24) / width;
+    const byHeight = (canvas.clientHeight - 24) / height;
+    setZoom(Math.min(1.8, Math.max(0.25, +Math.min(byWidth, byHeight).toFixed(3))));
+  }, [width, height]);
+
+  /*
+    Deliberately not fitting on arrival.
+
+    It seemed obvious — a board five times the height of the window should open
+    showing all of it — and it is wrong here, because zoom is already the
+    control that drives Auto detail: zooming out folds the hierarchy up. An
+    automatic fit would silently pick a detail level on the user's behalf and
+    make "how much of my board is shown" depend on the size of their window.
+    Fit stays a button, and now fits both axes when pressed.
+  */
+
+  /*
+    Tracing: hovering a card lifts it and everything it connects to, and pushes
+    the rest back. With a hundred cards the lines genuinely do knit together
+    into a mesh, and no amount of routing fixes that — what fixes it is being
+    able to ask "this one, and what touches it" without losing the board.
+  */
+  const [traced, setTraced] = useState<string | null>(null);
+  const lit = useMemo(() => {
+    if (!traced) return null;
+    const on = new Set<string>([traced]);
+    for (const edge of graph.edges) {
+      if (edge.from === traced) on.add(edge.to);
+      if (edge.to === traced) on.add(edge.from);
+    }
+    return on;
+  }, [traced, graph.edges]);
 
   const filtering = focusId !== null || projectIds !== null || hideDone || collapsed.length > 0;
   const folded = graph.levelCounts.goal - graph.nodes.length;
@@ -361,12 +398,18 @@ export function GraphScreen() {
             ))}
 
             {graph.edges.map((edge) => (
-              <Edge
+              <g
                 key={`${edge.via}-${edge.from}-${edge.to}`}
-                edge={edge}
-                positions={positions}
-                onRemove={edge.depId ? () => run((a) => a.removeDep(edge.depId!)) : undefined}
-              />
+                className={
+                  lit ? (lit.has(edge.from) && lit.has(edge.to) ? 'traced' : 'untraced') : undefined
+                }
+              >
+                <Edge
+                  edge={edge}
+                  positions={positions}
+                  onRemove={edge.depId ? () => run((a) => a.removeDep(edge.depId!)) : undefined}
+                />
+              </g>
             ))}
 
             {dragFrom && pointer && positions.get(dragFrom) && (
@@ -383,8 +426,13 @@ export function GraphScreen() {
             )}
 
             {placed.map((node) => (
-              <GraphNode
+              <g
                 key={node.id}
+                className={lit ? (lit.has(node.id) ? 'traced' : 'untraced') : undefined}
+                onPointerEnter={() => setTraced(node.id)}
+                onPointerLeave={() => setTraced((at) => (at === node.id ? null : at))}
+              >
+              <GraphNode
                 node={node}
                 selected={selected === node.id}
                 matched={matches ? matches.has(node.id) : null}
@@ -404,6 +452,7 @@ export function GraphScreen() {
                   setPointer(null);
                 }}
               />
+              </g>
             ))}
           </svg>
         )}
