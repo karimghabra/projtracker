@@ -149,6 +149,32 @@
 .calendar-mark.ok { color: var(--ok); }
 .calendar-mark.done { opacity: 0.45; }
 
+/* ------------------------------------------------------------ graph bands */
+
+.band-field {
+  fill: var(--bg-sunken);
+  stroke: var(--border);
+}
+
+/*
+ * The spine and header take their colour from the band's tone class, which is
+ * one of the status tokens — so every theme has already had to make it legible
+ * against this background, and none of it needs a palette of its own.
+ */
+.band-spine { fill: var(--text-faint); }
+.band-header { fill: transparent; }
+
+.band.tone-accent .band-spine { fill: var(--accent); }
+.band.tone-accent .band-header { fill: var(--accent-soft); }
+.band.tone-info .band-spine { fill: var(--info); }
+.band.tone-info .band-header { fill: var(--info-soft); }
+.band.tone-ok .band-spine { fill: var(--ok); }
+.band.tone-ok .band-header { fill: var(--ok-soft); }
+.band.tone-warn .band-spine { fill: var(--warn); }
+.band.tone-warn .band-header { fill: var(--warn-soft); }
+
+.band-header { opacity: 0.55; }
+
 /* ------------------------------------------------------------ graph trace */
 
 /*

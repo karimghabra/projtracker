@@ -37,6 +37,15 @@ import {
   IconPlus,
 } from '../components/icons.tsx';
 
+/**
+ * Which token colours the bands cycle through.
+ *
+ * Existing tokens rather than a palette of this screen's own: they are defined
+ * in every theme and already carry meaning elsewhere, so a band is tinted with
+ * something the theme has already had to make legible against its background.
+ */
+const BAND_HUES = ['accent', 'info', 'ok', 'warn'] as const;
+
 const NODE_W = 172;
 const NODE_H = 54;
 const COL_GAP = 84;
@@ -369,33 +378,55 @@ export function GraphScreen() {
               </marker>
             </defs>
 
-            {bandBoxes.map((band) => (
-              <g key={band.id} data-testid={`band-${band.id}`}>
-                <rect
-                  x={12}
-                  y={band.y}
-                  width={Math.max(200, width - 40)}
-                  height={band.h}
-                  rx={12}
-                  fill="var(--bg-sunken)"
-                  stroke="var(--border)"
-                />
-                <g
-                  className="band-toggle"
-                  onClick={() => toggleBand(band.id)}
-                  style={{ cursor: 'pointer' }}
-                  data-testid={`collapse-${band.id}`}
-                >
-                  <title>
-                    {collapsed.includes(band.id) ? 'Expand this project' : 'Collapse this project'}
-                  </title>
-                  <rect x={16} y={band.y + 3} width={Math.max(180, width - 48)} height={20} fill="transparent" />
-                  <text x={26} y={band.y + 18} className="graph-band-label">
-                    {collapsed.includes(band.id) ? '▸' : '▾'} {band.name}
-                  </text>
+            {/*
+              A band is a project, and until now they were five identical grey
+              rectangles in a column — which is exactly as much hierarchy as no
+              rectangles at all. Each one now carries a spine in its project's
+              colour and a header strip, so scrolling past the fold you still
+              know which project you are inside.
+
+              The colours are the six status/accent tokens rather than a palette
+              of their own, so this reads the same in every theme.
+            */}
+            {bandBoxes.map((band, index) => {
+              const hue = BAND_HUES[index % BAND_HUES.length]!;
+              return (
+                <g key={band.id} data-testid={`band-${band.id}`} className={`band tone-${hue}`}>
+                  <rect
+                    x={12}
+                    y={band.y}
+                    width={Math.max(200, width - 40)}
+                    height={band.h}
+                    rx={12}
+                    className="band-field"
+                  />
+                  {/* The spine: a project's colour, down its whole depth. */}
+                  <rect x={12} y={band.y} width={4} height={band.h} rx={2} className="band-spine" />
+                  <rect
+                    x={12}
+                    y={band.y}
+                    width={Math.max(200, width - 40)}
+                    height={26}
+                    rx={12}
+                    className="band-header"
+                  />
+                  <g
+                    className="band-toggle"
+                    onClick={() => toggleBand(band.id)}
+                    style={{ cursor: 'pointer' }}
+                    data-testid={`collapse-${band.id}`}
+                  >
+                    <title>
+                      {collapsed.includes(band.id) ? 'Expand this project' : 'Collapse this project'}
+                    </title>
+                    <rect x={16} y={band.y + 3} width={Math.max(180, width - 48)} height={20} fill="transparent" />
+                    <text x={26} y={band.y + 18} className="graph-band-label">
+                      {collapsed.includes(band.id) ? '▸' : '▾'} {band.name}
+                    </text>
+                  </g>
                 </g>
-              </g>
-            ))}
+              );
+            })}
 
             {graph.edges.map((edge) => (
               <g
