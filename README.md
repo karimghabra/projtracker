@@ -162,6 +162,37 @@ only when something has actually changed — and never over an edit made there.
 If somebody has typed in it, the sync stops and says so instead of overwriting
 them.
 
+### The same vault on another computer
+
+Neither of those moves your work to a second machine, and the same dialog does:
+**The same vault on another computer** keeps the vault's own files in a
+**private** GitHub repository, so a laptop and a desktop open the same tracker.
+It is off until you configure it.
+
+This is not the backup with a different destination. A backup publishes a
+*rendering* of the board for people to read and type into; this moves the files
+themselves, byte for byte. That is only sound because serialization is canonical
+— a commit is a real diff of what changed, so two machines that edited different
+projects have not conflicted, and are merged with nothing to report.
+
+Where the same file changed on both, the newer edit wins. Before any merge that
+would supersede something of this machine's, that version is committed first, so
+the losing side stays in the repository's history and the app links you straight
+to it. An edit beats a deletion, because a deletion has no timestamp worth
+comparing and discarding work is the worse way to be wrong.
+
+Setup is the repository name and a fine-grained token with **Contents: Read and
+write** on that one repository and nothing else. The token is held by the
+desktop shell, encrypted by the OS where it offers a keychain, and never written
+into the vault. A public repository is refused rather than published to. **Sync
+now** is a button; the tick box syncs on a timer. All of it needs the desktop
+app — a browser tab has nowhere safe to keep a token.
+
+What crosses is what a backup contains: the `.pt` files. Undo is a local record
+of edits to files a sync may have replaced, so it does not survive one — a sync
+is a point you cannot step back through. Anything else in that repository, a
+README included, is left where it is.
+
 ## The command line
 
 `pt` works against the same folder as the app; neither needs to know the other
