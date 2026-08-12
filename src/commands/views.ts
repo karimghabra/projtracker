@@ -34,6 +34,7 @@ import {
   completesDirectly,
   derivedStatus,
   inProgressLeaves,
+  isAbandoned,
   isDone,
   progressOf,
   rootProjects,
@@ -459,7 +460,9 @@ export function calendarView(
   };
 
   for (const node of Object.values(state.nodes)) {
-    if (node.plannedFor && node.status !== 'dropped') {
+    // Abandoned, not merely dropped: a task under a goal you gave up on has no
+    // business claiming a day on the calendar.
+    if (node.plannedFor && !isAbandoned(index, node.id)) {
       add(node.plannedFor, {
         id: `plan-${node.id}`,
         kind: 'planned',

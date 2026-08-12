@@ -155,7 +155,7 @@ function computeEdges(index: GraphIndex): EffectiveEdge[] {
     if (parentId === null) continue;
     if (orderingOf(parent) !== 'sequential') continue;
 
-    const live = siblings.filter((n) => n.status !== 'dropped');
+    const live = siblings.filter((n) => !isAbandoned(index, n.id));
     for (const node of live) {
       for (const other of live) {
         if (other.seq >= node.seq) continue;
@@ -302,7 +302,30 @@ export function completesDirectly(index: GraphIndex, id: NodeId): boolean {
   const node = index.state.nodes[id];
   if (!node) return false;
   if (!isContainerKind(node.kind)) return true;
-  return leavesOf(index, id).every((n) => n.status === 'dropped');
+  return leavesOf(index, id).every((n) => isAbandoned(index, n.id));
+}
+
+/**
+ * Whether a node has been given up on, its own way or somebody else's.
+ *
+ * Dropping a goal is a statement about everything under it: the approach did
+ * not work, so its tasks are not work anybody is going to do. Reading it off
+ * the node alone made `drop` mark a container and abandon nothing — the tasks
+ * stayed in the pool and stayed in the denominator, so a project you had given
+ * up half of still read as 0/2.
+ *
+ * Derived rather than written down. Sweeping `dropped` onto every descendant
+ * would lose which of them you had already dropped yourself, and undropping the
+ * goal could not then tell the two apart.
+ */
+export function isAbandoned(index: GraphIndex, id: NodeId): boolean {
+  const node = index.state.nodes[id];
+  if (!node) return false;
+  if (node.status === 'dropped') return true;
+  for (const ancestorId of index.ancestors.get(id) ?? []) {
+    if (index.state.nodes[ancestorId]?.status === 'dropped') return true;
+  }
+  return false;
 }
 
 /**
@@ -318,7 +341,7 @@ export function isDone(index: GraphIndex, id: NodeId): boolean {
   if (!node) return false;
   if (!isContainerKind(node.kind)) return node.status === 'done';
 
-  const leaves = leavesOf(index, id).filter((n) => n.status !== 'dropped');
+  const leaves = leavesOf(index, id).filter((n) => !isAbandoned(index, n.id));
   if (leaves.length === 0) return node.status === 'done';
   return leaves.every((n) => n.status === 'done');
 }
@@ -355,7 +378,7 @@ export function leavesOf(index: GraphIndex, id: NodeId): Node[] {
  * as the one thing it is, so that finishing it registers somewhere.
  */
 export function progressOf(index: GraphIndex, id: NodeId): { done: number; total: number } | null {
-  const leaves = leavesOf(index, id).filter((n) => n.status !== 'dropped');
+  const leaves = leavesOf(index, id).filter((n) => !isAbandoned(index, n.id));
   if (leaves.length === 0) {
     return index.state.nodes[id]?.status === 'done' ? { done: 1, total: 1 } : null;
   }
@@ -386,7 +409,7 @@ export function blockersOf(index: GraphIndex, id: NodeId): Blocker[] {
     for (const edge of index.incoming.get(scope) ?? []) {
       if (isDone(index, edge.from)) continue;
       const node = index.state.nodes[edge.from];
-      if (!node || node.status === 'dropped') continue;
+      if (!node || isAbandoned(index, node.id)) continue;
       if (seen.has(node.id)) continue;
       seen.add(node.id);
       out.push({
@@ -414,7 +437,9 @@ export function isBlocked(index: GraphIndex, id: NodeId): boolean {
 export function derivedStatus(index: GraphIndex, id: NodeId, today: DateOnly): DerivedStatus {
   const node = index.state.nodes[id];
   if (!node) return 'blocked';
-  if (node.status === 'dropped') return 'dropped';
+  // Inherited, so a task under a goal you gave up on reads as dropped rather
+  // than as work waiting to be picked up.
+  if (isAbandoned(index, id)) return 'dropped';
   if (isDone(index, id)) return 'done';
   if (node.status === 'in_progress') return 'in_progress';
 
@@ -495,7 +520,7 @@ export function downstreamIncomplete(index: GraphIndex, id: NodeId): Node[] {
           if (seen.has(targetId)) continue;
           seen.add(targetId);
           const node = index.state.nodes[targetId];
-          if (!node || node.status === 'dropped') continue;
+          if (!node || isAbandoned(index, node.id)) continue;
           if (!isDone(index, targetId)) {
             if (!isContainerKind(node.kind)) out.push(node);
             stack.push(targetId);
@@ -560,7 +585,7 @@ export function projectProgress(index: GraphIndex, today: DateOnly, staleAfterDa
   // Roots are not all projects: a standalone planner task is parented to null
   // too, and must not be reported as a project with nothing in it.
   for (const project of rootProjects(index)) {
-    const leaves = leavesOf(index, project.id).filter((n) => n.status !== 'dropped');
+    const leaves = leavesOf(index, project.id).filter((n) => !isAbandoned(index, n.id));
     const done = leaves.filter((n) => n.status === 'done').length;
 
     let lastActivity: string | undefined;

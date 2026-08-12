@@ -38,7 +38,7 @@ import {
   resolveNode,
   uniqueSlug,
 } from '../core/model.ts';
-import { buildIndex, completesDirectly, isDone, wouldCreateCycle } from '../core/graph.ts';
+import { buildIndex, completesDirectly, isAbandoned, isDone, wouldCreateCycle } from '../core/graph.ts';
 import type { GraphIndex } from '../core/graph.ts';
 import { emptyExperiment, stagesOf, validateExperiment } from '../core/experiments.ts';
 import { isRunComplete, scheduleRun } from '../core/protocols.ts';
@@ -579,20 +579,20 @@ export class App {
   // --------------------------------------------------------------- status
 
   start(id: NodeId): Delta {
-    return this.setStatus(id, 'in_progress', 'Start');
+    return this.setStatus(id, 'in_progress', 'Start', 'Started');
   }
 
   /** in_progress â†’ active. Pause never invents a state; the graph derives it again. */
   pause(id: NodeId): Delta {
-    return this.setStatus(id, 'active', 'Pause');
+    return this.setStatus(id, 'active', 'Pause', 'Paused');
   }
 
   drop(id: NodeId): Delta {
-    return this.setStatus(id, 'dropped', 'Drop');
+    return this.setStatus(id, 'dropped', 'Drop', 'Dropped');
   }
 
   reopen(id: NodeId): Delta {
-    return this.setStatus(id, 'active', 'Reopen');
+    return this.setStatus(id, 'active', 'Reopen', 'Reopened');
   }
 
   /**
@@ -678,8 +678,11 @@ export class App {
       throw notAllowed(`"${node.name}" is a ${node.kind}; complete it directly.`);
     }
 
+    // Abandoned work is not completed by finishing what it sits under: ticking
+    // a milestone off should not quietly mark the goal you gave up on as done.
+    const index = this.index;
     const leaves = descendantsOf(this.state, id).filter(
-      (n) => !isContainerKind(n.kind) && n.status !== 'dropped',
+      (n) => !isContainerKind(n.kind) && !isAbandoned(index, n.id),
     );
     if (!leaves.length) {
       throw invalid(`"${node.name}" has nothing in it to complete.`);
@@ -701,7 +704,12 @@ export class App {
     });
   }
 
-  private setStatus(id: NodeId, status: StoredStatus, verb: string): Delta {
+  /**
+   * `verb` names the step in the undo stack and stays imperative there; `past`
+   * is what the user is told afterwards. Two words rather than one with "ed"
+   * stuck on the end, which produced "Droped" and "Pauseed".
+   */
+  private setStatus(id: NodeId, status: StoredStatus, verb: string, past: string): Delta {
     const node = this.state.nodes[id];
     if (!node) throw notFound('node', id);
     if (isContainerKind(node.kind) && status === 'in_progress') {
@@ -720,7 +728,7 @@ export class App {
       if (status === 'active' && target.health === 'not_begun' && target.startedAt) {
         target.health = 'on_track';
       }
-      return { ok: true as const, message: `${verb}ed "${target.name}".` };
+      return { ok: true as const, message: `${past} "${target.name}".` };
     });
   }
 

@@ -366,3 +366,73 @@ describe('index robustness', () => {
     expect(() => readyLeaves(index, TODAY)).not.toThrow();
   });
 });
+
+/**
+ * Giving up on a goal is a statement about everything under it. Before this,
+ * `drop` marked the container and abandoned nothing: its tasks stayed in the
+ * pool and stayed in the denominator.
+ */
+describe('abandoning a goal abandons its work', () => {
+  it('takes its tasks out of the ready pool', () => {
+    const h = harness();
+    const b = sampleBoard(h);
+    expect(readyNames(h.app)).toContain('Draft geometry');
+
+    h.app.drop(b.cad);
+
+    expect(readyNames(h.app)).not.toContain('Draft geometry');
+    const index = buildIndex(h.app.state);
+    expect(derivedStatus(index, b.draft, TODAY)).toBe('dropped');
+  });
+
+  it('takes them out of the fraction as well, not just the numerator', () => {
+    const h = harness();
+    const b = sampleBoard(h);
+    const before = progressOf(buildIndex(h.app.state), b.fabrication)!;
+
+    h.app.drop(b.cad);
+    const after = progressOf(buildIndex(h.app.state), b.fabrication)!;
+
+    // CAD design held three of the five tasks under Fabrication.
+    expect(before.total).toBe(5);
+    expect(after.total).toBe(2);
+  });
+
+  it('stops it blocking whatever was waiting behind it', () => {
+    const h = harness();
+    const b = sampleBoard(h);
+    // Printing is rank 2 under Fabrication, so CAD design gates it.
+    expect(derivedStatus(buildIndex(h.app.state), b.slice, TODAY)).toBe('blocked');
+
+    h.app.drop(b.cad);
+
+    expect(derivedStatus(buildIndex(h.app.state), b.slice, TODAY)).toBe('ready');
+  });
+
+  it('undrops without forgetting what was dropped on its own', () => {
+    const h = harness();
+    const b = sampleBoard(h);
+    // One task abandoned by itself, before the goal above it was.
+    h.app.drop(b.review);
+    h.app.drop(b.cad);
+
+    h.app.reopen(b.cad);
+
+    const index = buildIndex(h.app.state);
+    // The goal and the task that never had a statement of its own come back.
+    expect(derivedStatus(index, b.draft, TODAY)).toBe('ready');
+    // The one dropped individually stays dropped: inheritance is derived, so
+    // its own statement was never overwritten.
+    expect(derivedStatus(index, b.review, TODAY)).toBe('dropped');
+  });
+
+  it('reads through more than one level', () => {
+    const h = harness();
+    const b = sampleBoard(h);
+    h.app.drop(b.fabrication);
+
+    const index = buildIndex(h.app.state);
+    expect(derivedStatus(index, b.draft, TODAY)).toBe('dropped');
+    expect(readyNames(h.app)).not.toContain('Slice model');
+  });
+});
