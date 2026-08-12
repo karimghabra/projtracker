@@ -149,6 +149,84 @@
 .calendar-mark.ok { color: var(--ok); }
 .calendar-mark.done { opacity: 0.45; }
 
+/* ------------------------------------------------------------------ dials */
+
+.dial-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-2) var(--space-2);
+}
+
+.dial {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 8px 4px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.dial:hover { background: var(--bg-hover); border-color: var(--border); }
+.dial.static { cursor: default; }
+
+.dial-svg { width: 52px; height: 52px; flex: none; }
+
+.dial-track {
+  fill: none;
+  stroke: var(--muted-soft);
+  stroke-width: 6;
+}
+
+.dial-arc {
+  fill: none;
+  stroke-width: 6;
+  stroke-linecap: round;
+  transition: stroke-dasharray var(--dur) var(--ease);
+}
+
+.dial-figure {
+  font-size: var(--text-md);
+  font-weight: 650;
+  fill: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The middle figure is ready work, so the colour is about what you can do now,
+   not about how far along it is. */
+.tone-accent .dial-arc { stroke: var(--accent); }
+.tone-accent .dial-figure { fill: var(--accent); }
+.tone-ok .dial-arc { stroke: var(--ok); }
+.tone-ok .dial-figure { fill: var(--ok); }
+.tone-info .dial-arc { stroke: var(--info); }
+.tone-muted .dial-arc { stroke: var(--text-faint); }
+.tone-muted .dial-figure { fill: var(--text-faint); }
+
+.dial-name {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-align: center;
+  line-height: 1.25;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.dial-sub {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
 /* -------------------------------------------------------------- navigator */
 
 /* A row that goes somewhere, rather than one you act on. */

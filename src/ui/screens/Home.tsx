@@ -14,7 +14,7 @@ import type { CalendarSpan, ReadyBranch, TodayItemView } from '../../commands/vi
 import { useApp } from '../state/store.ts';
 import { Calendar, DayPanel } from '../components/Calendar.tsx';
 import { UpcomingPanel } from '../components/UpcomingPanel.tsx';
-import { Empty, InlineEdit, Modal, ProgressBar, QuickAdd, StatusChip } from '../components/ui.tsx';
+import { Empty, InlineEdit, Modal, ProgressBar, QuickAdd } from '../components/ui.tsx';
 import { PlanButton, PlanDialog } from '../components/PlanDialog.tsx';
 import { NewProjectWizard } from './NewProject.tsx';
 import {
@@ -44,6 +44,14 @@ export function HomeScreen({ onNavigate }: { onNavigate: (view: ViewName) => voi
     setFolded(next);
     window.localStorage.setItem(FOLD_KEY, next);
   };
+
+  // Where the ready pool is browsing. Held here so a project dial can send it
+  // somewhere: the graphic and the list are two views of one question.
+  const [readyPath, setReadyPath] = useState<string[]>(storedReadyPath);
+  const goReady = (next: string[]) => {
+    setReadyPath(next);
+    window.localStorage.setItem(READY_PATH_KEY, JSON.stringify(next));
+  };
   const [calendarSpan, setCalendarSpan] = useState<'off' | CalendarSpan>(
     /*
       Month by default, still. Switching to the week was the obvious answer to
@@ -70,8 +78,8 @@ export function HomeScreen({ onNavigate }: { onNavigate: (view: ViewName) => voi
         <ColumnFold side="left" folded={folded} onFold={fold} />
         <TodayPanel />
         <InProgressPanel />
-        <ReadyPanel />
-        <ProjectsPanel onNavigate={onNavigate} />
+        <ReadyPanel path={readyPath} onPath={goReady} />
+        <ProjectsPanel onNavigate={onNavigate} onPick={(id) => goReady([id])} />
       </div>
 
       <div className="dash-col" data-testid="dash-right">
@@ -588,19 +596,26 @@ const READY_PATH_KEY = 'protracker:readyPath';
  * where the work is before you go in, and a container with nothing ready in it
  * is not shown at all, so descending never dead-ends.
  */
-function ReadyPanel() {
+export function storedReadyPath(): string[] {
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(READY_PATH_KEY) ?? '[]');
+    return Array.isArray(saved) ? (saved as string[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function ReadyPanel({
+  path,
+  onPath,
+}: {
+  path: string[];
+  onPath: (next: string[]) => void;
+}) {
   const { app, run } = useApp();
   const [open, setOpen] = useState(
     () => window.localStorage.getItem('protracker:ready') !== 'closed',
   );
-  const [path, setPath] = useState<string[]>(() => {
-    try {
-      const saved = JSON.parse(window.localStorage.getItem(READY_PATH_KEY) ?? '[]');
-      return Array.isArray(saved) ? (saved as string[]) : [];
-    } catch {
-      return [];
-    }
-  });
 
   const tree = app.readyTree();
   const total = tree.reduce((sum, branch) => sum + branch.count, 0);
@@ -626,10 +641,7 @@ function ReadyPanel() {
     level = level[0]!.children;
   }
 
-  const go = (next: string[]) => {
-    setPath(next);
-    window.localStorage.setItem(READY_PATH_KEY, JSON.stringify(next));
-  };
+  const go = onPath;
 
   if (app.tree().length === 0 && total === 0) return null;
 
@@ -822,10 +834,65 @@ function CapturePanel() {
 
 // --------------------------------------------------------------- projects
 
-function ProjectsPanel({ onNavigate }: { onNavigate: (view: ViewName) => void }) {
+/**
+ * One dial per project: how far it has got, and how much of it you could pick
+ * up right now.
+ *
+ * The arc is finished work. The number in the middle is ready work, because
+ * that is the actionable figure — a project at 80% with nothing unblocked and
+ * one at 20% with six things waiting want different responses, and a progress
+ * bar tells you neither.
+ */
+function Dial({
+  done,
+  total,
+  ready,
+  state,
+}: {
+  done: number;
+  total: number;
+  ready: number;
+  state: string;
+}) {
+  const R = 26;
+  const circumference = 2 * Math.PI * R;
+  const fraction = total ? done / total : 0;
+  const tone =
+    state === 'done' ? 'ok' : ready > 0 ? 'accent' : state === 'blocked' ? 'muted' : 'info';
+
+  return (
+    <svg className={`dial-svg tone-${tone}`} viewBox="0 0 64 64" aria-hidden="true">
+      <circle className="dial-track" cx="32" cy="32" r={R} />
+      <circle
+        className="dial-arc"
+        cx="32"
+        cy="32"
+        r={R}
+        strokeDasharray={`${circumference * fraction} ${circumference}`}
+        // From twelve o'clock, the way anyone reading a dial expects.
+        transform="rotate(-90 32 32)"
+      />
+      <text className="dial-figure" x="32" y="33" textAnchor="middle" dominantBaseline="middle">
+        {ready || (total && done === total ? '✓' : '·')}
+      </text>
+    </svg>
+  );
+}
+
+function ProjectsPanel({
+  onNavigate,
+  onPick,
+}: {
+  onNavigate: (view: ViewName) => void;
+  /** Send the ready pool to this project. Absent when there is nowhere to send it. */
+  onPick?: (projectId: string) => void;
+}) {
   const { app } = useApp();
   const [wizard, setWizard] = useState(false);
   const projects = app.tree();
+
+  // Ready work per project, counted once from the same tree the pool browses.
+  const readyCounts = new Map(app.readyTree().map((branch) => [branch.id, branch.count]));
 
   return (
     <section className="panel" data-testid="projects-panel">
@@ -853,30 +920,35 @@ function ProjectsPanel({ onNavigate }: { onNavigate: (view: ViewName) => void })
             tasks or a cell culture experiment. You will be walked through it.
           </Empty>
         ) : (
-          <div className="list">
-            {projects.map((project) => (
-              <button
-                key={project.id}
-                className="row"
-                onClick={() => onNavigate('projects')}
-                style={{ border: 0, background: 'transparent', width: '100%', textAlign: 'left', cursor: 'pointer' }}
-              >
-                <div className="grow" style={{ minWidth: 0 }}>
-                  <div className="row-title">{project.name}</div>
-                  <div className="row-sub">
-                    {project.childCount} milestone{project.childCount === 1 ? '' : 's'}
-                  </div>
-                </div>
-                {project.progress ? (
-                  <div style={{ width: 130 }}>
-                    <ProgressBar done={project.progress.done} total={project.progress.total} />
-                  </div>
-                ) : (
-                  <span className="chip">empty</span>
-                )}
-                <StatusChip status={project.derived} />
-              </button>
-            ))}
+          /*
+            A dial per project rather than a row per project. The arc is how
+            much is finished, the number in the middle is what is ready to pick
+            up now, and clicking it takes the ready pool straight there — which
+            is the whole loop this screen exists for: see where a project
+            stands, then act on it, without navigating away.
+          */
+          <div className="dial-row" data-testid="project-dials">
+            {projects.map((project) => {
+              const done = project.progress?.done ?? 0;
+              const total = project.progress?.total ?? 0;
+              const ready = readyCounts.get(project.id) ?? 0;
+              return (
+                <button
+                  key={project.id}
+                  className={onPick ? 'dial' : 'dial static'}
+                  data-testid={`dial-${project.id}`}
+                  title={`${project.name} — ${done}/${total} done, ${ready} ready`}
+                  aria-label={`${project.name}, ${done} of ${total} done, ${ready} ready to work on`}
+                  onClick={() => (onPick ? onPick(project.id) : onNavigate('projects'))}
+                >
+                  <Dial done={done} total={total} ready={ready} state={project.derived} />
+                  <span className="dial-name">{project.name}</span>
+                  <span className="dial-sub">
+                    {total ? `${done}/${total}` : 'empty'}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         )}
       </div>

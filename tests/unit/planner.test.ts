@@ -1,4 +1,4 @@
-﻿import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { expectThrows, harness, sampleBoard, todayTitles } from './helpers.ts';
 
 describe('the day list', () => {
@@ -61,7 +61,7 @@ describe('rollover', () => {
 
   /**
    * There used to be a 120-day horizon past which a carried task simply stopped
-   * being offered â€” no announcement, no "still owed" state, and the planner
+   * being offered — no announcement, no "still owed" state, and the planner
    * entry still sitting in the vault with no outcome. Nobody specified it; it
    * arrived unremarked in the rewrite. These two pin its absence, because the
    * failure it caused is invisible: nothing goes red, the item is just gone.
@@ -113,7 +113,7 @@ describe('rollover', () => {
     h.app.todayRemove(`node:${b.draft}`);
     expect(h.app.todayList().items).toEqual([]);
 
-    // Tomorrow it is fair game again â€” saying "not today" is not saying "never".
+    // Tomorrow it is fair game again — saying "not today" is not saying "never".
     h.clock.set('2026-08-01T09:00');
     expect(todayTitles(h.app)).toEqual(['Draft geometry']);
   });
@@ -225,7 +225,7 @@ describe('putting a reminder off until another day', () => {
 
   /**
    * The date of a generated reminder is arithmetic over its source, and
-   * `syncGeneratedReminders` recomputes it on every mutation â€” so a new date
+   * `syncGeneratedReminders` recomputes it on every mutation — so a new date
    * written here would be overwritten within the second and the user would
    * watch it snap back. Refusing, with the reason, is the honest answer.
    */
@@ -463,10 +463,10 @@ describe('the journal', () => {
     const { id } = h.app.capture('Gel looked cloudy', b.draft);
 
     h.clock.set('2026-08-06T11:00');
-    h.app.editNote(id, 'Gel looked cloudy â€” it was the buffer, not the gel');
+    h.app.editNote(id, 'Gel looked cloudy — it was the buffer, not the gel');
 
     const [entry] = h.app.notebook(b.draft);
-    expect(entry!.text).toBe('Gel looked cloudy â€” it was the buffer, not the gel');
+    expect(entry!.text).toBe('Gel looked cloudy — it was the buffer, not the gel');
     // The observation still belongs to the day it was made.
     expect(entry!.at.slice(0, 10)).toBe('2026-07-30');
     expect(h.app.journal('2026-07')).toHaveLength(1);

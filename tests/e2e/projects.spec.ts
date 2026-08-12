@@ -15,8 +15,13 @@ test.describe('the project wizard', () => {
       ],
     });
 
-    await expect(page.getByTestId('projects-panel').getByText('Tendon scaffold study')).toBeVisible();
-    await expect(page.getByTestId('projects-panel').getByText('2 milestones')).toBeVisible();
+    // The panel is dials now: the arc is progress, the figure in the middle is
+    // ready work, and the label carries both for anyone who cannot see either.
+    const dials = page.getByTestId('project-dials');
+    await expect(dials.getByText('Tendon scaffold study')).toBeVisible();
+    await expect(
+      dials.getByRole('button', { name: /Tendon scaffold study, \d+ of \d+ done, \d+ ready/ }),
+    ).toBeVisible();
 
     // Only the first task of the first goal is actionable; the rest are ordered
     // behind it by their sequence numbers.
