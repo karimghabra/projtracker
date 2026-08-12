@@ -586,6 +586,50 @@ svg text {
   margin: 0 auto;
 }
 
+/*
+ * Folding a column gives the other one the whole screen. The folded side keeps
+ * a narrow strip with its handle in it — gone entirely and you would have to
+ * remember it exists to get it back.
+ */
+.dash.fold-left { grid-template-columns: 34px 1fr; }
+.dash.fold-right { grid-template-columns: 1fr 34px; }
+
+.dash.fold-left .dash-col:first-child > :not(.col-fold),
+.dash.fold-right .dash-col:last-child > :not(.col-fold) {
+  display: none;
+}
+
+.dash.fold-left .dash-col:first-child,
+.dash.fold-right .dash-col:last-child {
+  overflow: hidden;
+}
+
+/*
+ * The surviving column takes the width, so it should stop stacking. Two-up
+ * roughly halves its height, which is the whole point of folding: a column with
+ * the screen to itself and the same single file of panels is just a wider
+ * scroll.
+ */
+.dash.fold-left .dash-col:last-child,
+.dash.fold-right .dash-col:first-child {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+}
+
+.col-fold { grid-column: 1 / -1; }
+
+.col-fold {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: calc(var(--space-4) * -1 + 2px);
+}
+
+/* The unfolded column's handle is a quiet affordance, not a control you have to
+   look at; the folded one's is the only way back, so it stays put. */
+.dash:not(.fold-left):not(.fold-right) .col-fold { opacity: 0.35; }
+.dash:not(.fold-left):not(.fold-right) .dash-col:hover .col-fold { opacity: 1; }
+
 .dash-col {
   display: flex;
   flex-direction: column;
