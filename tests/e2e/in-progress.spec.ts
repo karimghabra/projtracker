@@ -40,9 +40,10 @@ test.describe('in progress', () => {
     await page.getByTestId('nav-projects').click();
     await createProject(page, board);
 
-    // Start it from the detail pane, which is the other way in.
+    // Start it from the detail pane, which is the other way in. Scoped to the
+    // pane because the tree row now offers a Start of its own.
     await page.locator('.tree-row', { hasText: 'Twist yarn' }).first().click();
-    await page.getByRole('button', { name: 'Start' }).click();
+    await page.getByTestId('node-detail').getByRole('button', { name: 'Start' }).click();
     await page.getByTestId('nav-home').click();
 
     const panel = page.getByTestId('in-progress-panel');
@@ -54,11 +55,46 @@ test.describe('in progress', () => {
     // And again, this time finishing it outright.
     await page.getByTestId('nav-projects').click();
     await page.locator('.tree-row', { hasText: 'Twist yarn' }).first().click();
-    await page.getByRole('button', { name: 'Start' }).click();
+    await page.getByTestId('node-detail').getByRole('button', { name: 'Start' }).click();
     await page.getByTestId('nav-home').click();
     // click, not check: ticking it finishes the task and the row leaves, so
     // there is never a checked box to wait for.
     await page.getByTestId('in-progress-panel').getByRole('checkbox').first().click();
     await expect(page.getByTestId('in-progress-panel')).toHaveCount(0);
+  });
+
+  /**
+   * The tree is where the work is laid out, so it is where you are standing
+   * when you decide to start something. Before this it was the one surface
+   * that could show a task but not begin it.
+   */
+  test('starts from the tree row itself, without opening the detail pane', async ({ h }) => {
+    const { page } = h;
+    await page.getByTestId('nav-projects').click();
+    await createProject(page, board);
+
+    const row = page.locator('.tree-row', { hasText: 'Twist yarn' }).first();
+    await row.getByRole('button', { name: 'Start Twist yarn' }).click();
+
+    // The row says so where it stands, and the dashboard agrees.
+    await expect(row.getByRole('button', { name: 'Pause Twist yarn' })).toBeVisible();
+    await page.getByTestId('nav-home').click();
+    await expect(page.getByTestId('in-progress-panel')).toContainText('Twist yarn');
+
+    // And pausing from the tree puts it back.
+    await page.getByTestId('nav-projects').click();
+    await page.locator('.tree-row', { hasText: 'Twist yarn' }).first()
+      .getByRole('button', { name: 'Pause Twist yarn' }).click();
+    await page.getByTestId('nav-home').click();
+    await expect(page.getByTestId('in-progress-panel')).toHaveCount(0);
+  });
+
+  test('offers no start on a container, which cannot be started directly', async ({ h }) => {
+    const { page } = h;
+    await page.getByTestId('nav-projects').click();
+    await createProject(page, board);
+
+    const goal = page.locator('.tree-row', { hasText: 'Braid' }).first();
+    await expect(goal.getByRole('button', { name: /^Start/ })).toHaveCount(0);
   });
 });

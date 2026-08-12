@@ -20,6 +20,8 @@ import {
   IconChevronDown,
   IconChevronRight,
   IconFlask,
+  IconPause,
+  IconPlay,
   IconPlus,
   IconProjects,
   IconTrash,
@@ -329,6 +331,27 @@ function TreeRow({
         <StatusChip status={node.derived} />
 
         <span className="tree-actions" onClick={(event) => event.stopPropagation()}>
+          {/*
+            Starting work where you are looking at it. A container cannot be
+            started directly — the command layer refuses, because a milestone is
+            in progress when something inside it is — and finished work has
+            nothing to start, so the button is offered on live leaves only.
+          */}
+          {(node.kind === 'task' || node.kind === 'experiment') && node.derived !== 'done' && (
+            <button
+              className="btn ghost icon sm"
+              title={node.derived === 'in_progress' ? 'Pause' : 'Start'}
+              aria-label={
+                node.derived === 'in_progress' ? `Pause ${node.name}` : `Start ${node.name}`
+              }
+              data-testid={`start-${node.id}`}
+              onClick={() =>
+                run((a) => (node.derived === 'in_progress' ? a.pause(node.id) : a.start(node.id)))
+              }
+            >
+              {node.derived === 'in_progress' ? <IconPause size={13} /> : <IconPlay size={13} />}
+            </button>
+          )}
           {(node.kind === 'task' || node.kind === 'experiment') && (
             <PlanButton nodeId={node.id} name={node.name} plannedFor={node.plannedFor} />
           )}
