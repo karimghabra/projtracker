@@ -1,4 +1,4 @@
-﻿import { expect, test } from './fixtures.ts';
+import { expect, test } from './fixtures.ts';
 
 /** Folding a column so the other one has the screen. */
 
@@ -22,7 +22,7 @@ test.describe('folding a dashboard column', () => {
     await page.getByTestId('fold-left').click();
     await expect(page.getByTestId('dash-left').getByText('Today', { exact: true })).toBeHidden();
 
-    // Only one column can be folded â€” folding both would leave nothing.
+    // Only one column can be folded — folding both would leave nothing.
     await page.getByTestId('fold-right').click();
     await expect(page.getByTestId('dash-left').getByText('Today', { exact: true })).toBeVisible();
     await expect(page.getByTestId('dash-right').getByRole('heading', { name: 'Calendar' })).toBeVisible();
