@@ -227,11 +227,18 @@ describe('the experiments panel reads', () => {
     expect(h.app.experiments()[1]!.experiment!.summary).toBe('Not scheduled');
   });
 
-  it('leaves out a culture that has finished', () => {
+  it('keeps a culture past its endpoint until you tick it off', () => {
     const h = harness('2026-09-30T08:00');
     const done = h.app.experimentQuickAdd('Finished').id;
     h.app.setExperiment(done, { sampleCount: 1, seedingDate: '2026-08-01', durationDays: 7 });
 
+    // Past its end date and not dealt with. It wants harvesting, or reseeding
+    // the same scaffolds, and it is the one case where dropping it off the
+    // panel loses the thread.
+    expect(h.app.experiments().map((n) => n.id)).toEqual([done]);
+
+    // Ticking it off is the gesture that says the culture is dealt with.
+    h.app.complete(done);
     expect(h.app.experiments()).toEqual([]);
   });
 });
