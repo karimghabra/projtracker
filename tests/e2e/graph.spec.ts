@@ -3,6 +3,15 @@ import type { Page } from '@playwright/test';
 
 /** Drag from one node's port to another node, the way a person would. */
 async function drawLink(page: Page, fromId: string, toId: string): Promise<void> {
+  // Bands are packed across the canvas now, so two cards in different projects
+  // can sit further apart than the window is wide. You cannot drag between two
+  // things you cannot both see, and neither can this.
+  const fit = page.getByRole('button', { name: 'Fit' });
+  if (await fit.count()) {
+    await fit.click();
+    await page.waitForTimeout(150);
+  }
+
   const port = page.getByTestId(`port-${fromId}`);
   const target = page.getByTestId(`gnode-${toId}`);
 
@@ -120,8 +129,12 @@ test.describe('the graph', () => {
     const edge = page.getByTestId(`edge-${ids['Alpha design']}-${ids['Beta build']}`);
     await expect(edge).toBeAttached();
 
-    // Horizontal SVG edges have zero-height boxes, so click the drawn control.
-    await page.getByTestId(`remove-${ids['Alpha design']}-${ids['Beta build']}`).click({ force: true });
+    // Horizontal SVG edges have zero-height boxes, so use the drawn control —
+    // dispatched rather than clicked, because fitting the board scales it down
+    // far enough that a coordinate click is a coin toss.
+    await page
+      .getByTestId(`remove-${ids['Alpha design']}-${ids['Beta build']}`)
+      .dispatchEvent('click');
     await expect(edge).toHaveCount(0);
   });
 
@@ -134,7 +147,7 @@ test.describe('the graph', () => {
     await drawLink(page, ids['Alpha design']!, ids['Beta build']!);
     await page
       .getByTestId(`remove-${ids['Alpha design']}-${ids['Beta build']}`)
-      .click({ force: true });
+      .dispatchEvent('click');
     await expect(page.getByTestId(key)).toHaveCount(0);
 
     await page.getByTestId('undo').click();

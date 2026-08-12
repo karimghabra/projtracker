@@ -46,6 +46,10 @@ import {
  */
 const BAND_HUES = ['accent', 'info', 'ok', 'warn'] as const;
 
+/** Breathing room under each band, and how wide a shelf of bands may get. */
+const BAND_GAP = 46;
+const BAND_ROW_TARGET = 2000;
+
 const NODE_W = 172;
 const NODE_H = 54;
 const COL_GAP = 84;
@@ -107,25 +111,89 @@ export function GraphScreen() {
     ? new Set(graph.nodes.filter((n) => n.name.toLowerCase().includes(needle)).map((n) => n.id))
     : null;
 
-  const { placed, width, height, bandBoxes } = useMemo(() => {
-    const maxRank = graph.nodes.reduce((max, n) => Math.max(max, n.rank), 0);
-    const out: Placed[] = graph.nodes.map((node) => ({
-      ...node,
-      x: PAD_X + node.rank * (NODE_W + COL_GAP),
-      y: PAD_Y + node.lane * ROW_H,
-    }));
+  /*
+    Bands are packed across the canvas, not stacked down it.
 
-    const boxes = graph.bands.map((band) => ({
-      id: band.projectId,
-      name: band.projectName,
-      y: PAD_Y + band.firstLane * ROW_H - 22,
-      h: band.laneCount * ROW_H + 12,
+    One band per row made the board's height the sum of every project and its
+    width the depth of the deepest one, so most of the canvas was empty and all
+    of the cost was scroll: five projects came to four screens. Each band is now
+    measured on its own contents and laid out on shelves, wrapping when the row
+    is full — the same board, in roughly the square root of the height.
+
+    Each band keeps its internal layout exactly as core computed it. Ranks and
+    lanes are still what decide where a card sits; this only chooses where each
+    band's own origin lands.
+  */
+  const { placed, width, height, bandBoxes } = useMemo(() => {
+    const bandOf = (lane: number) =>
+      graph.bands.find((b) => lane >= b.firstLane && lane < b.firstLane + b.laneCount);
+
+    // Measure every band against its own contents rather than the whole board.
+    const measured = graph.bands.map((band) => {
+      const mine = graph.nodes.filter((n) => bandOf(n.lane)?.projectId === band.projectId);
+      const minRank = mine.reduce((min, n) => Math.min(min, n.rank), Infinity);
+      const maxRank = mine.reduce((max, n) => Math.max(max, n.rank), 0);
+      const span = Number.isFinite(minRank) ? maxRank - minRank : 0;
+      return {
+        band,
+        minRank: Number.isFinite(minRank) ? minRank : 0,
+        w: PAD_X + (span + 1) * (NODE_W + COL_GAP),
+        h: band.laneCount * ROW_H + BAND_GAP,
+      };
+    });
+
+    // Shelves: fill a row until it would pass the target width, then wrap. Two
+    // bands wide on a normal window, one when a single project is that wide.
+    const target = Math.max(
+      measured.reduce((max, m) => Math.max(max, m.w), 0),
+      BAND_ROW_TARGET,
+    );
+
+    const origins = new Map<string, { x: number; y: number }>();
+    let shelfY = PAD_Y;
+    let shelfX = 0;
+    let shelfH = 0;
+    let widest = 0;
+
+    for (const m of measured) {
+      if (shelfX > 0 && shelfX + m.w > target) {
+        shelfY += shelfH;
+        shelfX = 0;
+        shelfH = 0;
+      }
+      origins.set(m.band.projectId, { x: shelfX, y: shelfY });
+      shelfX += m.w;
+      shelfH = Math.max(shelfH, m.h);
+      widest = Math.max(widest, shelfX);
+    }
+
+    const at = (band: (typeof measured)[number]) => origins.get(band.band.projectId)!;
+
+    const out: Placed[] = graph.nodes.map((node) => {
+      const owner = bandOf(node.lane);
+      const m = measured.find((x) => x.band.projectId === owner?.projectId);
+      const origin = m ? at(m) : { x: 0, y: PAD_Y };
+      const lane = node.lane - (owner?.firstLane ?? 0);
+      return {
+        ...node,
+        x: origin.x + PAD_X + (node.rank - (m?.minRank ?? 0)) * (NODE_W + COL_GAP),
+        y: origin.y + lane * ROW_H,
+      };
+    });
+
+    const boxes = measured.map((m) => ({
+      id: m.band.projectId,
+      name: m.band.projectName,
+      x: at(m).x + 12,
+      y: at(m).y - 22,
+      w: m.w - 24,
+      h: m.band.laneCount * ROW_H + 12,
     }));
 
     return {
       placed: out,
-      width: PAD_X + (maxRank + 1) * (NODE_W + COL_GAP) + 40,
-      height: PAD_Y + graph.laneCount * ROW_H + 30,
+      width: Math.max(widest, 320) + 40,
+      height: shelfY + shelfH + 30,
       bandBoxes: boxes,
     };
   }, [graph]);
@@ -393,19 +461,19 @@ export function GraphScreen() {
               return (
                 <g key={band.id} data-testid={`band-${band.id}`} className={`band tone-${hue}`}>
                   <rect
-                    x={12}
+                    x={band.x}
                     y={band.y}
-                    width={Math.max(200, width - 40)}
+                    width={band.w}
                     height={band.h}
                     rx={12}
                     className="band-field"
                   />
                   {/* The spine: a project's colour, down its whole depth. */}
-                  <rect x={12} y={band.y} width={4} height={band.h} rx={2} className="band-spine" />
+                  <rect x={band.x} y={band.y} width={4} height={band.h} rx={2} className="band-spine" />
                   <rect
-                    x={12}
+                    x={band.x}
                     y={band.y}
-                    width={Math.max(200, width - 40)}
+                    width={band.w}
                     height={26}
                     rx={12}
                     className="band-header"
@@ -419,8 +487,8 @@ export function GraphScreen() {
                     <title>
                       {collapsed.includes(band.id) ? 'Expand this project' : 'Collapse this project'}
                     </title>
-                    <rect x={16} y={band.y + 3} width={Math.max(180, width - 48)} height={20} fill="transparent" />
-                    <text x={26} y={band.y + 18} className="graph-band-label">
+                    <rect x={band.x + 4} y={band.y + 3} width={band.w - 8} height={20} fill="transparent" />
+                    <text x={band.x + 14} y={band.y + 18} className="graph-band-label">
                       {collapsed.includes(band.id) ? '▸' : '▾'} {band.name}
                     </text>
                   </g>
