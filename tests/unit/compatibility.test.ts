@@ -280,12 +280,30 @@ describe('a vault written by 1.3.2', () => {
       cellLine: 'hMSC',
       seedingDate: '2026-08-03',
       durationDays: 21,
-      mediaChangeEveryDays: 2,
       endpoint: 'Fix and stain',
       stagesDone: ['seed'],
     });
     expect(experiment.experiment!.endsOn).toBe('2026-08-24');
     expect(experiment.experiment!.stages.find((s) => s.id === 'seed')!.done).toBe(true);
+  });
+
+  /**
+   * The one field this vault carries that 1.10.0 deliberately does not keep.
+   *
+   * Every other field in the fixture must survive, and the tests above say so.
+   * `mediaChangeEveryDays: 2` is different in kind: the routine media change it
+   * configured no longer exists, so preserving the number would preserve a
+   * setting for a feature that is gone. It is read past, and the next save
+   * writes the file without it.
+   */
+  it('drops the routine media change a 1.3.2 vault configured', () => {
+    const app = new App(vaultAsShipped(), CLOCK);
+    const def = app.node('n6').experiment!.def as unknown as Record<string, unknown>;
+
+    expect(def['mediaChangeEveryDays']).toBeUndefined();
+    expect(app.node('n6').experiment!.stages.map((s) => s.label)).not.toContain('Change media');
+    // What the user did type is untouched: the phases are still there.
+    expect(app.node('n6').experiment!.stages.filter((s) => s.kind === 'media-switch')).toHaveLength(1);
   });
 
   it('keeps the inventory, including a run in progress', () => {

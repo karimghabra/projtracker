@@ -200,6 +200,52 @@ describe('undo reverts the whole image', () => {
     expect(h.app.node(b.review).derived).toBe('done');
   });
 
+  /**
+   * A snapshot is raw JSON and never passes through the parser, so the vault
+   * cleanup that removed routine media changes had a second door: undo far
+   * enough into history written before 1.10.0 and they would come back.
+   */
+  it('does not bring a routine media change back from an old snapshot', () => {
+    const h = harness('2026-08-03T09:00');
+    const b = sampleBoard(h);
+    h.app.setExperiment(b.experiment, {
+      sampleCount: 6,
+      seedingDate: '2026-08-03',
+      durationDays: 21,
+      mediaPhases: [{ name: 'Differentiation', startDay: 7 }],
+    });
+    h.app.complete(b.draft);
+
+    // Doctor the newest snapshot into one a pre-1.10.0 build would have left.
+    // Numbered snapshots only — `.history/index.json` is the stack itself.
+    const files = h.vault.list('.history/').filter((f) => /\/\d+\.json$/.test(f)).sort();
+    const file = files.at(-1)!;
+    const legacy = JSON.parse(h.vault.read(file)!) as Record<string, never>;
+    const state = legacy as unknown as {
+      reminders: unknown[];
+      planner: unknown[];
+      nodes: Record<string, { experiment?: { stagesDone: string[] } }>;
+    };
+    state.reminders.push({
+      id: `exp-${b.experiment}-media-4`,
+      title: 'Osteogenic culture: Change media',
+      date: '2026-08-07',
+      source: { kind: 'experiment', nodeId: b.experiment, stageId: 'media-4' },
+      nodeId: b.experiment,
+      done: false,
+    });
+    state.planner.push({ date: '2026-08-07', nodeId: `exp-${b.experiment}-media-4`, order: 0 });
+    state.nodes[b.experiment]!.experiment!.stagesDone = ['seed', 'media-4'];
+    h.vault.write(file, JSON.stringify(state));
+
+    h.app.undo();
+
+    const titles = h.app.state.reminders.map((r) => r.title);
+    expect(titles.filter((t) => t.includes('Change media'))).toEqual([]);
+    expect(h.app.state.planner.filter((e) => e.nodeId.includes('media-'))).toEqual([]);
+    expect(h.app.state.nodes[b.experiment]!.experiment!.stagesDone).toEqual(['seed']);
+  });
+
   it('undoes a delete completely, children and edges included', () => {
     const h = harness();
     const b = sampleBoard(h);

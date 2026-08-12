@@ -16,7 +16,6 @@ describe('experiment timelines', () => {
       { name: 'Proliferation', startDay: 0 },
       { name: 'Differentiation', startDay: 7 },
     ],
-    mediaChangeEveryDays: 2,
     endpoint: 'Fix and stain',
     stagesDone: [],
   };
@@ -29,17 +28,21 @@ describe('experiment timelines', () => {
     expect(stages.at(-1)).toMatchObject({ kind: 'endpoint', date: '2026-08-24', day: 21 });
   });
 
-  it('never asks for a media change and a media switch on the same morning', () => {
-    const switchDay = stagesOf(def).find((s) => s.kind === 'media-switch')!.date;
-    const onThatDay = stagesOf(def).filter((s) => s.date === switchDay);
-    expect(onThatDay).toHaveLength(1);
-    expect(onThatDay[0]!.kind).toBe('media-switch');
+  it('generates a stage only where the definition put one', () => {
+    // Every stage traces to something typed: the scaffolds' expected date, the
+    // seeding date, a phase the user named, the endpoint. A three-week culture
+    // is four rows, not fourteen.
+    expect(stagesOf(def).map((s) => s.day)).toEqual([-2, 0, 7, 21]);
   });
 
-  it('spaces routine media changes correctly', () => {
-    const changes = stagesOf(def).filter((s) => s.kind === 'media-change').map((s) => s.day);
-    // Every two days, skipping day 7 (a switch) and never past the endpoint.
-    expect(changes).toEqual([2, 4, 6, 8, 10, 12, 14, 16, 18, 20]);
+  it('never invents a routine chore between them', () => {
+    // 1.9.0 and earlier put a `Change media` every two days here — ten rows on
+    // this culture, from a default nobody typed. The regression to guard is a
+    // stage appearing on a day the definition never mentions.
+    const days = new Set([-2, 0, 7, 21]);
+    const invented = stagesOf(def).filter((s) => !days.has(s.day));
+    expect(invented).toEqual([]);
+    expect(stagesOf(def).map((s) => s.label)).not.toContain('Change media');
   });
 
   it('reports the day and phase of a running culture', () => {
@@ -82,7 +85,6 @@ describe('experiments in the app', () => {
       sampleCount: 12,
       seedingDate: '2026-08-03',
       durationDays: 14,
-      mediaChangeEveryDays: 2,
       mediaPhases: [{ name: 'Proliferation', startDay: 0 }, { name: 'Differentiation', startDay: 7 }],
       endpoint: 'Harvest for qPCR',
     });

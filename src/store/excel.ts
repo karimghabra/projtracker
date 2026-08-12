@@ -73,7 +73,8 @@ export function decodeCulture(text: string): CultureSpec | undefined {
     scaffoldsExpected: fields.get('expected') || undefined,
     seedingDate: fields.get('seed') || undefined,
     durationDays: num('days') ?? 21,
-    mediaChangeEveryDays: num('every'),
+    // `every=` may still be in an older workbook. It is read past and dropped:
+    // routine media changes were removed in 1.10.0.
     mediaPhases: phases,
     endpoint: fields.get('endpoint') || undefined,
   };

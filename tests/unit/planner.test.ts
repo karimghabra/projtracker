@@ -316,16 +316,26 @@ describe('reminders', () => {
     expect(h.app.todayList().items.filter((i) => i.source === 'rolled-over').length).toBe(dueToday);
   });
 
-  it("a culture's media change expires with its day instead of piling up", () => {
+  it("a culture's generated stage expires with its day instead of piling up", () => {
     const h = harness('2026-07-30T09:00');
     const b = sampleBoard(h);
-    // A culture with a media change every three days, started weeks ago.
+    // A long culture stepped through several named phases, started weeks ago.
+    // Routine media changes were the original vehicle for this test; they no
+    // longer exist, and a phase switch is generated the same way and carries
+    // the same risk of burying the day.
     h.app.setExperiment(b.experiment, {
       sampleCount: 6,
       durationDays: 28,
       seedingDate: '2026-07-01',
-      mediaChangeEveryDays: 3,
-      mediaPhases: [],
+      mediaPhases: [
+        { name: 'Proliferation', startDay: 0 },
+        { name: 'Differentiation', startDay: 3 },
+        { name: 'Mineralisation', startDay: 6 },
+        { name: 'Maintenance', startDay: 9 },
+        { name: 'Late differentiation', startDay: 12 },
+        { name: 'Late mineralisation', startDay: 15 },
+        { name: 'Pre-harvest', startDay: 18 },
+      ],
       stagesDone: [],
     });
 
@@ -344,15 +354,17 @@ describe('reminders', () => {
     expect(view.missed.length).toBe(stale.length);
   });
 
-  it('a media change is never on today, not even on its own day', () => {
+  it("a culture's stage is never on today, not even on its own day", () => {
     const h = harness('2026-07-30T09:00');
     const b = sampleBoard(h);
     h.app.setExperiment(b.experiment, {
       sampleCount: 6,
       durationDays: 28,
       seedingDate: '2026-07-30',
-      mediaChangeEveryDays: 3,
-      mediaPhases: [],
+      mediaPhases: [
+        { name: 'Proliferation', startDay: 0 },
+        { name: 'Differentiation', startDay: 3 },
+      ],
       stagesDone: [],
     });
 

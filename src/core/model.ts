@@ -106,8 +106,6 @@ export interface ExperimentDef {
   durationDays: number;
   /** Media phases as day offsets from seeding, e.g. proliferation at 0, differentiation at 7. */
   mediaPhases: MediaPhase[];
-  /** A media change every n days, if the protocol calls for one. */
-  mediaChangeEveryDays?: number;
   /** What happens at the end: harvest, fixation, assay. */
   endpoint?: string;
   /** Stage ids the user has ticked off. */

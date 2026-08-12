@@ -12,7 +12,7 @@
 import type { State } from '../core/model.ts';
 import { cloneState, emptyState } from '../core/model.ts';
 import { defaultProtocols } from '../core/protocols.ts';
-import { VAULT_FILES, deserialize, serializeAll } from './serialize.ts';
+import { VAULT_FILES, deserialize, dropRoutineMediaStages, serializeAll } from './serialize.ts';
 import type { Vault } from './vault.ts';
 
 export const HISTORY_LIMIT = 200;
@@ -144,7 +144,12 @@ export class Store {
     const raw = this.vault.read(file);
     if (!raw) return null;
     try {
-      return JSON.parse(raw) as State;
+      const state = JSON.parse(raw) as State;
+      // A snapshot is JSON and never passes through the parser, so a vault with
+      // history from before 1.10.0 would hand back routine media changes the
+      // moment you undid far enough.
+      dropRoutineMediaStages(state);
+      return state;
     } catch {
       return null;
     }

@@ -349,7 +349,6 @@ describe('the round trip', () => {
       cellLine: 'hMSC',
       seedingDate: '2026-08-03',
       durationDays: 21,
-      mediaChangeEveryDays: 2,
       mediaPhases: [
         { name: 'Proliferation', startDay: 0 },
         { name: 'Differentiation', startDay: 7 },
@@ -367,7 +366,6 @@ describe('the round trip', () => {
       cellLine: 'hMSC',
       seedingDate: '2026-08-03',
       durationDays: 21,
-      mediaChangeEveryDays: 2,
       endpoint: 'Fix and stain for ALP',
     });
     expect(experiment.experiment!.def.mediaPhases).toEqual([

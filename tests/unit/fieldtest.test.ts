@@ -198,7 +198,6 @@ describe('sixty days of use', () => {
           sampleCount: 6,
           seedingDate: addDays(date, 1),
           durationDays: 7 + Math.floor(random() * 14),
-          mediaChangeEveryDays: 3,
         });
         looseExperiments += 1;
         did.push(`started a loose culture (${loose.id})`);
@@ -251,7 +250,6 @@ describe('sixty days of use', () => {
           cellLine: 'hMSC',
           seedingDate: addDays(date, 2),
           durationDays: 21,
-          mediaChangeEveryDays: 2,
           mediaPhases: [
             { name: 'Proliferation', startDay: 0 },
             { name: 'Differentiation', startDay: 7 },
@@ -478,7 +476,16 @@ describe('sixty days of use', () => {
 
     // The experiment produced a real, dated timeline.
     const experiment = app.node(board.experiment);
-    expect(experiment.experiment!.stages.length).toBeGreaterThan(10);
+    // Seeding, the day 7 switch, and the endpoint — every one of them a day the
+    // definition named. The count used to be "more than ten", which was only
+    // true because a routine media change filled the gaps; asserting the shape
+    // instead means an invented stage fails here rather than passing quietly.
+    expect(experiment.experiment!.stages.map((s) => s.day)).toEqual([0, 7, 21]);
+    expect(experiment.experiment!.stages.map((s) => s.kind)).toEqual([
+      'seeding',
+      'media-switch',
+      'endpoint',
+    ]);
     expect(experiment.experiment!.endsOn).toBeDefined();
 
     // Two months of accumulated state restores into an empty vault and gives

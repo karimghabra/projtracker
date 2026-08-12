@@ -513,7 +513,6 @@ export function encodeCulture(def: ExperimentDef): string {
   if (def.scaffoldsExpected) parts.push(`expected=${def.scaffoldsExpected}`);
   if (def.seedingDate) parts.push(`seed=${def.seedingDate}`);
   parts.push(`days=${def.durationDays}`);
-  if (def.mediaChangeEveryDays !== undefined) parts.push(`every=${def.mediaChangeEveryDays}`);
   if (def.mediaPhases.length) {
     parts.push(`phases=${def.mediaPhases.map((p) => `${p.name}@${p.startDay}`).join(',')}`);
   }

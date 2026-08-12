@@ -64,6 +64,45 @@ export function projectFile(slug: string): string {
   return `projects/${slug}.pt`;
 }
 
+/**
+ * A stage id left behind by the routine media changes removed in 1.10.0.
+ *
+ * Matches both shapes the id appears in: `media-4` in an experiment's
+ * `stagesDone`, and `exp-n237-media-4` where a reminder or planner row names
+ * the generated stage. A phase switch is `phase-14` / `exp-n237-phase-14` and
+ * is deliberately not matched — those come from something the user typed and
+ * still exist.
+ */
+function isRoutineMediaStage(id: string): boolean {
+  return /(^|-)media-\d+$/.test(id);
+}
+
+/**
+ * Everything a vault written before 1.10.0 holds about routine media changes.
+ *
+ * State reaches memory two ways — parsed from the vault, and read back from an
+ * undo snapshot — and a snapshot is raw JSON that never passes through the
+ * parser. Without this, undoing far enough would put "Change media" back on the
+ * screen. One function, both doors.
+ *
+ * Nothing here is a loss: the stages these refer to are no longer generated, so
+ * every one of them is a reference to something that cannot appear, be ticked,
+ * or be undone. The next save writes the files without them.
+ */
+export function dropRoutineMediaStages(state: State): void {
+  state.reminders = state.reminders.filter(
+    (r) => !(r.source.kind === 'experiment' && isRoutineMediaStage(r.source.stageId)),
+  );
+  state.planner = state.planner.filter((e) => !isRoutineMediaStage(e.nodeId));
+  for (const node of Object.values(state.nodes)) {
+    if (!node.experiment) continue;
+    node.experiment.stagesDone = node.experiment.stagesDone.filter((id) => !isRoutineMediaStage(id));
+    // The setting itself, on a def that came back from a snapshot rather than
+    // through the parser.
+    delete (node.experiment as unknown as Record<string, unknown>)['mediaChangeEveryDays'];
+  }
+}
+
 export function journalFile(month: string): string {
   return `journal/${month}.pt`;
 }
@@ -164,7 +203,6 @@ function experimentToBlock(def: ExperimentDef): Block {
   if (def.scaffoldsExpected) f.set('scaffoldsExpected', def.scaffoldsExpected);
   if (def.seedingDate) f.set('seedingDate', def.seedingDate);
   f.set('durationDays', String(def.durationDays));
-  if (def.mediaChangeEveryDays !== undefined) f.set('mediaChangeEveryDays', String(def.mediaChangeEveryDays));
   if (def.endpoint) f.set('endpoint', def.endpoint);
   const stagesDone = encodeList(def.stagesDone);
   if (stagesDone) f.set('stagesDone', stagesDone);
@@ -185,14 +223,15 @@ function blockToExperiment(b: Block): ExperimentDef {
     scaffoldsExpected: field(b, 'scaffoldsExpected'),
     seedingDate: field(b, 'seedingDate'),
     durationDays: numberField(b, 'durationDays', 0),
-    mediaChangeEveryDays: field(b, 'mediaChangeEveryDays')
-      ? numberField(b, 'mediaChangeEveryDays', 0)
-      : undefined,
     endpoint: field(b, 'endpoint'),
     mediaPhases: childrenOfKind(b, 'phase').map((p) => ({
       name: field(p, 'name') ?? '',
       startDay: numberField(p, 'startDay', 0),
     })),
+    // `mediaChangeEveryDays` is simply not read: a vault written before 1.10.0
+    // still has it, and the routine media change it configured no longer
+    // exists. The ticks against those stages are cleared by
+    // `dropRoutineMediaStages` once the whole state is built.
     stagesDone: listField(b, 'stagesDone'),
   };
 }
@@ -617,6 +656,7 @@ export function deserialize(files: VaultFiles): State {
     }
   }
 
+  dropRoutineMediaStages(state);
   return state;
 }
 

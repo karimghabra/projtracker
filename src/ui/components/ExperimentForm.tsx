@@ -134,22 +134,6 @@ export function ExperimentForm({
           />
         </div>
 
-        <div className="field">
-          <label htmlFor="ex-media">Media change every (days)</label>
-          <input
-            id="ex-media"
-            className="input"
-            type="number"
-            min={1}
-            value={value.mediaChangeEveryDays ?? ''}
-            placeholder="2"
-            onChange={(event) =>
-              set({
-                mediaChangeEveryDays: event.target.value ? Number(event.target.value) : undefined,
-              })
-            }
-          />
-        </div>
       </div>
 
       <div className="field">

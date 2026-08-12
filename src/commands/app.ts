@@ -1772,7 +1772,6 @@ export class App {
               scaffoldsExpected: row.culture.scaffoldsExpected,
               seedingDate: row.culture.seedingDate,
               durationDays: row.culture.durationDays,
-              mediaChangeEveryDays: row.culture.mediaChangeEveryDays,
               mediaPhases: row.culture.mediaPhases,
               endpoint: row.culture.endpoint,
             });

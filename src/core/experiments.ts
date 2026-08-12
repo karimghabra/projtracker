@@ -8,18 +8,20 @@
  * keeps this on the reminder side of the line and off the scheduler side.
  *
  * Stages are derived, never stored. Only which ones the user has ticked is.
+ *
+ * There was a sixth stage kind until 1.10.0: a routine `Change media` every n
+ * days. It came from a default nobody typed — `mediaChangeEveryDays: 2` on
+ * every new experiment — and it generated five rows on a three-week culture and
+ * seventeen on a five-week one. A phase switch is a decision ("differentiation
+ * starts on day 14"); a routine media change was the app inventing a chore and
+ * then dating it. The rule now: a stage exists because the user said so.
  */
 
 import type { DateOnly } from './dates.ts';
 import { addDays, diffDays, formatDayMonth } from './dates.ts';
 import type { ExperimentDef, MediaPhase, Node } from './model.ts';
 
-export type StageKind =
-  | 'scaffolds-expected'
-  | 'seeding'
-  | 'media-change'
-  | 'media-switch'
-  | 'endpoint';
+export type StageKind = 'scaffolds-expected' | 'seeding' | 'media-switch' | 'endpoint';
 
 export interface Stage {
   /** Stable within an experiment, so ticking one survives a redefinition. */
@@ -42,7 +44,6 @@ export function emptyExperiment(): ExperimentDef {
     sampleCount: 0,
     durationDays: 21,
     mediaPhases: DEFAULT_MEDIA_PHASES.map((p) => ({ ...p })),
-    mediaChangeEveryDays: 2,
     stagesDone: [],
   };
 }
@@ -93,24 +94,6 @@ export function stagesOf(def: ExperimentDef): Stage[] {
       day: phase.startDay,
       done: done.has(`phase-${phase.startDay}`),
     });
-  }
-
-  // Routine media changes, skipping days that already carry a switch so the
-  // list never says "change media" and "switch media" for the same morning.
-  const every = def.mediaChangeEveryDays;
-  if (every && every > 0) {
-    const switchDays = new Set(phases.filter((p) => p.startDay > 0).map((p) => p.startDay));
-    for (let day = every; day < def.durationDays; day += every) {
-      if (switchDays.has(day)) continue;
-      stages.push({
-        id: `media-${day}`,
-        kind: 'media-change',
-        label: 'Change media',
-        date: addDays(seeding, day),
-        day,
-        done: done.has(`media-${day}`),
-      });
-    }
   }
 
   stages.push({
@@ -225,9 +208,6 @@ export function validateExperiment(def: ExperimentDef): string[] {
   if (def.durationDays <= 0) problems.push('Culture duration must be at least one day.');
   if (def.cellsPerScaffold !== undefined && def.cellsPerScaffold < 0) {
     problems.push('Cells per scaffold cannot be negative.');
-  }
-  if (def.mediaChangeEveryDays !== undefined && def.mediaChangeEveryDays <= 0) {
-    problems.push('Media change interval must be at least one day.');
   }
   for (const phase of def.mediaPhases) {
     if (phase.startDay < 0) problems.push(`Media phase "${phase.name}" cannot start before seeding.`);

@@ -119,7 +119,6 @@ project tendon-study
           cellLine: hMSC
           seedingDate: 2026-08-03
           durationDays: 21
-          mediaChangeEveryDays: 2
           endpoint: Fix and stain
           stagesDone: seed
           phase p0
