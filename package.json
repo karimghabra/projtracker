@@ -1,6 +1,6 @@
 {
   "name": "protracker",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "description": "A lab project tracker: projects, milestones, goals, experiments and scaffold inventory over a dependency graph, stored as plain text.",
   "type": "module",
   "license": "MIT",
