@@ -37,6 +37,13 @@ import type { ViewName } from '../AppShell.tsx';
 export function HomeScreen({ onNavigate }: { onNavigate: (view: ViewName) => void }) {
   const { app } = useApp();
   const [pickedDay, setPickedDay] = useState<string | null>(null);
+  const [folded, setFolded] = useState<Fold>(
+    () => (window.localStorage.getItem(FOLD_KEY) as Fold | null) ?? 'none',
+  );
+  const fold = (next: Fold) => {
+    setFolded(next);
+    window.localStorage.setItem(FOLD_KEY, next);
+  };
   const [calendarSpan, setCalendarSpan] = useState<'off' | CalendarSpan>(
     /*
       Month by default, still. Switching to the week was the obvious answer to
@@ -58,15 +65,17 @@ export function HomeScreen({ onNavigate }: { onNavigate: (view: ViewName) => voi
      * lists every item, it just scrolls inside its own column rather than
      * pushing the calendar and the projects off the bottom of the window.
      */
-    <div className="dash">
-      <div className="dash-col">
+    <div className={`dash ${folded === 'left' ? 'fold-left' : ''} ${folded === 'right' ? 'fold-right' : ''}`}>
+      <div className="dash-col" data-testid="dash-left">
+        <ColumnFold side="left" folded={folded} onFold={fold} />
         <TodayPanel />
         <InProgressPanel />
         <ReadyPanel />
         <ProjectsPanel onNavigate={onNavigate} />
       </div>
 
-      <div className="dash-col">
+      <div className="dash-col" data-testid="dash-right">
+        <ColumnFold side="right" folded={folded} onFold={fold} />
         <div className="panel">
           <div className="panel-head">
             <IconCalendar size={15} />
@@ -972,6 +981,51 @@ function ReseedField({
         Reseed
       </button>
     </form>
+  );
+}
+
+export type Fold = 'none' | 'left' | 'right';
+
+const FOLD_KEY = 'protracker:dashFold';
+
+/**
+ * Give one column the whole screen.
+ *
+ * Cheaper than choosing, once, which panels deserve to exist: what you want on
+ * screen at 9am with a day to plan is not what you want at 3pm with a culture
+ * to check, and either way the answer is "one of these two columns, all of it".
+ * The folded column keeps a handle so it is obviously folded rather than gone.
+ */
+function ColumnFold({
+  side,
+  folded,
+  onFold,
+}: {
+  side: 'left' | 'right';
+  folded: Fold;
+  onFold: (next: Fold) => void;
+}) {
+  const other = side === 'left' ? 'right' : 'left';
+  const isFolded = folded === side;
+  const label = isFolded
+    ? `Unfold the ${side} column`
+    : folded === other
+      ? `Bring the ${other} column back`
+      : `Fold the ${side} column away`;
+
+  return (
+    <div className="col-fold">
+      <button
+        className="btn ghost icon sm"
+        title={label}
+        aria-label={label}
+        aria-pressed={isFolded}
+        data-testid={`fold-${side}`}
+        onClick={() => onFold(isFolded || folded === other ? 'none' : side)}
+      >
+        {isFolded ? <IconChevronRight size={13} /> : <IconChevronDown size={13} />}
+      </button>
+    </div>
   );
 }
 
