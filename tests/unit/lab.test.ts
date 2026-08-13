@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { defaultMediaPhases, describeExperiment, endDateOf, experimentStatus, stagesOf, validateExperiment } from '@core/experiments.ts';
 import { BATCH_STATES } from '@core/model.ts';
 import { formatOffset, scheduleRun, totalHours } from '@core/protocols.ts';
+import { loadState } from '@store/store.ts';
 import { expectThrows, harness, sampleBoard } from './helpers.ts';
 
 describe('experiment timelines', () => {
@@ -809,5 +810,131 @@ describe('how long a culture is, and where its switch goes', () => {
 
     // And shortening past it is still refused: that contradiction is theirs.
     expectThrows(() => h.app.setExperiment(id, { durationDays: 14 }));
+  });
+});
+
+/**
+ * Scaffolds out of the inventory and into a culture.
+ *
+ * Everything up to sterilisation was recorded and then nothing ever happened to
+ * a batch again, so the inventory only grew — which is why the real one has
+ * four types in it and no batches at all.
+ */
+describe('seeding consumes scaffolds', () => {
+  const board = (h: ReturnType<typeof harness>) => {
+    const b = sampleBoard(h);
+    h.app.addScaffoldType('Collagen sponge');
+    const batch = h.app.addBatch('collagen-sponge', 24, { fabricatedOn: '2026-08-01' }).id;
+    h.app.setBatchState(batch, 'sterilised');
+    return { ...b, batch };
+  };
+
+  it('takes a whole batch, and says which culture has it', () => {
+    const h = harness('2026-08-03T09:00');
+    const b = board(h);
+
+    h.app.assignScaffolds(b.experiment, [{ batchId: b.batch, count: 24 }]);
+
+    const batch = h.app.state.batches.find((x) => x.id === b.batch)!;
+    expect(batch.state).toBe('seeded');
+    expect(batch.usedBy).toBe(b.experiment);
+    expect(h.app.scaffoldsIn(b.experiment).map((x) => x.count)).toEqual([24]);
+    // The batch count is untouched — nothing was split, it all went in.
+    expect(h.app.state.batches).toHaveLength(1);
+  });
+
+  it('splits a batch when only some of it is seeded, and loses none', () => {
+    const h = harness('2026-08-03T09:00');
+    const b = board(h);
+
+    h.app.assignScaffolds(b.experiment, [{ batchId: b.batch, count: 12 }]);
+
+    // Twelve on the shelf and twelve with cells on them: two different things.
+    const shelf = h.app.state.batches.find((x) => x.id === b.batch)!;
+    const seeded = h.app.state.batches.find((x) => x.usedBy === b.experiment)!;
+    expect(shelf.count).toBe(12);
+    expect(shelf.state).toBe('sterilised');
+    expect(shelf.usedBy).toBeUndefined();
+    expect(seeded.count).toBe(12);
+    expect(seeded.state).toBe('seeded');
+    // Nothing appeared or vanished in the splitting.
+    expect(h.app.state.batches.reduce((sum, x) => sum + x.count, 0)).toBe(24);
+  });
+
+  it('keeps the history the scaffolds already had', () => {
+    const h = harness('2026-08-03T09:00');
+    const b = board(h);
+    h.app.assignScaffolds(b.experiment, [{ batchId: b.batch, count: 6 }]);
+
+    // Without carrying it, the seeded half would look like it was never made,
+    // never crosslinked and never sterilised.
+    const seeded = h.app.state.batches.find((x) => x.usedBy === b.experiment)!;
+    expect(seeded.history.map((e) => e.state)).toEqual(['fabricated', 'sterilised', 'seeded']);
+    expect(seeded.history.at(-1)!.note).toContain('Osteogenic culture');
+  });
+
+  it('is one undo step however many batches were picked', () => {
+    const h = harness('2026-08-03T09:00');
+    const b = board(h);
+    const second = h.app.addBatch('collagen-sponge', 10, { fabricatedOn: '2026-08-02' }).id;
+    const before = structuredClone(h.app.state);
+
+    h.app.assignScaffolds(b.experiment, [
+      { batchId: b.batch, count: 12 },
+      { batchId: second, count: 10 },
+    ]);
+    expect(h.app.scaffoldsIn(b.experiment)).toHaveLength(2);
+
+    h.app.undo();
+    expect(h.app.state).toEqual(before);
+  });
+
+  it('refuses more than there is, and moves nothing when it does', () => {
+    const h = harness('2026-08-03T09:00');
+    const b = board(h);
+    const before = structuredClone(h.app.state);
+
+    expect(expectThrows(() =>
+      h.app.assignScaffolds(b.experiment, [{ batchId: b.batch, count: 40 }]),
+    ).message).toMatch(/only 24/);
+    expect(h.app.state).toEqual(before);
+  });
+
+  it('checks every pick before moving any of them', () => {
+    const h = harness('2026-08-03T09:00');
+    const b = board(h);
+    const second = h.app.addBatch('collagen-sponge', 4).id;
+    const before = structuredClone(h.app.state);
+
+    // The first pick is fine and the second is not. Neither happens.
+    expectThrows(() =>
+      h.app.assignScaffolds(b.experiment, [
+        { batchId: b.batch, count: 6 },
+        { batchId: second, count: 99 },
+      ]),
+    );
+    expect(h.app.state).toEqual(before);
+  });
+
+  it('will not seed the same scaffolds into a second culture', () => {
+    const h = harness('2026-08-03T09:00');
+    const b = board(h);
+    h.app.assignScaffolds(b.experiment, [{ batchId: b.batch, count: 24 }]);
+
+    const other = h.app.experimentQuickAdd('Another culture').id;
+    expect(expectThrows(() =>
+      h.app.assignScaffolds(other, [{ batchId: b.batch, count: 24 }]),
+    ).message).toMatch(/already in/);
+  });
+
+  it('survives the vault, so the link is not a thing only memory knows', () => {
+    const h = harness('2026-08-03T09:00');
+    const b = board(h);
+    h.app.assignScaffolds(b.experiment, [{ batchId: b.batch, count: 12 }]);
+
+    const reloaded = loadState(h.vault);
+    const seeded = reloaded.batches.find((x) => x.usedBy === b.experiment)!;
+    expect(seeded.count).toBe(12);
+    expect(seeded.state).toBe('seeded');
   });
 });

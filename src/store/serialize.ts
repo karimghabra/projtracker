@@ -122,7 +122,7 @@ const NODE_KNOWN = [
  * build knew about a scaffold type. These lists close that.
  */
 const TYPE_KNOWN = ['name', 'category', 'unit', 'material', 'geometry', 'notes', 'createdAt'] as const;
-const BATCH_KNOWN = ['type', 'count', 'fabricatedOn', 'state', 'label', 'notes', 'run'] as const;
+const BATCH_KNOWN = ['type', 'count', 'fabricatedOn', 'state', 'label', 'notes', 'run', 'usedBy'] as const;
 const PROTOCOL_KNOWN = ['name', 'agent', 'notes', 'builtin'] as const;
 const PSTEP_KNOWN = ['name', 'offsetHours', 'durationHours', 'notes'] as const;
 const RUN_KNOWN = [
@@ -397,6 +397,7 @@ export function serializeInventory(state: State): string {
       label: batch.label,
       notes: batch.notes,
       run: batch.runId,
+      usedBy: batch.usedBy,
     });
     applyExtras(b.fields, batch.extra);
     for (const [i, event] of batch.history.entries()) {
@@ -593,6 +594,7 @@ export function deserialize(files: VaultFiles): State {
             label: field(b, 'label'),
             notes: field(b, 'notes'),
             runId: field(b, 'run'),
+            usedBy: field(b, 'usedBy'),
             history: childrenOfKind(b, 'event').map((e) => ({
               state: field(e, 'state') ?? 'fabricated',
               at: field(e, 'at') ?? '1970-01-01T00:00',

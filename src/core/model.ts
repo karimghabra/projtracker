@@ -312,6 +312,14 @@ export interface ScaffoldBatch {
   notes?: string;
   /** The crosslinking run currently acting on this batch, if any. */
   runId?: string;
+  /**
+   * The experiment these scaffolds went into, once they have been seeded.
+   *
+   * On the batch rather than on the experiment, exactly as `runId` is: the
+   * culture's scaffolds are then derived by asking the inventory, and there is
+   * no second list to disagree with this one.
+   */
+  usedBy?: NodeId;
   history: BatchEvent[];
   extra?: Record<string, string>;
 }

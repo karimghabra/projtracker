@@ -33,6 +33,7 @@ import {
   childrenOf,
   descendantsOf,
   isContainerKind,
+  isTerminalState,
   nextSeq,
   refOf,
   resolveNode,
@@ -1556,6 +1557,91 @@ export class App {
   }
 
   /** "I fabricated n of type t" — the one action the inventory page is built around. */
+  /**
+   * Scaffolds out of the inventory and into a culture.
+   *
+   * The act that was missing: everything up to sterilisation was recorded and
+   * then nothing happened to a batch ever again, so the inventory only grew and
+   * was worth nobody's time to keep. Seeding is what consumes it.
+   *
+   * **Partial is the normal case.** You make twenty-four and seed twelve. Taking
+   * part of a batch splits it: the remainder keeps the original id, its state
+   * and its history, and the part that went in becomes a batch of its own,
+   * `seeded`, pointing at the culture. Two records because there are now two
+   * different things — twelve on a shelf and twelve with cells on them — and a
+   * line in the new one's history saying where it came from.
+   *
+   * One undo step, however many batches were picked: assigning scaffolds to a
+   * culture is one decision.
+   */
+  assignScaffolds(
+    experimentId: NodeId,
+    picks: { batchId: string; count: number }[],
+    on: DateOnly = this.today,
+  ): Delta & { assigned: number } {
+    const node = this.state.nodes[experimentId];
+    if (!node) throw notFound('node', experimentId);
+    if (node.kind !== 'experiment') throw notAllowed(`"${node.name}" is not an experiment.`);
+    if (!isDateOnly(on)) throw invalid(`"${on}" is not a date. Use YYYY-MM-DD.`);
+    if (!picks.length) throw invalid('Pick some scaffolds to seed.');
+
+    // Everything is checked before anything moves, so a bad pick in a list of
+    // four does not leave the first two consumed.
+    for (const pick of picks) {
+      const batch = this.state.batches.find((b) => b.id === pick.batchId);
+      if (!batch) throw notFound('batch', pick.batchId);
+      const type = this.state.scaffoldTypes.find((t) => t.id === batch.typeId);
+      if (batch.usedBy) {
+        throw notAllowed(`That batch is already in "${this.state.nodes[batch.usedBy]?.name ?? 'a culture'}".`);
+      }
+      if (isTerminalState(batch.state)) throw notAllowed('That batch is already used up.');
+      const problem = type ? quantityProblem(pick.count, type) : undefined;
+      if (problem) throw invalid(problem);
+      if (pick.count > batch.count) {
+        throw invalid(`There are only ${batch.count} in that batch.`);
+      }
+    }
+
+    const now = this.now;
+    const total = picks.reduce((sum, p) => sum + p.count, 0);
+
+    return this.mutate(`Seed ${node.name}`, (draft) => {
+      for (const pick of picks) {
+        const batch = draft.batches.find((b) => b.id === pick.batchId)!;
+        const event = { state: 'seeded' as const, at: now, note: `Seeded into ${node.name} on ${on}` };
+
+        if (pick.count === batch.count) {
+          batch.state = 'seeded';
+          batch.usedBy = experimentId;
+          batch.history.push(event);
+          continue;
+        }
+
+        batch.count = roundQuantity(batch.count - pick.count);
+        const id = allocateId(draft, 'b');
+        draft.batches.push({
+          id,
+          typeId: batch.typeId,
+          count: roundQuantity(pick.count),
+          fabricatedOn: batch.fabricatedOn,
+          state: 'seeded',
+          label: batch.label,
+          notes: batch.notes,
+          usedBy: experimentId,
+          // The state it was in when it was taken, then the seeding. Without
+          // the first line the new batch looks like it was never crosslinked.
+          history: [...batch.history, event],
+        });
+      }
+      return { ok: true as const, message: `Seeded ${total} into "${node.name}".`, assigned: total };
+    });
+  }
+
+  /** Everything currently in a culture, newest batch first. */
+  scaffoldsIn(experimentId: NodeId): ScaffoldBatch[] {
+    return this.state.batches.filter((b) => b.usedBy === experimentId);
+  }
+
   addBatch(typeId: string, count: number, options: { fabricatedOn?: DateOnly; label?: string; notes?: string } = {}): Delta & { id: string } {
     const type = this.state.scaffoldTypes.find((t) => t.id === typeId);
     if (!type) throw notFound('scaffold type', typeId);
