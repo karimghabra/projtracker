@@ -96,10 +96,6 @@ export function AppShell() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      const typing =
-        target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable;
-
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
         setShowSearch(true);
@@ -124,12 +120,18 @@ export function AppShell() {
         run((a) => a.redo());
         return;
       }
-      if (typing) return;
-      const index = Number(event.key);
-      if (index >= 1 && index <= VIEWS.length && !event.ctrlKey && !event.metaKey && !event.altKey) {
-        event.preventDefault();
-        go(VIEWS[index - 1]!.id);
-      }
+      /*
+        Number keys used to switch screens. They are gone: nobody was using
+        them, and a bare digit is a keystroke that belongs to whatever is being
+        typed. Losing focus for a moment — an inline edit that had not opened
+        yet, a click that landed on the row rather than the field — turned
+        "-20 freezer, shelf 2" into a jump to another screen halfway through
+        the word. A shortcut that costs a navigation when it misfires has to
+        earn it, and this one was not being used at all.
+
+        Ctrl+K, Ctrl+Z and Ctrl+Y stay: all three take a modifier, so none of
+        them can be typed by accident.
+      */
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);

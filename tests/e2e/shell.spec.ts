@@ -52,11 +52,14 @@ test.describe('navigation', () => {
     await expect(h.page.locator('.topbar h1')).toHaveText('Scaffold inventory');
   });
 
-  test('number keys switch screens', async ({ h }) => {
+  test('a bare digit does not move you off the screen', async ({ h }) => {
+    // Number keys used to switch screens, and a digit typed while focus was
+    // anywhere but a field — a location, a count, a sequence number being
+    // retyped — navigated away mid-word.
+    await h.goto('inventory');
     await h.page.keyboard.press('4');
-    await expect(h.page.locator('.topbar h1')).toHaveText('Spreadsheet');
     await h.page.keyboard.press('1');
-    await expect(h.page.locator('.topbar h1')).toHaveText('Today');
+    await expect(h.page.locator('.topbar h1')).toHaveText('Scaffold inventory');
   });
 });
 
