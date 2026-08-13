@@ -12,7 +12,7 @@ import { formatDayMonth } from '../../core/dates.ts';
 import { formatOffset } from '../../core/protocols.ts';
 import type { ProtocolStepPatch } from '../../commands/app.ts';
 import { useApp } from '../state/store.ts';
-import { ConfirmDialog, Empty, Modal, ProgressBar } from '../components/ui.tsx';
+import { ConfirmDialog, Empty, InlineEdit, Modal, ProgressBar } from '../components/ui.tsx';
 import { IconBox, IconFlask, IconPlus, IconTrash } from '../components/icons.tsx';
 import { BATCH_STATES, isTerminalState } from '../../core/model.ts';
 import { formatQuantity, summariseLots } from '../../core/inventory.ts';
@@ -174,6 +174,7 @@ function BatchPanel({
                 <th style={{ width: 62 }}>Count</th>
                 <th style={{ width: 108 }}>Made</th>
                 <th style={{ width: 116 }}>State</th>
+                <th style={{ width: 168 }}>Where</th>
                 <th style={{ width: 78 }} />
               </tr>
             </thead>
@@ -216,6 +217,27 @@ function BatchPanel({
                           </option>
                         ))}
                       </select>
+                    </td>
+                    {/*
+                      Where it is, or what it went into. A batch with cells on
+                      it is not stock any more, so the column says which culture
+                      has it rather than offering to move it somewhere.
+                    */}
+                    <td>
+                      {batch.usedByName ? (
+                        <span className="chip info" title={`Seeded into ${batch.usedByName}`}>
+                          {batch.usedByName}
+                        </span>
+                      ) : (
+                        <InlineEdit
+                          value={batch.location ?? ''}
+                          placeholder="—"
+                          ariaLabel={`Where the ${batch.typeName} batch is kept`}
+                          onCommit={(next) =>
+                            run((a) => a.setBatchLocation(batch.id, next), { silent: true })
+                          }
+                        />
+                      )}
                     </td>
                     <td>
                       <span className={`chip ${BATCH_TONE[batch.state] ?? ''}`}>{batch.ageDays}d</span>

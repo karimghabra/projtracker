@@ -280,6 +280,10 @@ export const BATCH_STATES: readonly BatchState[] = [
   'washed',
   'sterilising',
   'sterilised',
+  // Made, treated, and put away where it can be found again. A batch on the
+  // bench and a batch in the -20 are not in the same condition, and "where is
+  // it" is the question asked of stock more often than any other.
+  'stored',
   'seeded',
   'consumed',
   'discarded',
@@ -312,6 +316,12 @@ export interface ScaffoldBatch {
   notes?: string;
   /** The crosslinking run currently acting on this batch, if any. */
   runId?: string;
+  /**
+   * Where it is kept — "-20 freezer, shelf 2", "desiccator". Free text on
+   * purpose: a lab's storage is its own vocabulary, and a list of places to
+   * choose from would be wrong in a week.
+   */
+  location?: string;
   /**
    * The experiment these scaffolds went into, once they have been seeded.
    *

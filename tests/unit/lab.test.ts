@@ -938,3 +938,109 @@ describe('seeding consumes scaffolds', () => {
     expect(seeded.state).toBe('seeded');
   });
 });
+
+/**
+ * Putting scaffolds away, which the board had no word for. A tray on the bench
+ * and a bag in the -20 are not in the same condition, and "where is it" is
+ * asked of stock more often than anything else.
+ */
+describe('storing a batch', () => {
+  const stock = (h: ReturnType<typeof harness>) => {
+    h.app.addScaffoldType('Collagen sponge');
+    const id = h.app.addBatch('collagen-sponge', 24).id;
+    h.app.setBatchState(id, 'sterilised');
+    return id;
+  };
+
+  it('records the state and the place in one step', () => {
+    const h = harness('2026-08-03T09:00');
+    const id = stock(h);
+
+    h.app.storeBatch(id, '-20 freezer, shelf 2');
+
+    const batch = h.app.state.batches.find((b) => b.id === id)!;
+    expect(batch.state).toBe('stored');
+    expect(batch.location).toBe('-20 freezer, shelf 2');
+    expect(batch.history.at(-1)).toMatchObject({ state: 'stored', note: 'Stored in -20 freezer, shelf 2' });
+  });
+
+  it('is one undo step, not two', () => {
+    const h = harness('2026-08-03T09:00');
+    const id = stock(h);
+    const before = structuredClone(h.app.state);
+
+    h.app.storeBatch(id, 'Desiccator');
+    h.app.undo();
+    expect(h.app.state).toEqual(before);
+  });
+
+  it('keeps saying where it is after it moves on', () => {
+    const h = harness('2026-08-03T09:00');
+    const id = stock(h);
+    h.app.storeBatch(id, 'Desiccator');
+
+    // Taken out and seeded: the location is where the scaffolds came from, and
+    // losing it on the next state change would lose the provenance.
+    h.app.setBatchState(id, 'seeded');
+    expect(h.app.state.batches.find((b) => b.id === id)!.location).toBe('Desiccator');
+  });
+
+  it('corrects a place without inventing a state change', () => {
+    const h = harness('2026-08-03T09:00');
+    const id = stock(h);
+    h.app.storeBatch(id, 'Desiccatr');
+    const events = h.app.state.batches.find((b) => b.id === id)!.history.length;
+
+    h.app.setBatchLocation(id, 'Desiccator');
+    const batch = h.app.state.batches.find((b) => b.id === id)!;
+    expect(batch.location).toBe('Desiccator');
+    // A typo fixed is not a thing that happened to the scaffolds.
+    expect(batch.history).toHaveLength(events);
+  });
+
+  it('refuses to store what is already used up', () => {
+    const h = harness('2026-08-03T09:00');
+    const id = stock(h);
+    h.app.setBatchState(id, 'consumed');
+    expect(expectThrows(() => h.app.storeBatch(id, 'Freezer')).message).toMatch(/already used up/);
+  });
+
+  it('survives the vault', () => {
+    const h = harness('2026-08-03T09:00');
+    const id = stock(h);
+    h.app.storeBatch(id, '-80 freezer');
+    expect(loadState(h.vault).batches.find((b) => b.id === id)!.location).toBe('-80 freezer');
+  });
+});
+
+/**
+ * Moving a batch by hand overrules whatever was holding it — the same rule the
+ * crosslinking run already followed.
+ */
+describe('taking a batch back out of a culture', () => {
+  it('drops the culture link when the state is set by hand', () => {
+    const h = harness('2026-08-03T09:00');
+    const b = sampleBoard(h);
+    h.app.addScaffoldType('Collagen sponge');
+    const id = h.app.addBatch('collagen-sponge', 10).id;
+    h.app.assignScaffolds(b.experiment, [{ batchId: id, count: 10 }]);
+    expect(h.app.scaffoldsIn(b.experiment)).toHaveLength(1);
+
+    // Put back on the shelf: it is not in the culture any more, and the
+    // culture must not go on claiming it.
+    h.app.setBatchState(id, 'sterilised');
+    expect(h.app.state.batches.find((x) => x.id === id)!.usedBy).toBeUndefined();
+    expect(h.app.scaffoldsIn(b.experiment)).toEqual([]);
+  });
+
+  it('keeps the link while it stays seeded', () => {
+    const h = harness('2026-08-03T09:00');
+    const b = sampleBoard(h);
+    h.app.addScaffoldType('Collagen sponge');
+    const id = h.app.addBatch('collagen-sponge', 10).id;
+    h.app.assignScaffolds(b.experiment, [{ batchId: id, count: 10 }]);
+
+    h.app.setBatchState(id, 'seeded', 'noting something about it');
+    expect(h.app.state.batches.find((x) => x.id === id)!.usedBy).toBe(b.experiment);
+  });
+});

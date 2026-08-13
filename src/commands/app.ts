@@ -1708,7 +1708,55 @@ export class App {
       // state except crosslinking", which only worked while crosslinking was
       // the one thing a run could do.
       target.runId = undefined;
+      // And out of whatever culture it was in, for the same reason: a batch
+      // moved back to `sterilised` by hand is not in an experiment any more,
+      // and leaving the link would have the culture claiming scaffolds that
+      // the inventory says are on a shelf.
+      if (clean !== 'seeded') target.usedBy = undefined;
       return { ok: true as const, message: `Batch is now ${clean}.` };
+    });
+  }
+
+  /**
+   * Put a batch away, and say where.
+   *
+   * The step between making scaffolds and using them, which the board had no
+   * word for: a tray on the bench and a bag in the -20 are not in the same
+   * condition, and "where is it" is asked of stock more often than anything
+   * else. Storing is a state like the rest — nothing is gated on it, because
+   * a batch seeded straight off the sterile field is a real thing that happens
+   * and the app has no business refusing to record it.
+   *
+   * The location is remembered independently of the state, so a batch that
+   * later goes into a run still says where it came from and where the rest of
+   * it lives.
+   */
+  storeBatch(id: string, location: string, note?: string): Delta {
+    const batch = this.state.batches.find((b) => b.id === id);
+    if (!batch) throw notFound('batch', id);
+    const where = location.trim();
+    if (!where) throw invalid('Say where it is being kept.');
+    if (isTerminalState(batch.state)) throw notAllowed('That batch is already used up.');
+
+    return this.transaction(`Store batch in ${where}`, (app) => {
+      app.setBatchLocation(id, where);
+      if (this.state.batches.find((b) => b.id === id)!.state !== 'stored') {
+        app.setBatchState(id, 'stored', note ?? `Stored in ${where}`);
+      }
+      return { ok: true as const, message: `Stored in ${where}.` };
+    });
+  }
+
+  /** Move stock, or correct where it was said to be. */
+  setBatchLocation(id: string, location: string | undefined): Delta {
+    const batch = this.state.batches.find((b) => b.id === id);
+    if (!batch) throw notFound('batch', id);
+    const where = location?.trim() || undefined;
+    if (where === batch.location) return { ok: true, message: 'No change.' };
+
+    return this.mutate(where ? `Batch is in ${where}` : 'Batch has no location', (draft) => {
+      draft.batches.find((b) => b.id === id)!.location = where;
+      return { ok: true as const, message: where ? `Kept in ${where}.` : 'Location cleared.' };
     });
   }
 

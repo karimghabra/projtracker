@@ -136,3 +136,46 @@ test.describe('changing your mind', () => {
     await page.getByTestId('experiments-panel').screenshot({ path: 'screenshots/awk-5-reseeded.png' });
   });
 });
+
+/**
+ * Scaffolds have somewhere to be. Made, put away, and later taken out and
+ * seeded — with the board saying which of those is true of a given batch.
+ */
+test.describe('where the scaffolds are', () => {
+  test.use({ viewport: { width: 1512, height: 950 } });
+
+  test('a batch is put away, then goes into a culture', async ({ h }) => {
+    const { page } = h;
+    const ids = await page.evaluate(() => {
+      const pt = (window as any).__pt;
+      pt.run((a: any) => a.addScaffoldType('Collagen sponge'));
+      const batch = pt.run((a: any) => a.addBatch('collagen-sponge', 24));
+      pt.run((a: any) => a.setBatchState(batch.id, 'sterilised'));
+      const exp = pt.run((a: any) => a.experimentQuickAdd('Osteogenic culture'));
+      return { batch: batch.id, experiment: exp.id };
+    });
+
+    await page.getByTestId('nav-inventory').click();
+    // Put it away by typing where it went. Double-click, because that is what
+    // an inline edit takes here — a single click belongs to the row.
+    await page.getByRole('button', { name: /Where the Collagen sponge batch is kept/ }).dblclick();
+    const where = page.getByRole('textbox', { name: /Where the Collagen sponge batch is kept/ });
+    await where.fill('-20 freezer, shelf 2');
+    await where.press('Enter');
+    await expect(page.locator('tbody')).toContainText('-20 freezer, shelf 2');
+    await page.screenshot({ path: 'screenshots/awk-6-stored.png' });
+
+    // Seed half of it into the culture.
+    await page.evaluate((x) => {
+      (window as any).__pt.run((a: any) =>
+        a.assignScaffolds(x.experiment, [{ batchId: x.batch, count: 12 }]),
+      );
+    }, ids);
+
+    // Two rows now: twelve on the shelf, twelve in the culture — and the
+    // seeded ones say which culture rather than offering to be moved.
+    await expect(page.locator('tbody tr')).toHaveCount(2);
+    await expect(page.locator('tbody')).toContainText('Osteogenic culture');
+    await page.screenshot({ path: 'screenshots/awk-7-split.png' });
+  });
+});

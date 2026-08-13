@@ -1031,6 +1031,8 @@ export function sheetView(index: GraphIndex, today: DateOnly): SheetRow[] {
 export interface BatchView extends ScaffoldBatch {
   typeName: string;
   runName?: string;
+  /** The culture these went into, named — `usedBy` alone is an id on a screen. */
+  usedByName?: string;
   ageDays: number;
 }
 
@@ -1108,6 +1110,7 @@ export function inventoryView(state: State, today: DateOnly, now: string): Inven
     ...batch,
     typeName: typeName.get(batch.typeId) ?? batch.typeId,
     runName: batch.runId ? protocolById.get(state.runs.find((r) => r.id === batch.runId)?.protocolId ?? '')?.name : undefined,
+    usedByName: batch.usedBy ? state.nodes[batch.usedBy]?.name : undefined,
     ageDays: diffDays(batch.fabricatedOn, today),
   }));
 
