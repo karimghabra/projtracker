@@ -578,9 +578,33 @@ export class App {
     if (!node) throw notFound('node', id);
     const doomed = [id, ...descendantsOf(this.state, id).map((n) => n.id)];
 
+    const now = this.now;
     return this.mutate(`Delete "${node.name}"`, (draft) => {
-      for (const victim of doomed) delete draft.nodes[victim];
       const doomedSet = new Set(doomed);
+
+      /*
+        Scaffolds go back on the shelf.
+
+        Deleting a culture that held stock used to leave the batches pointing at
+        a node that no longer existed: not in a culture, and filtered out of
+        what can be seeded because something already had them. Twelve scaffolds
+        would quietly stop existing, through an action that offers an undo.
+
+        Deleting the record says the culture did not happen, so the batch
+        returns to the state it was in before it was seeded — which its own
+        history recorded — and the release is written there too, so the round
+        trip is legible rather than silent.
+      */
+      for (const batch of draft.batches) {
+        if (!batch.usedBy || !doomedSet.has(batch.usedBy)) continue;
+        const before = [...batch.history].reverse().find((e) => e.state !== 'seeded');
+        const heldBy = draft.nodes[batch.usedBy]?.name ?? node.name;
+        batch.usedBy = undefined;
+        batch.state = before?.state ?? 'fabricated';
+        batch.history.push({ state: batch.state, at: now, note: `Released when "${heldBy}" was deleted` });
+      }
+
+      for (const victim of doomed) delete draft.nodes[victim];
       draft.deps = draft.deps.filter((d) => !doomedSet.has(d.from) && !doomedSet.has(d.to));
       draft.planner = draft.planner.filter((e) => !doomedSet.has(e.nodeId));
       draft.reminders = draft.reminders.filter((r) => !r.nodeId || !doomedSet.has(r.nodeId));
@@ -1069,9 +1093,17 @@ export class App {
       */
       const own = draft.planner.find((e) => e.date === date && e.nodeId === id && !e.outcome);
       const rollingFrom = draft.planner.find((e) => e.nodeId === id && !e.outcome && e.date < date);
-      if (own && rollingFrom) own.outcome = 'deferred';
+      const tomorrow = addDays(date, 1);
+      // Already claimed tomorrow — from an earlier "not today" on the same
+      // task, pulled back onto the day and pushed off again. Moving this one
+      // as well would put it on tomorrow twice: the list dedupes by task so
+      // nobody would see it, and the spare row would sit in the vault rolling
+      // forward for ever and turning up in every sync diff.
+      const alreadyTomorrow = draft.planner.some(
+        (e) => e.nodeId === id && !e.outcome && e.date === tomorrow,
+      );
+      if (own && (rollingFrom || alreadyTomorrow)) own.outcome = 'deferred';
       else if (own) {
-        const tomorrow = addDays(date, 1);
         own.date = tomorrow;
         own.order = draft.planner.filter((e) => e.date === tomorrow).length;
       } else draft.planner.push({ date, nodeId: id, order: 0, outcome: 'deferred' });
@@ -1506,6 +1538,27 @@ export class App {
       merged.mediaPhases = defaultMediaPhases(merged.durationDays);
     }
 
+    /*
+      A culture cannot hold fewer scaffolds than the inventory says are in it.
+      The seed form knows this and turns the field into a read-out; nothing
+      else did, so the detail pane, the spreadsheet and the CLI could each type
+      a smaller number over it and leave the two ends disagreeing about a fact
+      neither could then settle.
+
+      Only the impossible direction is refused. Holding *more* than the
+      inventory knows about is ordinary — scaffolds made before any of this was
+      being tracked, or by somebody who never entered them — and refusing that
+      would make the inventory compulsory the moment it was used once.
+    */
+    const fromStock = this.state.batches
+      .filter((b) => b.usedBy === nodeId)
+      .reduce((sum, b) => sum + b.count, 0);
+    if (fromStock > 0 && merged.sampleCount < fromStock) {
+      throw invalid(
+        `The inventory says ${fromStock} scaffolds are in "${node.name}", so it cannot hold ${merged.sampleCount}. Take some out of the culture first.`,
+      );
+    }
+
     const problems = validateExperiment(merged);
     if (problems.length) throw invalid(problems.join(' '), { problems });
 
@@ -1678,6 +1731,27 @@ export class App {
           history: [...batch.history, event],
         });
       }
+      /*
+        The culture holds at least what has just gone into it.
+
+        `setExperiment` refuses a count below the scaffolds recorded in a
+        culture; assigning scaffolds is the same disagreement through the other
+        door, and it was reachable — moving stock out of the culture it was
+        wrongly recorded against and into the right one left the right one
+        holding twelve scaffolds while claiming none.
+
+        The assignment is the newer and more specific fact, so it wins. A count
+        already higher is left alone: scaffolds made before any of this was
+        tracked are ordinary, and lowering it would throw that away.
+      */
+      const culture = draft.nodes[experimentId]!;
+      const held = draft.batches
+        .filter((b) => b.usedBy === experimentId)
+        .reduce((sum, b) => sum + b.count, 0);
+      if (culture.experiment && culture.experiment.sampleCount < held) {
+        culture.experiment.sampleCount = held;
+      }
+
       return { ok: true as const, message: `Seeded ${total} into "${node.name}".`, assigned: total };
     });
   }

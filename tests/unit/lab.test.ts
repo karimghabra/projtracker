@@ -1044,3 +1044,141 @@ describe('taking a batch back out of a culture', () => {
     expect(h.app.state.batches.find((x) => x.id === id)!.usedBy).toBe(b.experiment);
   });
 });
+
+/**
+ * Found by the walker: the seed form turns the sample count into a read-out
+ * when scaffolds are picked, and nothing enforced that anywhere else — so the
+ * detail pane, the spreadsheet and the CLI could each type a smaller number
+ * over it and leave the culture and the inventory disagreeing about a fact
+ * neither could then settle.
+ */
+describe('a culture cannot hold fewer scaffolds than are in it', () => {
+  const seeded = (h: ReturnType<typeof harness>) => {
+    const b = sampleBoard(h);
+    h.app.addScaffoldType('Collagen sponge');
+    const batch = h.app.addBatch('collagen-sponge', 24).id;
+    h.app.seedCulture(b.experiment, { seedingDate: '2026-08-03', durationDays: 21 }, [
+      { batchId: batch, count: 12 },
+    ]);
+    return b;
+  };
+
+  it('refuses a count below what the inventory says is in it', () => {
+    const h = harness('2026-08-03T09:00');
+    const b = seeded(h);
+
+    expect(expectThrows(() => h.app.setExperiment(b.experiment, { sampleCount: 3 })).message).toMatch(
+      /inventory says 12/,
+    );
+    expect(h.app.node(b.experiment).experiment!.def.sampleCount).toBe(12);
+  });
+
+  it('allows a count above it, because stock is not compulsory', () => {
+    const h = harness('2026-08-03T09:00');
+    const b = seeded(h);
+
+    // Twelve came off the shelf and six were made by hand years ago. The
+    // inventory knowing about only some of them is ordinary.
+    h.app.setExperiment(b.experiment, { sampleCount: 18 });
+    expect(h.app.node(b.experiment).experiment!.def.sampleCount).toBe(18);
+  });
+
+  it('lets an untracked culture say whatever it likes', () => {
+    const h = harness('2026-08-03T09:00');
+    const b = sampleBoard(h);
+    h.app.setExperiment(b.experiment, { sampleCount: 3 });
+    expect(h.app.node(b.experiment).experiment!.def.sampleCount).toBe(3);
+  });
+});
+
+/**
+ * Found by the walker: deleting a culture that held stock left the batches
+ * pointing at a node that no longer existed — not in a culture, and filtered
+ * out of what can be seeded because something already had them. Twelve
+ * scaffolds quietly stopped existing, through an action that offers an undo.
+ */
+describe('deleting a culture that holds scaffolds', () => {
+  const seeded = (h: ReturnType<typeof harness>) => {
+    const b = sampleBoard(h);
+    h.app.addScaffoldType('Collagen sponge');
+    const batch = h.app.addBatch('collagen-sponge', 24).id;
+    h.app.setBatchState(batch, 'sterilised');
+    h.app.seedCulture(b.experiment, { seedingDate: '2026-08-03', durationDays: 21 }, [
+      { batchId: batch, count: 12 },
+    ]);
+    return b;
+  };
+
+  it('puts them back on the shelf, in the state they were in', () => {
+    const h = harness('2026-08-03T09:00');
+    const b = seeded(h);
+    expect(h.app.available().reduce((n, x) => n + x.count, 0)).toBe(12);
+
+    h.app.deleteNode(b.experiment);
+
+    // All twenty-four are stock again, and the twelve that were in the culture
+    // are sterilised, which is what they were before it took them.
+    expect(h.app.available().reduce((n, x) => n + x.count, 0)).toBe(24);
+    // The one that was actually in the culture: after a split there are two
+    // batches of twelve, and only one of them has been seeded.
+    const released = h.app.state.batches.find((x) => x.history.some((e) => e.state === 'seeded'))!;
+    expect(released.state).toBe('sterilised');
+    expect(released.usedBy).toBeUndefined();
+    expect(released.history.at(-1)!.note).toMatch(/Released when/);
+  });
+
+  it('leaves nothing pointing at a culture that is gone', () => {
+    const h = harness('2026-08-03T09:00');
+    const b = seeded(h);
+    h.app.deleteNode(b.experiment);
+    expect(h.app.state.batches.filter((x) => x.usedBy && !h.app.state.nodes[x.usedBy])).toEqual([]);
+  });
+
+  it('undo puts the culture and its scaffolds back together', () => {
+    const h = harness('2026-08-03T09:00');
+    const b = seeded(h);
+    const before = structuredClone(h.app.state);
+
+    h.app.deleteNode(b.experiment);
+    h.app.undo();
+
+    expect(h.app.state).toEqual(before);
+  });
+});
+
+/**
+ * Found by asking what a correction costs: moving scaffolds out of the culture
+ * they were wrongly recorded against and into the right one left the right one
+ * holding twelve scaffolds while claiming to hold none.
+ *
+ * `setExperiment` already refused a count below what was in a culture. This is
+ * the same disagreement through the other door — the assignment side.
+ */
+describe('assigning scaffolds keeps the culture honest about them', () => {
+  it('raises a count that would be lower than what just went in', () => {
+    const h = harness('2026-08-03T09:00');
+    const b = sampleBoard(h);
+    h.app.addScaffoldType('Collagen sponge');
+    const batch = h.app.addBatch('collagen-sponge', 24).id;
+    // A culture that has never been told how many samples it has.
+    expect(h.app.node(b.experiment).experiment!.def.sampleCount).toBe(0);
+
+    h.app.assignScaffolds(b.experiment, [{ batchId: batch, count: 12 }]);
+
+    expect(h.app.node(b.experiment).experiment!.def.sampleCount).toBe(12);
+  });
+
+  it('leaves a higher count alone, because stock is not the only source', () => {
+    const h = harness('2026-08-03T09:00');
+    const b = sampleBoard(h);
+    h.app.addScaffoldType('Collagen sponge');
+    const batch = h.app.addBatch('collagen-sponge', 24).id;
+    h.app.setExperiment(b.experiment, { sampleCount: 30 });
+
+    h.app.assignScaffolds(b.experiment, [{ batchId: batch, count: 12 }]);
+
+    // Twelve came off the shelf; the other eighteen were made before any of
+    // this was tracked, and lowering the count would throw that away.
+    expect(h.app.node(b.experiment).experiment!.def.sampleCount).toBe(30);
+  });
+});

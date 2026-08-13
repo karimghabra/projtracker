@@ -661,3 +661,36 @@ describe('adding work without claiming a day', () => {
     expect(h.app.readyTree().some((branch) => branch.id === MISC_BRANCH)).toBe(false);
   });
 });
+
+/**
+ * Found by the walker, on the third of three ordinary gestures.
+ *
+ * "Not today" moves a task's claim to tomorrow. Pull it back onto the day and
+ * push it off again and the claim was moved twice, leaving two open entries on
+ * tomorrow. The list dedupes by task so nothing looked wrong, and the spare row
+ * sat in the vault rolling forward for ever and appearing in every sync diff.
+ */
+describe('pushing the same task off the day twice', () => {
+  it('claims tomorrow once, not once per push', () => {
+    const h = harness('2026-08-13T09:00');
+    const { id } = h.app.todayQuickAdd('Chase the PO');
+
+    h.app.todayRemove(`node:${id}`);
+    h.app.todayAdd(id);
+    h.app.todayRemove(`node:${id}`);
+
+    const open = h.app.state.planner.filter((e) => !e.outcome && e.nodeId === id);
+    expect(open.filter((e) => e.date === '2026-08-14')).toHaveLength(1);
+  });
+
+  it('is still owed tomorrow, exactly once', () => {
+    const h = harness('2026-08-13T09:00');
+    const { id } = h.app.todayQuickAdd('Chase the PO');
+    h.app.todayRemove(`node:${id}`);
+    h.app.todayAdd(id);
+    h.app.todayRemove(`node:${id}`);
+
+    h.clock.set('2026-08-14T09:00');
+    expect(h.app.todayList().items.filter((i) => i.node?.id === id)).toHaveLength(1);
+  });
+});
