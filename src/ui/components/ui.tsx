@@ -328,17 +328,23 @@ export function QuickAdd({
   onAdd,
   label,
   buttonLabel = 'Add',
+  secondary,
 }: {
   placeholder: string;
   onAdd: (text: string) => void;
   label: string;
   buttonLabel?: string;
+  /**
+   * A second destination for the same text. One field, two answers to "when":
+   * the primary claims today, this one does not claim anything.
+   */
+  secondary?: { label: string; title: string; testId?: string; onAdd: (text: string) => void };
 }) {
   const [text, setText] = useState('');
-  const submit = () => {
+  const submit = (to: (text: string) => void = onAdd) => {
     const clean = text.trim();
     if (!clean) return;
-    onAdd(clean);
+    to(clean);
     setText('');
   };
 
@@ -360,6 +366,18 @@ export function QuickAdd({
       <button className="btn" type="submit" disabled={!text.trim()}>
         {buttonLabel}
       </button>
+      {secondary && (
+        <button
+          className="btn ghost"
+          type="button"
+          title={secondary.title}
+          data-testid={secondary.testId}
+          disabled={!text.trim()}
+          onClick={() => submit(secondary.onAdd)}
+        >
+          {secondary.label}
+        </button>
+      )}
     </form>
   );
 }

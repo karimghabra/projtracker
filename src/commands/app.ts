@@ -892,7 +892,25 @@ export class App {
    * A standalone task that belongs to no project. This is the "just put it on
    * my day" path, and it must stay one field and one keystroke.
    */
-  todayQuickAdd(title: string, date: DateOnly = this.today): Delta & { id: NodeId } {
+  /**
+   * The same field, aimed at the pool instead of the day.
+   *
+   * "This needs doing, not today" had no door: quick-add always claimed a date,
+   * so the only way to record something without committing to when was to
+   * invent a project to hang it on. The task lands unfiled and waits in the
+   * ready pool under Miscellaneous until it is chosen.
+   *
+   * Not "add it to today and take it off again": that would leave a tombstone
+   * in the planner for a day the task was never on, and the vault is the
+   * record, not a transcript of how it got that way.
+   */
+  poolQuickAdd(title: string): Delta & { id: NodeId } {
+    // `null`, not `undefined`: an omitted argument takes the default, which is
+    // today — the exact thing this must not do.
+    return this.todayQuickAdd(title, null);
+  }
+
+  todayQuickAdd(title: string, date: DateOnly | null = this.today): Delta & { id: NodeId } {
     const clean = title.trim();
     if (!clean) throw invalid('Type something to add.');
 
@@ -921,14 +939,22 @@ export class App {
         status: 'active',
         health: 'not_begun',
         createdAt: now,
-        plannedFor: date,
+        plannedFor: date ?? undefined,
         tags,
         links: [],
         steps: [],
       };
-      const order = draft.planner.filter((e) => e.date === date).length;
-      draft.planner.push({ date, nodeId: id, order });
-      return { ok: true as const, message: `Added "${name}".`, id };
+      // No date, no entry: an unfiled task with nothing claiming a day is
+      // exactly what the ready pool lists.
+      if (date) {
+        const order = draft.planner.filter((e) => e.date === date).length;
+        draft.planner.push({ date, nodeId: id, order });
+      }
+      return {
+        ok: true as const,
+        message: date ? `Added "${name}".` : `Added "${name}" to the ready pool.`,
+        id,
+      };
     });
   }
 
@@ -1011,6 +1037,49 @@ export class App {
       const target = draft.nodes[id];
       if (target?.plannedFor === date) target.plannedFor = undefined;
       return { ok: true as const, message: `Removed "${node.name}" from ${date}.` };
+    });
+  }
+
+  /**
+   * Off the day for good, and back in the pool it came from.
+   *
+   * `todayRemove` says "not today" and means it literally: the original entry
+   * stays open, so tomorrow the item is back. That is right for work you still
+   * mean to do this week, and useless for work you have decided not to do now —
+   * dismissing it every morning for eight days is not a decision the app should
+   * make you re-take.
+   *
+   * So this closes every open entry the item has, on any day, and stops it
+   * claiming a date. Nothing is deleted: the task returns to the ready pool and
+   * waits to be chosen again. One undo step puts the whole thing back.
+   */
+  todayReturn(key: string, date: DateOnly = this.today): Delta {
+    const [kind, id] = splitKey(key);
+    if (kind === 'reminder') {
+      // A reminder is not pool work — there is nothing to return it to. Saying
+      // so beats silently doing something else.
+      throw notAllowed('A reminder is not in the ready pool. Delete it, or move it to another day.');
+    }
+
+    const node = this.state.nodes[id];
+    if (!node) throw notFound('node', id);
+
+    return this.mutate(`Return "${node.name}" to the pool`, (draft) => {
+      let closed = 0;
+      for (const entry of draft.planner) {
+        if (entry.nodeId !== id || entry.outcome) continue;
+        entry.outcome = 'deferred';
+        closed += 1;
+      }
+      // Nothing open anywhere: it was on today only because a date claimed it.
+      if (!closed) draft.planner.push({ date, nodeId: id, order: 0, outcome: 'deferred' });
+      const target = draft.nodes[id];
+      if (target) target.plannedFor = undefined;
+
+      return {
+        ok: true as const,
+        message: `"${node.name}" is back in the ready pool.`,
+      };
     });
   }
 

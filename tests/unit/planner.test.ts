@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { MISC_BRANCH } from '@commands/views.ts';
 import { expectThrows, harness, sampleBoard, todayTitles } from './helpers.ts';
 
 describe('the day list', () => {
@@ -516,5 +517,131 @@ describe('the journal', () => {
     const before = structuredClone(h.app.state.nodes);
     h.app.capture('TODO: add a task called Buy PBS #lab @tomorrow');
     expect(h.app.state.nodes).toEqual(before);
+  });
+});
+
+/**
+ * Three different things a row on Today can mean, and for a long time it
+ * offered only the first.
+ */
+describe('getting something off the day', () => {
+  it('"not today" keeps its word, and asks again tomorrow', () => {
+    const h = harness('2026-08-03T09:00');
+    const { id } = h.app.todayQuickAdd('Pick up badge from Scripps');
+
+    // Dismissing it on a later day closes that day only: the entry it was
+    // added on is still open, so it is owed again tomorrow. (Dismissed on the
+    // day it was added there is no earlier entry, and it does not come back —
+    // which is why the difference below only shows on something carried.)
+    h.clock.set('2026-08-05T09:00');
+    expect(todayTitles(h.app)).toContain('Pick up badge from Scripps');
+    h.app.todayRemove(`node:${id}`);
+    expect(todayTitles(h.app)).toEqual([]);
+
+    h.clock.set('2026-08-06T09:00');
+    expect(todayTitles(h.app)).toContain('Pick up badge from Scripps');
+  });
+
+  it('back to the pool means it stops asking', () => {
+    const h = harness('2026-08-03T09:00');
+    const { id } = h.app.todayQuickAdd('Pick up badge from Scripps');
+
+    // Two days late, the state the badge was actually in.
+    h.clock.set('2026-08-05T09:00');
+    h.app.todayReturn(`node:${id}`);
+    expect(todayTitles(h.app)).toEqual([]);
+
+    // Not tomorrow, not next week. It is in the pool waiting to be chosen.
+    h.clock.set('2026-08-06T09:00');
+    expect(todayTitles(h.app)).toEqual([]);
+    h.clock.set('2026-08-20T09:00');
+    expect(todayTitles(h.app)).toEqual([]);
+    expect(h.app.ready().map((r) => r.name)).toContain('Pick up badge from Scripps');
+  });
+
+  it('returns something that has been rolling forward for days', () => {
+    const h = harness('2026-08-03T09:00');
+    const { id } = h.app.todayQuickAdd('Make new looped ligaments');
+
+    // Eight days of not doing it, and of "not today" every morning.
+    for (let day = 4; day <= 11; day++) {
+      h.clock.set(`2026-08-${String(day).padStart(2, '0')}T09:00`);
+      expect(todayTitles(h.app)).toContain('Make new looped ligaments');
+      h.app.todayRemove(`node:${id}`);
+    }
+
+    h.app.todayReturn(`node:${id}`);
+    h.clock.set('2026-08-12T09:00');
+    expect(todayTitles(h.app)).toEqual([]);
+  });
+
+  it('one undo puts the day back as it was', () => {
+    const h = harness('2026-08-03T09:00');
+    const { id } = h.app.todayQuickAdd('Chase the invoice');
+    const before = structuredClone(h.app.state);
+
+    h.app.todayReturn(`node:${id}`);
+    h.app.undo();
+    expect(h.app.state).toEqual(before);
+  });
+
+  it('refuses to return a reminder, which was never in the pool', () => {
+    const h = harness('2026-08-03T09:00');
+    const { id } = h.app.addReminder('Order collagen', '2026-08-03');
+    expect(expectThrows(() => h.app.todayReturn(`reminder:${id}`)).message).toMatch(
+      /not in the ready pool/,
+    );
+  });
+
+  it('deleting from the day deletes the task, not just the row', () => {
+    const h = harness('2026-08-03T09:00');
+    const { id } = h.app.todayQuickAdd('Typo I never meant to add');
+
+    h.app.deleteNode(id);
+    expect(todayTitles(h.app)).toEqual([]);
+    expect(h.app.state.nodes[id]).toBeUndefined();
+    expect(h.app.ready().some((r) => r.id === id)).toBe(false);
+  });
+});
+
+describe('adding work without claiming a day', () => {
+  it('lands in the pool and on no day at all', () => {
+    const h = harness('2026-08-03T09:00');
+    const { id } = h.app.poolQuickAdd('Read the Histotracker paper');
+
+    expect(todayTitles(h.app)).toEqual([]);
+    expect(h.app.node(id).plannedFor).toBeUndefined();
+    expect(h.app.ready().map((r) => r.name)).toContain('Read the Histotracker paper');
+  });
+
+  it('writes no planner row for a day it was never on', () => {
+    const h = harness('2026-08-03T09:00');
+    h.app.poolQuickAdd('Read the Histotracker paper');
+
+    // Add-then-remove would leave a tombstone. The vault is the record, not a
+    // transcript of how it got there.
+    expect(h.app.state.planner).toEqual([]);
+  });
+
+  it('groups loose work under one bucket rather than beside the projects', () => {
+    const h = harness('2026-08-03T09:00');
+    const b = sampleBoard(h);
+    h.app.poolQuickAdd('Chase the invoice');
+
+    const roots = h.app.readyTree();
+    const misc = roots.find((branch) => branch.id === MISC_BRANCH)!;
+    expect(misc).toBeDefined();
+    expect(misc.name).toBe('Miscellaneous');
+    expect(misc.count).toBe(1);
+    expect(misc.children.map((c) => c.name)).toEqual(['Chase the invoice']);
+
+    // The project is still a root of its own, unaffected.
+    expect(roots.some((branch) => branch.id === b.project)).toBe(true);
+  });
+
+  it('has no bucket when nothing is loose', () => {
+    const h = harness('2026-08-03T09:00');
+    sampleBoard(h);
+    expect(h.app.readyTree().some((branch) => branch.id === MISC_BRANCH)).toBe(false);
   });
 });

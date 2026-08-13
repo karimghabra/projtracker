@@ -377,6 +377,12 @@ export function readyView(index: GraphIndex, today: DateOnly): ReadyRow[] {
  * Containers with no ready work inside them are absent entirely, so descending
  * never leads to a dead end.
  */
+/**
+ * The bucket every unfiled leaf hangs under. Not a node id — nothing looks it
+ * up in the graph — but it has to be distinct from one, and ids are `nNN`.
+ */
+export const MISC_BRANCH = '~misc';
+
 export interface ReadyBranch {
   id: NodeId;
   name: string;
@@ -397,6 +403,24 @@ export function readyTree(index: GraphIndex, today: DateOnly): ReadyBranch[] {
   const byId = new Map<NodeId, ReadyBranch>();
   const roots: ReadyBranch[] = [];
 
+  /**
+   * Work that belongs to no project.
+   *
+   * An unfiled task used to land in `roots` and sit at the top level beside
+   * whole projects, with a breadcrumb that was just its own name. One bucket
+   * instead, which behaves like any other branch: a count, and you go into it.
+   * Created only when something is in it, so a board with no loose work never
+   * shows an empty drawer.
+   */
+  let misc: ReadyBranch | undefined;
+  const miscBranch = (): ReadyBranch => {
+    if (!misc) {
+      misc = { id: MISC_BRANCH, name: 'Miscellaneous', kind: 'project', count: 0, children: [] };
+      roots.push(misc);
+    }
+    return misc;
+  };
+
   /** The branch for a node, creating it and its ancestors on the way up. */
   const branchFor = (id: NodeId): ReadyBranch => {
     const existing = byId.get(id);
@@ -407,7 +431,8 @@ export function readyTree(index: GraphIndex, today: DateOnly): ReadyBranch[] {
     byId.set(id, branch);
 
     if (node.parent) branchFor(node.parent).children.push(branch);
-    else roots.push(branch);
+    else if (node.kind === 'project') roots.push(branch);
+    else miscBranch().children.push(branch);
     return branch;
   };
 
@@ -418,6 +443,8 @@ export function readyTree(index: GraphIndex, today: DateOnly): ReadyBranch[] {
     for (let at: NodeId | null = row.id; at; at = index.state.nodes[at]?.parent ?? null) {
       byId.get(at)!.count += 1;
     }
+    // The bucket is not an ancestor of anything, so it counts separately.
+    if (index.state.nodes[row.id]?.parent === null) miscBranch().count += 1;
   }
 
   // Siblings in board order, which is the order the work is meant to happen in.

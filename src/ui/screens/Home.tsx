@@ -17,7 +17,7 @@ import type { CalendarSpan, ReadyBranch, TodayItemView } from '../../commands/vi
 import { useApp } from '../state/store.ts';
 import { Calendar, DayPanel } from '../components/Calendar.tsx';
 import { UpcomingPanel } from '../components/UpcomingPanel.tsx';
-import { Empty, InlineEdit, Modal, ProgressBar, QuickAdd } from '../components/ui.tsx';
+import { ConfirmDialog, Empty, InlineEdit, Modal, ProgressBar, QuickAdd } from '../components/ui.tsx';
 import { PlanButton, PlanDialog } from '../components/PlanDialog.tsx';
 import { NewProjectWizard } from './NewProject.tsx';
 import {
@@ -34,6 +34,8 @@ import {
   IconPlus,
   IconProjects,
   IconClose,
+  IconTrash,
+  IconUndo,
 } from '../components/icons.tsx';
 import type { ViewName } from '../AppShell.tsx';
 
@@ -228,6 +230,14 @@ function TodayPanel() {
           label="Add a task to today"
           placeholder="Add anything — it need not belong to a project"
           onAdd={(text) => run((a) => a.todayQuickAdd(text))}
+          /* Same field, two answers to "when": on the day, or in the pool
+             with everything else waiting to be chosen. */
+          secondary={{
+            label: 'To the pool',
+            title: 'Add it to the ready pool instead, with no day attached',
+            testId: 'quick-add-pool',
+            onAdd: (text) => run((a) => a.poolQuickAdd(text)),
+          }}
         />
       </div>
     </section>
@@ -297,6 +307,7 @@ function TodayRow({
   const { app, run } = useApp();
   const [startingProtocol, setStartingProtocol] = useState(false);
   const [moving, setMoving] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const toggle = () => {
     if (item.kind === 'reminder') {
@@ -412,6 +423,17 @@ function TodayRow({
             </button>
           </>
         )}
+        {/*
+          Three different things, and the row used to offer only the first:
+
+            X       not today — ask me again tomorrow
+            ↩       back to the pool — stop asking, I have not decided when
+            bin     delete — this should not exist
+
+          The middle one is the gap that made an eight-day-old row eight days
+          old: dismissing it said "not today" every morning, which is exactly
+          what leaving it alone already said.
+        */}
         <button
           className="btn ghost icon sm"
           title="Take off today"
@@ -420,7 +442,45 @@ function TodayRow({
         >
           <IconClose size={13} />
         </button>
+        {item.kind === 'task' && (
+          <button
+            className="btn ghost icon sm"
+            title="Back to the ready pool"
+            aria-label={`Put ${item.title} back in the ready pool`}
+            data-testid={`today-return-${item.key}`}
+            onClick={() => run((a) => a.todayReturn(item.key, app.today))}
+          >
+            <IconUndo size={13} />
+          </button>
+        )}
+        <button
+          className="btn ghost icon sm"
+          title="Delete"
+          aria-label={`Delete ${item.title}`}
+          data-testid={`today-delete-${item.key}`}
+          onClick={() => setConfirmDelete(true)}
+        >
+          <IconTrash size={13} />
+        </button>
       </div>
+
+      {confirmDelete && (
+        <ConfirmDialog
+          title={`Delete "${item.title}"?`}
+          body={
+            item.kind === 'reminder'
+              ? 'The reminder goes, and does not come back on any day.'
+              : 'The task goes, with its notes and anything under it. Undo brings it back.'
+          }
+          onConfirm={() => {
+            run((a) =>
+              item.kind === 'reminder' ? a.deleteReminder(item.id) : a.deleteNode(item.id),
+            );
+            setConfirmDelete(false);
+          }}
+          onClose={() => setConfirmDelete(false)}
+        />
+      )}
 
       {startingProtocol && (
         <StartProtocolDialog
