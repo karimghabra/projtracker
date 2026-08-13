@@ -133,7 +133,9 @@ test.describe('quick thoughts', () => {
     await capture.getByLabel('Write a note').fill('Scaffolds warped at 60 C');
     await capture.getByRole('button', { name: 'Save' }).click();
 
-    await expect(capture.getByText('Scaffolds warped at 60 C')).toBeVisible();
+    // The box is docked at the bottom and stays one line; what was written
+    // shows up in the notes panel above it.
+    await expect(page.getByTestId('notes-panel')).toContainText('Scaffolds warped at 60 C');
     await expect(capture.getByLabel('Write a note')).toHaveValue('');
   });
 
@@ -143,7 +145,7 @@ test.describe('quick thoughts', () => {
     await capture.getByLabel('Write a note').fill('Typed and committed');
     await capture.getByLabel('Write a note').press('Control+Enter');
 
-    await expect(capture.getByText('Typed and committed')).toBeVisible();
+    await expect(page.getByTestId('notes-panel')).toContainText('Typed and committed');
   });
 
   test('a note never becomes a task', async ({ h }) => {
@@ -153,7 +155,7 @@ test.describe('quick thoughts', () => {
     await capture.getByRole('button', { name: 'Save' }).click();
 
     await expect(page.getByTestId('today-list')).toHaveCount(0);
-    await expect(capture.getByText('TODO: buy PBS #lab')).toBeVisible();
+    await expect(page.getByTestId('notes-panel')).toContainText('TODO: buy PBS #lab');
   });
 
   test('the journal finds it again', async ({ h }) => {

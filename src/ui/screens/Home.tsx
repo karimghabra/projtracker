@@ -131,8 +131,10 @@ export function HomeScreen({ onNavigate }: { onNavigate: (view: ViewName) => voi
         <UpcomingPanel />
         <ExperimentsPanel />
         <ScaffoldsPanel onNavigate={onNavigate} />
-        <CapturePanel />
+        <NotesPanel />
         <ProgressPanel empty={!hasProjects} />
+        {/* Last, and sticky: whatever else is on screen, the box is. */}
+        <CapturePanel />
       </div>
     </div>
   );
@@ -951,10 +953,60 @@ function SeedDialog({ nodeId, onClose }: { nodeId: string; onClose: () => void }
 
 // ---------------------------------------------------------------- capture
 
-function CapturePanel() {
-  const { app, run } = useApp();
-  const [text, setText] = useState('');
+/**
+ * Recent thoughts, where they can be read.
+ *
+ * Split from the box you write in, because those two want opposite things: the
+ * writing end has to be there the moment a thought arrives, and the reading end
+ * is worth a scroll. Docking both would put four notes permanently across the
+ * bottom of the screen.
+ */
+function NotesPanel() {
+  const { app } = useApp();
   const recent = app.journal().slice(0, 4);
+  if (recent.length === 0) return null;
+
+  return (
+    <section className="panel" data-testid="notes-panel">
+      <div className="panel-head">
+        <IconClock size={15} />
+        <h2>Recent thoughts</h2>
+      </div>
+      <div className="panel-body">
+        <div className="stack tight">
+          {recent.map((note) => (
+            <div key={note.id}>
+              <div className="faint mono" style={{ fontSize: 11 }}>
+                {formatRelativeDay(note.at.slice(0, 10), app.today)} · {note.at.slice(11, 16)}
+                {note.nodeName ? ` · ${note.nodeName}` : ''}
+              </div>
+              <div style={{ whiteSpace: 'pre-wrap' }}>{note.text}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * The box you write in, docked to the bottom of the column.
+ *
+ * A thought arrives while you are looking at something else — halfway down the
+ * pool, or reading a culture's dates — and by then this had scrolled away. The
+ * whole point of it is that writing something down costs nothing, and going to
+ * find the box is the cost.
+ *
+ * Sticky inside the scrolling column rather than fixed to the window: the
+ * dashboard deliberately never scrolls as a page, and a floating box over a
+ * column would sit on top of the row underneath it.
+ *
+ * One line at rest, taller while you are typing in it, so the permanent cost of
+ * always being there is about forty pixels.
+ */
+function CapturePanel() {
+  const { run } = useApp();
+  const [text, setText] = useState('');
 
   const save = () => {
     const clean = text.trim();
@@ -963,52 +1015,32 @@ function CapturePanel() {
   };
 
   return (
-    <section className="panel" data-testid="capture-panel">
-      <div className="panel-head">
-        <IconClock size={15} />
-        <h2>Quick thoughts</h2>
-      </div>
+    <section className="panel capture-dock" data-testid="capture-panel">
       <div className="panel-body">
-        <textarea
-          className="textarea"
-          value={text}
-          placeholder="Anything worth keeping. Ctrl+Enter to save."
-          aria-label="Write a note"
-          onChange={(event) => setText(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
-              event.preventDefault();
-              save();
-            }
-          }}
-        />
-        <div className="inline" style={{ marginTop: 8 }}>
-          <span className="faint grow">Notes are just notes — nothing reads them.</span>
+        <div className="inline">
+          <textarea
+            className="textarea capture-input"
+            rows={1}
+            value={text}
+            placeholder="Anything worth keeping. Ctrl+Enter to save."
+            aria-label="Write a note"
+            onChange={(event) => setText(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+                event.preventDefault();
+                save();
+              }
+            }}
+          />
           <button className="btn" onClick={save} disabled={!text.trim()}>
             Save
           </button>
         </div>
-
-        {recent.length > 0 && (
-          <>
-            <hr className="sep" />
-            <div className="stack tight">
-              {recent.map((note) => (
-                <div key={note.id}>
-                  <div className="faint mono" style={{ fontSize: 11 }}>
-                    {formatRelativeDay(note.at.slice(0, 10), app.today)} · {note.at.slice(11, 16)}
-                    {note.nodeName ? ` · ${note.nodeName}` : ''}
-                  </div>
-                  <div style={{ whiteSpace: 'pre-wrap' }}>{note.text}</div>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
       </div>
     </section>
   );
 }
+
 
 // --------------------------------------------------------------- projects
 

@@ -82,3 +82,64 @@ test.describe('the dashboard fits the window', () => {
     expect(overflows).toBe(false);
   });
 });
+
+/**
+ * The box you write a thought in has to be there when the thought arrives —
+ * which is usually while you are looking at something else.
+ */
+test.describe('quick thoughts stay reachable', () => {
+  test('stays at the bottom of the column while everything above it scrolls', async ({ h }) => {
+    const { page } = h;
+    // Enough in the right-hand column to make it scroll.
+    for (let i = 0; i < 12; i++) {
+      await page.getByLabel('Write a note').fill(`Thought number ${i}`);
+      await page.getByTestId('capture-panel').getByRole('button', { name: 'Save' }).click();
+    }
+    await createProject(page, {
+      name: 'A busy lab',
+      milestones: Array.from({ length: 6 }, (_, m) => ({
+        name: `Milestone ${m + 1}`,
+        goals: [{ name: `Goal ${m + 1}`, tasks: ['One', 'Two'] }],
+      })),
+    });
+    await h.goto('home');
+
+    const column = page.getByTestId('dash-right');
+    const dock = page.getByTestId('capture-panel');
+    await expect(dock).toBeInViewport();
+
+    // Scroll the column to the bottom, and to the top again. The box does not
+    // move: it is stuck to the column's bottom edge, which is the window's.
+    const bottomOf = async () => {
+      const box = await dock.boundingBox();
+      return Math.round(box!.y + box!.height);
+    };
+    const atRest = await bottomOf();
+
+    await column.evaluate((el) => { el.scrollTop = el.scrollHeight; });
+    expect(await bottomOf()).toBe(atRest);
+    await expect(dock).toBeInViewport();
+
+    await column.evaluate((el) => { el.scrollTop = 0; });
+    expect(await bottomOf()).toBe(atRest);
+    await expect(dock).toBeInViewport();
+  });
+
+  test('is one line at rest and still saves a note', async ({ h }) => {
+    const { page } = h;
+    const input = page.getByLabel('Write a note');
+    const height = async () => Math.round((await input.boundingBox())!.height);
+
+    const resting = await height();
+    expect(resting).toBeLessThan(50);
+
+    await input.click();
+    await input.fill('Genipin turned blue faster than expected');
+    // Room to write while writing.
+    expect(await height()).toBeGreaterThan(resting);
+
+    await input.press('Control+Enter');
+    await expect(page.getByTestId('notes-panel')).toContainText('Genipin turned blue faster');
+    await expect(input).toHaveValue('');
+  });
+});

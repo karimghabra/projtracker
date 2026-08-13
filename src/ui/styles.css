@@ -649,6 +649,41 @@ svg text {
  */
 .dash-col > * { flex: none; }
 
+/*
+ * The box you write a thought in, docked to the bottom of its column.
+ *
+ * Sticky rather than fixed, and inside the column rather than over it: the page
+ * itself never scrolls (see `.dash`), so the column's bottom edge is the bottom
+ * of the window, and a fixed box would sit on top of whatever row was there.
+ *
+ * `margin-top: auto` pins it down when the column is shorter than the screen,
+ * so on an empty board it is at the bottom rather than floating under the last
+ * panel.
+ */
+.capture-dock {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  margin-top: auto;
+  background: var(--bg-raised);
+}
+
+/* One line at rest; room to write while you are writing. The permanent cost of
+   always being there is about forty pixels.
+
+   Two classes deep on purpose: `.textarea` sets a 72px min-height further down
+   this file, and at equal specificity the later rule would win. */
+.capture-dock .capture-input {
+  min-height: 34px;
+  height: 34px;
+  resize: none;
+  transition: height 120ms ease;
+}
+
+.capture-dock:focus-within .capture-input {
+  height: 84px;
+}
+
 .span-4 { grid-column: span 4; }
 .span-5 { grid-column: span 5; }
 .span-6 { grid-column: span 6; }
