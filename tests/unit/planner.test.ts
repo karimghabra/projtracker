@@ -251,6 +251,8 @@ describe('putting a reminder off until another day', () => {
       sampleCount: 6,
       seedingDate: '2026-08-03',
       durationDays: 7,
+      // A week-long culture has no room for the default day-14 switch.
+      mediaPhases: [],
     });
 
     const stage = h.app.state.reminders.find((r) => r.source.kind === 'experiment')!;
@@ -529,17 +531,31 @@ describe('getting something off the day', () => {
     const h = harness('2026-08-03T09:00');
     const { id } = h.app.todayQuickAdd('Pick up badge from Scripps');
 
-    // Dismissing it on a later day closes that day only: the entry it was
-    // added on is still open, so it is owed again tomorrow. (Dismissed on the
-    // day it was added there is no earlier entry, and it does not come back —
-    // which is why the difference below only shows on something carried.)
-    h.clock.set('2026-08-05T09:00');
-    expect(todayTitles(h.app)).toContain('Pick up badge from Scripps');
+    // Dismissed on the day it was added. Its entry for today was the only claim
+    // it had, and closing that used to leave nothing open anywhere — so the
+    // task silently stopped being owed. "Not today" is not "never".
     h.app.todayRemove(`node:${id}`);
     expect(todayTitles(h.app)).toEqual([]);
 
-    h.clock.set('2026-08-06T09:00');
+    h.clock.set('2026-08-04T09:00');
     expect(todayTitles(h.app)).toContain('Pick up badge from Scripps');
+  });
+
+  it('keeps asking, and keeps counting, on something already carried', () => {
+    const h = harness('2026-08-03T09:00');
+    const { id } = h.app.todayQuickAdd('Make new looped ligaments');
+
+    h.clock.set('2026-08-09T09:00');
+    h.app.todayRemove(`node:${id}`);
+    expect(todayTitles(h.app)).toEqual([]);
+
+    // Back tomorrow, and still six days old — dismissing a day does not reset
+    // how long it has been owed.
+    h.clock.set('2026-08-10T09:00');
+    const [item] = h.app.todayList().items;
+    expect(item!.title).toBe('Make new looped ligaments');
+    expect(item!.rolledFrom).toBe('2026-08-03');
+    expect(item!.ageDays).toBe(7);
   });
 
   it('back to the pool means it stops asking', () => {

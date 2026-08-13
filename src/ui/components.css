@@ -1002,7 +1002,7 @@ kbd {
 
 .contrib-name {
   flex: none;
-  width: 92px;
+  width: 104px;
   font-size: var(--text-xs);
   color: var(--text-muted);
   overflow: hidden;
@@ -1013,18 +1013,27 @@ kbd {
 .contrib-days {
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: 1fr;
-  gap: 2px;
+  grid-auto-columns: minmax(6px, 1fr);
+  gap: 3px;
   flex: 1;
   min-width: 0;
+  /* Nothing is dropped if the panel is narrower than the grid wants to be —
+     the days scroll rather than shrinking below the point of being readable. */
+  overflow-x: auto;
+  padding-bottom: 2px;
 }
 
 .contrib-cell {
   aspect-ratio: 1;
-  min-height: 7px;
+  min-height: 9px;
   border-radius: 2px;
   background: var(--bg-sunken);
+  border: 1px solid transparent;
 }
+
+/* An empty day is a faint outline rather than a filled dot, so a day with
+   something on it is the only thing with weight in the row. */
+.contrib-cell.l0 { border-color: var(--border); background: transparent; }
 
 /* Four steps of the accent, which is the app's own colour rather than a green
    borrowed from somewhere else. */

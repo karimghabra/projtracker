@@ -430,7 +430,8 @@ export function readyTree(index: GraphIndex, today: DateOnly): ReadyBranch[] {
       misc = {
         id: MISC_BRANCH,
         name: 'Miscellaneous',
-        kind: 'project',
+        // Not a project, and it used to say it was. `task` is what is in it.
+        kind: 'task',
         count: 0,
         begun: false,
         children: [],
@@ -1235,7 +1236,16 @@ export interface ContributionsView {
 export function contributionsView(
   index: GraphIndex,
   today: DateOnly,
-  days = 91,
+  /*
+    Six weeks, not a quarter. The panel is half a screen wide, so ninety-one
+    columns came out at four pixels each with a two-pixel gap — a dotted line
+    rather than a grid, in which the one day that had anything on it could not
+    be picked out. Five weeks fits the column at a legible size without
+    overflowing it, which matters more than it sounds: the row scrolled, and the
+    cell that fell off the end was today's. A longer view belongs on a screen
+    with room for it.
+  */
+  days = 35,
 ): ContributionsView {
   const state = index.state;
   const from = addDays(today, -(days - 1));

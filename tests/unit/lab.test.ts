@@ -106,7 +106,7 @@ describe('experiments in the app', () => {
   it('ticking the reminder ticks the stage, and the other way round', () => {
     const h = harness('2026-08-03T08:00');
     const b = sampleBoard(h);
-    h.app.setExperiment(b.experiment, { sampleCount: 6, seedingDate: '2026-08-03', durationDays: 7 });
+    h.app.setExperiment(b.experiment, { sampleCount: 6, seedingDate: '2026-08-03', durationDays: 7 , mediaPhases: [] });
 
     // Reached through the experiment rather than the day's list, which is no
     // longer where a culture's stages appear.
@@ -121,7 +121,7 @@ describe('experiments in the app', () => {
   it('regenerating the timeline is idempotent and does not lose ticks', () => {
     const h = harness('2026-08-03T08:00');
     const b = sampleBoard(h);
-    h.app.setExperiment(b.experiment, { sampleCount: 6, seedingDate: '2026-08-03', durationDays: 14 });
+    h.app.setExperiment(b.experiment, { sampleCount: 6, seedingDate: '2026-08-03', durationDays: 14 , mediaPhases: [] });
     h.app.tickStage(b.experiment, 'seed', true);
 
     const before = h.app.state.reminders.length;
@@ -133,7 +133,7 @@ describe('experiments in the app', () => {
   it('moving the seeding date moves every stage with it', () => {
     const h = harness('2026-08-01T08:00');
     const b = sampleBoard(h);
-    h.app.setExperiment(b.experiment, { sampleCount: 6, seedingDate: '2026-08-03', durationDays: 7 });
+    h.app.setExperiment(b.experiment, { sampleCount: 6, seedingDate: '2026-08-03', durationDays: 7 , mediaPhases: [] });
     const first = h.app.node(b.experiment).experiment!.endsOn;
 
     h.app.setExperiment(b.experiment, { seedingDate: '2026-08-10' });
@@ -164,7 +164,7 @@ describe('an experiment that belongs to no project', () => {
   it('takes its dates afterwards, and the timeline follows', () => {
     const h = harness('2026-08-03T08:00');
     const { id } = h.app.experimentQuickAdd('Pilot');
-    h.app.setExperiment(id, { sampleCount: 6, seedingDate: '2026-08-03', durationDays: 14 });
+    h.app.setExperiment(id, { sampleCount: 6, seedingDate: '2026-08-03', durationDays: 14 , mediaPhases: [] });
 
     expect(h.app.node(id).experiment!.endsOn).toBe('2026-08-17');
     // And its stages are on the calendar, exactly as a filed one's would be.
@@ -207,8 +207,8 @@ describe('the experiments panel reads', () => {
     const running = h.app.experimentQuickAdd('Running late').id;
     const endingSooner = h.app.experimentQuickAdd('Running soon').id;
 
-    h.app.setExperiment(running, { sampleCount: 1, seedingDate: '2026-08-01', durationDays: 40 });
-    h.app.setExperiment(endingSooner, { sampleCount: 1, seedingDate: '2026-08-01', durationDays: 20 });
+    h.app.setExperiment(running, { sampleCount: 1, seedingDate: '2026-08-01', durationDays: 40 , mediaPhases: [] });
+    h.app.setExperiment(endingSooner, { sampleCount: 1, seedingDate: '2026-08-01', durationDays: 20 , mediaPhases: [] });
 
     expect(h.app.experiments().map((n) => n.name)).toEqual(['Running soon', 'Running late']);
   });
@@ -216,7 +216,7 @@ describe('the experiments panel reads', () => {
   it('leaves a culture seeding on a later day to the calendar', () => {
     const h = harness('2026-08-10T08:00');
     const planned = h.app.experimentQuickAdd('Seeding in September').id;
-    h.app.setExperiment(planned, { sampleCount: 1, seedingDate: '2026-09-01', durationDays: 10 });
+    h.app.setExperiment(planned, { sampleCount: 1, seedingDate: '2026-09-01', durationDays: 10 , mediaPhases: [] });
 
     // Not in the incubator, so not on the card; already dated, so not an open
     // decision either. The day it was given carries it.
@@ -241,7 +241,7 @@ describe('the experiments panel reads', () => {
   it('sends a culture past its endpoint to the pool as something to collect', () => {
     const h = harness('2026-09-30T08:00');
     const over = h.app.experimentQuickAdd('Finished').id;
-    h.app.setExperiment(over, { sampleCount: 1, seedingDate: '2026-08-01', durationDays: 7 });
+    h.app.setExperiment(over, { sampleCount: 1, seedingDate: '2026-08-01', durationDays: 7 , mediaPhases: [] });
 
     // Off the card — the incubator is free — and in the pool as the act it
     // wants, which is a pair of hands rather than a tick.
@@ -257,7 +257,7 @@ describe('the experiments panel reads', () => {
   it('says nothing at all about a culture in the incubator', () => {
     const h = harness('2026-08-10T08:00');
     const running = h.app.experimentQuickAdd('Mid-culture').id;
-    h.app.setExperiment(running, { sampleCount: 1, seedingDate: '2026-08-05', durationDays: 21 });
+    h.app.setExperiment(running, { sampleCount: 1, seedingDate: '2026-08-05', durationDays: 21 , mediaPhases: [] });
 
     // The cells are in there and the clock runs whether or not anybody picks
     // the row. Offering it as work was offering something that cannot be done.

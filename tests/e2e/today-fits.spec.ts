@@ -135,8 +135,9 @@ test.describe('quick thoughts stay reachable', () => {
 
     await input.click();
     await input.fill('Genipin turned blue faster than expected');
-    // Room to write while writing.
-    expect(await height()).toBeGreaterThan(resting);
+    // Room to write while writing. Polled rather than measured once: the box
+    // grows on a 120ms transition, and reading it immediately raced that.
+    await expect.poll(height, { timeout: 2000 }).toBeGreaterThan(resting);
 
     await input.press('Control+Enter');
     await expect(page.getByTestId('notes-panel')).toContainText('Genipin turned blue faster');

@@ -34,15 +34,24 @@ export interface Stage {
   done: boolean;
 }
 
+/**
+ * What a culture looks like here before anybody says otherwise: two weeks of
+ * proliferation, then differentiation, five weeks in total. Taken from how the
+ * cultures on this board actually run rather than from a textbook — the old
+ * default switched at day seven and ended at three weeks, which matched nothing
+ * anybody was doing and put a wrong date on every new experiment.
+ */
 export const DEFAULT_MEDIA_PHASES: MediaPhase[] = [
   { name: 'Proliferation', startDay: 0 },
-  { name: 'Differentiation', startDay: 7 },
+  { name: 'Differentiation', startDay: 14 },
 ];
+
+export const DEFAULT_CULTURE_DAYS = 35;
 
 export function emptyExperiment(): ExperimentDef {
   return {
     sampleCount: 0,
-    durationDays: 21,
+    durationDays: DEFAULT_CULTURE_DAYS,
     mediaPhases: DEFAULT_MEDIA_PHASES.map((p) => ({ ...p })),
     stagesDone: [],
   };

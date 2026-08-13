@@ -666,6 +666,14 @@ svg text {
   z-index: 2;
   margin-top: auto;
   background: var(--bg-raised);
+  /*
+    It sits over whatever is behind it, so it has to read as a thing in front
+    rather than as the bottom of the panel above — which is exactly how it
+    looked without this: an unlabelled input directly under the Experiments
+    heading, apparently part of it.
+  */
+  box-shadow: 0 -8px 16px -8px rgb(0 0 0 / 0.35);
+  border: 1px solid var(--border-strong);
 }
 
 /* One line at rest; room to write while you are writing. The permanent cost of
@@ -983,7 +991,14 @@ svg text {
 .row-actions {
   display: flex;
   gap: 2px;
-  opacity: 0;
+  /*
+    Present, not shouting. Fully invisible until hover meant the controls a
+    person was told they had — delete, back to the pool — could not be found
+    without discovering that rows react to the mouse at all, and could not be
+    found on a touchscreen. Faint at rest is the compromise: the row still
+    reads as a row, and the buttons are there when you look for them.
+  */
+  opacity: 0.4;
   transition: opacity var(--dur) var(--ease);
 }
 

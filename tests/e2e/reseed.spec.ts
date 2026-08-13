@@ -6,6 +6,13 @@ import { expect, test } from './fixtures.ts';
  * appears in the pool as `Collect X`, so the button lives on that row.
  */
 
+/** A day relative to today, so a fixture culture is genuinely in the incubator. */
+function today(offsetDays = 0): string {
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  return d.toISOString().slice(0, 10);
+}
+
 async function makeCulture(page: import('@playwright/test').Page, name: string) {
   await page.getByTestId('add-experiment').click();
   await page.getByTestId('experiment-name').fill(name);
@@ -47,18 +54,19 @@ test.describe('the experiments panel', () => {
     const { page } = h;
     await makeCulture(page, 'Chitogel culture');
 
-    const id = await page.evaluate(() => {
+    // The date is computed here and passed in: `today()` is a Node helper, and
+    // the callback below runs in the browser.
+    const id = await page.evaluate((seeded) => {
       const pt = (window as any).__pt;
       const node = Object.values(pt.app.state.nodes).find((n: any) => n.kind === 'experiment') as any;
       pt.run((a: any) =>
-        a.setExperiment(node.id, { sampleCount: 6, seedingDate: '2026-01-05', durationDays: 14 }),
+        a.setExperiment(node.id, { sampleCount: 6, seedingDate: seeded, durationDays: 35 }),
       );
-      // Tick the first stage of the run that is now over.
       pt.run((a: any) => a.tickStage(node.id, 'seed', true));
       return node.id;
-    });
+    }, today(-3));
 
-    await page.getByTestId(`ready-reseed-${id}`).click();
+    await page.getByTestId(`reseed-${id}`).click();
     await page.getByTestId('reseed-date').fill('2026-06-01');
     await page.getByTestId('save-reseed').click();
 
@@ -79,16 +87,16 @@ test.describe('the experiments panel', () => {
     const { page } = h;
     await makeCulture(page, 'Meniscus culture');
 
-    const id = await page.evaluate(() => {
+    const id = await page.evaluate((seeded) => {
       const pt = (window as any).__pt;
       const node = Object.values(pt.app.state.nodes).find((n: any) => n.kind === 'experiment') as any;
       pt.run((a: any) =>
-        a.setExperiment(node.id, { sampleCount: 4, seedingDate: '2026-02-02', durationDays: 10 }),
+        a.setExperiment(node.id, { sampleCount: 4, seedingDate: seeded, durationDays: 35 }),
       );
       return node.id;
-    });
+    }, today(-3));
 
-    await page.getByTestId(`ready-reseed-${id}`).click();
+    await page.getByTestId(`reseed-${id}`).click();
     await page.getByTestId('reseed-date').fill('2026-07-07');
     await page.getByTestId('save-reseed').click();
 
@@ -97,6 +105,6 @@ test.describe('the experiments panel', () => {
       (nodeId) => (window as any).__pt.app.node(nodeId).experiment.def.seedingDate,
       id,
     );
-    expect(seeded).toBe('2026-02-02');
+    expect(seeded).toBe(today(-3));
   });
 });

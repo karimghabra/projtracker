@@ -14,6 +14,7 @@ import type { ExperimentDef } from '../../core/model.ts';
 import { validateExperiment } from '../../core/experiments.ts';
 import { ExperimentForm } from '../components/ExperimentForm.tsx';
 import type { CalendarSpan, ReadyBranch, TodayItemView } from '../../commands/views.ts';
+import { MISC_BRANCH } from '../../commands/views.ts';
 import { useApp } from '../state/store.ts';
 import { Calendar, DayPanel } from '../components/Calendar.tsx';
 import { UpcomingPanel } from '../components/UpcomingPanel.tsx';
@@ -683,8 +684,6 @@ function ReadyPanel({
   );
   /** The culture whose seeding form is open, if any. */
   const [seeding, setSeeding] = useState<string | null>(null);
-  /** The finished culture being put back on the same scaffolds, if any. */
-  const [reseeding, setReseeding] = useState<string | null>(null);
 
   const tree = app.readyTree();
   const total = tree.reduce((sum, branch) => sum + branch.count, 0);
@@ -783,7 +782,7 @@ function ReadyPanel({
                       number.
                     */}
                     <div className="row-sub">
-                      {branch.kind}
+                      {branch.id === MISC_BRANCH ? 'belongs to no project' : branch.kind}
                       {branch.begun ? ' · under way' : ''}
                     </div>
                   </div>
@@ -851,32 +850,6 @@ function ReadyPanel({
                   <span className="chip accent" data-testid={`ready-planned-${row.id}`}>
                     {formatRelativeDay(row.plannedFor, app.today)}
                   </span>
-                )}
-                {/*
-                  A culture that has reached its endpoint is exactly where
-                  reseeding gets decided: you take this run off the scaffolds
-                  and put the next one on. The button used to live on the card,
-                  which is the one place a finished culture is no longer shown.
-                */}
-                {row.action === 'collect' && (
-                  <button
-                    className="btn sm"
-                    data-testid={`ready-reseed-${row.id}`}
-                    aria-label={`Reseed ${row.name}`}
-                    onClick={() => setReseeding(reseeding === row.id ? null : row.id)}
-                  >
-                    Reseed
-                  </button>
-                )}
-                {reseeding === row.id && (
-                  <ReseedField
-                    name={row.name}
-                    today={app.today}
-                    onDone={(date) => {
-                      if (date && run((a) => a.reseed(row.id, date))) setReseeding(null);
-                      else if (!date) setReseeding(null);
-                    }}
-                  />
                 )}
                 <PlanButton nodeId={row.id} name={row.name} plannedFor={row.plannedFor} />
                 <button
@@ -1018,6 +991,7 @@ function CapturePanel() {
     <section className="panel capture-dock" data-testid="capture-panel">
       <div className="panel-body">
         <div className="inline">
+          <IconClock size={14} className="faint" />
           <textarea
             className="textarea capture-input"
             rows={1}
@@ -1286,19 +1260,22 @@ function Contributions() {
 function ReseedField({
   name,
   today,
+  samples,
   onDone,
 }: {
   name: string;
   today: string;
-  onDone: (date: string | null) => void;
+  samples: number;
+  onDone: (result: { date: string; samples: number } | null) => void;
 }) {
   const [date, setDate] = useState(today);
+  const [count, setCount] = useState(String(samples || ''));
   return (
     <form
       className="inline"
       onSubmit={(event) => {
         event.preventDefault();
-        onDone(date);
+        onDone({ date, samples: Number(count) || 0 });
       }}
     >
       <input
@@ -1313,8 +1290,25 @@ function ReseedField({
           if (event.key === 'Escape') onDone(null);
         }}
       />
+      {/* How many cell-seeded scaffolds went in. The number is known at the
+          hood and nowhere else, so it is asked for here rather than left to be
+          corrected later on the experiment. */}
+      <input
+        className="input"
+        type="number"
+        min={0}
+        style={{ width: 78 }}
+        value={count}
+        placeholder="scaffolds"
+        aria-label={`Scaffolds seeded into ${name}`}
+        data-testid="reseed-samples"
+        onChange={(event) => setCount(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') onDone(null);
+        }}
+      />
       <button className="btn primary sm" type="submit" data-testid="save-reseed">
-        Reseed
+        Reseeded
       </button>
     </form>
   );
@@ -1548,9 +1542,11 @@ function ExperimentsPanel() {
                     <ReseedField
                       name={node.name}
                       today={app.today}
-                      onDone={(date) => {
-                        if (date && run((a) => a.reseed(node.id, date))) setReseeding(null);
-                        else if (!date) setReseeding(null);
+                      samples={exp.def.sampleCount}
+                      onDone={(result) => {
+                        if (result && run((a) => a.reseed(node.id, result.date, result.samples))) {
+                          setReseeding(null);
+                        } else if (!result) setReseeding(null);
                       }}
                     />
                   )}

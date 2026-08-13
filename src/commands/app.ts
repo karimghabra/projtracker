@@ -1033,12 +1033,28 @@ export class App {
     const node = this.state.nodes[id];
     if (!node) throw notFound('node', id);
     return this.mutate(`Remove "${node.name}" from ${date}`, (draft) => {
-      // Only today's own entry is closed. A rolled-over item keeps its original
-      // open entry and gets a tombstone for today instead, because "not today"
-      // is a statement about today — saying it should not mean never again.
+      /*
+        "Not today" must never quietly mean "never again", and for one case it
+        did. Two situations, and only the first was handled:
+
+        Already rolling — its open entry is on an earlier day. Close today with
+        a tombstone and leave that entry alone, so tomorrow it is owed again and
+        still says how many days it has been carried.
+
+        Added today — the entry for today is the only claim it has. Closing that
+        left nothing open anywhere, so the task silently stopped being owed:
+        dismissing something an hour after typing it deleted it from the day
+        forever. Its claim moves to tomorrow instead, which is what pushing
+        something off actually means.
+      */
       const own = draft.planner.find((e) => e.date === date && e.nodeId === id && !e.outcome);
-      if (own) own.outcome = 'deferred';
-      else draft.planner.push({ date, nodeId: id, order: 0, outcome: 'deferred' });
+      const rollingFrom = draft.planner.find((e) => e.nodeId === id && !e.outcome && e.date < date);
+      if (own && rollingFrom) own.outcome = 'deferred';
+      else if (own) {
+        const tomorrow = addDays(date, 1);
+        own.date = tomorrow;
+        own.order = draft.planner.filter((e) => e.date === tomorrow).length;
+      } else draft.planner.push({ date, nodeId: id, order: 0, outcome: 'deferred' });
 
       // A date-planned task taken off today stops claiming the day.
       const target = draft.nodes[id];
@@ -1363,14 +1379,28 @@ export class App {
    * facts about this one and the timeline starts again. Everything else —
    * samples, cells, phases, duration — is the design, and stays.
    */
-  reseed(nodeId: NodeId, on: DateOnly): Delta {
+  /**
+   * The same scaffolds, seeded again.
+   *
+   * `samples` is how many cell-seeded scaffolds actually went in this time,
+   * which is the number worth writing down at the moment you write it down.
+   * Left out, the previous run's count stands.
+   */
+  reseed(nodeId: NodeId, on: DateOnly, samples?: number): Delta {
     const node = this.state.nodes[nodeId];
     if (!node) throw notFound('node', nodeId);
     if (node.kind !== 'experiment') throw notAllowed(`"${node.name}" is not an experiment.`);
     if (!isDateOnly(on)) throw invalid(`"${on}" is not a date. Use YYYY-MM-DD.`);
+    if (samples !== undefined && (!Number.isInteger(samples) || samples < 0)) {
+      throw invalid('Scaffold count must be a whole number.');
+    }
 
     return this.transaction(`Reseed "${node.name}"`, (app) => {
-      app.setExperiment(nodeId, { seedingDate: on, stagesDone: [] });
+      app.setExperiment(nodeId, {
+        seedingDate: on,
+        stagesDone: [],
+        ...(samples === undefined ? {} : { sampleCount: samples }),
+      });
       // A reseeded culture is running again, whatever the last one ended as.
       if (this.state.nodes[nodeId]!.status === 'done') app.reopen(nodeId);
       return { ok: true as const, message: `Reseeded "${node.name}" on ${on}.` };

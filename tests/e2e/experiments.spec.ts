@@ -170,7 +170,7 @@ test.describe('seeding and collecting', () => {
     await page.getByTestId('save-experiment').click();
 
     // Seeded long enough ago that it is over.
-    const id = await page.evaluate(() => {
+    await page.evaluate(() => {
       const pt = (window as any).__pt;
       const node = Object.values(pt.app.state.nodes).find((n: any) => n.kind === 'experiment') as any;
       pt.run((a: any) =>
@@ -183,8 +183,6 @@ test.describe('seeding and collecting', () => {
     await expect(page.getByTestId('experiments-panel')).toContainText('Nothing in the incubator');
     const pool = page.getByTestId('ready-panel');
     await expect(pool).toContainText('Collect Finished culture');
-    // Reseeding is offered right here, which is where the decision is made.
-    await expect(pool.getByTestId(`ready-reseed-${id}`)).toBeVisible();
 
     await pool.getByRole('checkbox', { name: 'Collect Finished culture' }).click();
     await expect(page.getByText('Collect Finished culture')).toHaveCount(0);
