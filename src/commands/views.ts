@@ -1101,6 +1101,31 @@ function groupByState(batches: { state: string; count: number }[]): { state: str
     .sort((a, b) => rank(a.state) - rank(b.state) || a.state.localeCompare(b.state));
 }
 
+/**
+ * Scaffolds that could go into a culture today.
+ *
+ * Anything not used up and not already in an experiment. Deliberately not
+ * filtered to the culture's own scaffold type: the type on an experiment is a
+ * label somebody typed, and refusing a batch because it disagrees would be the
+ * app being surer than the person at the hood. The picker sorts the matching
+ * type first and lets them pick the rest.
+ */
+export function availableScaffolds(
+  state: State,
+  today: DateOnly,
+  now: string,
+  preferTypeId?: string,
+): BatchView[] {
+  return inventoryView(state, today, now)
+    .batches.filter((b) => !b.usedBy && !isTerminalState(b.state) && b.count > 0)
+    .sort((a, b) => {
+      const rank = (x: BatchView) => (preferTypeId && x.typeId === preferTypeId ? 0 : 1);
+      // Oldest stock first inside each group: scaffolds do not improve on a
+      // shelf, and the ones made first are the ones to use up.
+      return rank(a) - rank(b) || a.fabricatedOn.localeCompare(b.fabricatedOn);
+    });
+}
+
 export function inventoryView(state: State, today: DateOnly, now: string): InventoryView {
   const typeName = new Map(state.scaffoldTypes.map((t) => [t.id, t.name]));
   const unitOf = new Map(state.scaffoldTypes.map((t) => [t.id, t.unit]));

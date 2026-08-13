@@ -17,9 +17,16 @@ import { IconPlus, IconTrash, IconWarning } from './icons.tsx';
 export function ExperimentForm({
   value,
   onChange,
+  lockSamples = false,
 }: {
   value: ExperimentDef;
   onChange: (next: ExperimentDef) => void;
+  /**
+   * True when the scaffolds have been picked from the inventory, so the count
+   * is what went in rather than a number to type. Two answers to one question
+   * is how the two ends come to disagree.
+   */
+  lockSamples?: boolean;
 }) {
   const { app } = useApp();
   const types = app.inventory().types;
@@ -40,6 +47,8 @@ export function ExperimentForm({
             min={0}
             value={value.sampleCount}
             data-testid="ex-samples"
+            readOnly={lockSamples}
+            title={lockSamples ? 'Follows the scaffolds picked above' : undefined}
             onChange={(event) => set({ sampleCount: Number(event.target.value) || 0 })}
           />
         </div>

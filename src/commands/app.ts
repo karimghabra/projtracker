@@ -66,6 +66,7 @@ import type {
   CalendarSpan,
   GraphOptions,
   GraphView,
+  BatchView,
   InventoryView,
   NodeView,
   ContributionsView,
@@ -80,6 +81,7 @@ import {
   calendarView,
   flatTree,
   graphView,
+  availableScaffolds,
   inventoryView,
   nodeView,
   contributionsView,
@@ -347,6 +349,11 @@ export class App {
 
   inventory(): InventoryView {
     return inventoryView(this.state, this.today, this.now);
+  }
+
+  /** What could be seeded into a culture right now. */
+  available(preferTypeId?: string): BatchView[] {
+    return availableScaffolds(this.state, this.today, this.now, preferTypeId);
   }
 
   experiments(): NodeView[] {
@@ -1392,6 +1399,44 @@ export class App {
    * facts about this one and the timeline starts again. Everything else —
    * samples, cells, phases, duration — is the design, and stays.
    */
+  /**
+   * Seeding, as one decision: the culture's numbers and the scaffolds that went
+   * into it, together.
+   *
+   * They were two commands, which made them two undo steps and left a window
+   * where a culture was seeded but nothing had left the shelf. Seeding is one
+   * act at the hood, so it is one here — §3.
+   *
+   * When batches are picked, the sample count stops being typed and becomes
+   * what actually went in. A culture seeded without picking any keeps the
+   * number the user gave it, because plenty of work is recorded by somebody who
+   * never put its scaffolds in this inventory.
+   */
+  seedCulture(
+    nodeId: NodeId,
+    def: Partial<ExperimentDef>,
+    picks: { batchId: string; count: number }[] = [],
+  ): Delta {
+    const node = this.state.nodes[nodeId];
+    if (!node) throw notFound('node', nodeId);
+    if (node.kind !== 'experiment') throw notAllowed(`"${node.name}" is not an experiment.`);
+
+    const chosen = picks.filter((p) => p.count > 0);
+    const total = chosen.reduce((sum, p) => sum + p.count, 0);
+    const on = def.seedingDate ?? this.today;
+
+    return this.transaction(`Seed "${node.name}"`, (app) => {
+      if (chosen.length) app.assignScaffolds(nodeId, chosen, on);
+      app.setExperiment(nodeId, chosen.length ? { ...def, sampleCount: total } : def);
+      return {
+        ok: true as const,
+        message: chosen.length
+          ? `Seeded "${node.name}" with ${total} scaffolds.`
+          : `Seeded "${node.name}".`,
+      };
+    });
+  }
+
   /**
    * More cells into a culture that is already going.
    *

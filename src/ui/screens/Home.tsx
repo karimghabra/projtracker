@@ -891,11 +891,22 @@ function SeedDialog({ nodeId, onClose }: { nodeId: string; onClose: () => void }
     ...node.experiment!.def,
     seedingDate: node.experiment!.def.seedingDate ?? app.today,
   }));
+  /** How many from each batch, by batch id. Nothing chosen until it is typed. */
+  const [picks, setPicks] = useState<Record<string, number>>({});
 
-  const problems = validateExperiment(draft);
+  const available = app.available(draft.scaffoldTypeId);
+  const taken = Object.entries(picks).filter(([, n]) => n > 0);
+  const total = taken.reduce((sum, [, n]) => sum + n, 0);
+
+  // The count is what went in, once anything has been picked. Typing it as
+  // well would be two answers to one question.
+  const shown: ExperimentDef = taken.length ? { ...draft, sampleCount: total } : draft;
+  const problems = validateExperiment(shown);
+
   const save = () => {
     if (problems.length || !draft.seedingDate) return;
-    if (run((a) => a.setExperiment(nodeId, draft))) onClose();
+    const chosen = taken.map(([batchId, count]) => ({ batchId, count }));
+    if (run((a) => a.seedCulture(nodeId, shown, chosen))) onClose();
   };
 
   return (
@@ -919,7 +930,61 @@ function SeedDialog({ nodeId, onClose }: { nodeId: string; onClose: () => void }
         </>
       }
     >
-      <ExperimentForm value={draft} onChange={setDraft} />
+      {/*
+        The scaffolds first, because that is the question being answered at the
+        hood — which of these went in — and because picking them fills in the
+        count below rather than the other way round.
+      */}
+      <div className="field">
+        <label>Scaffolds going in</label>
+        {available.length === 0 ? (
+          <span className="hint" data-testid="no-scaffolds">
+            Nothing in the inventory to seed. The count below is yours to type, and the scaffolds
+            can be recorded later on the Scaffolds screen.
+          </span>
+        ) : (
+          <div className="stack tight" data-testid="scaffold-picker">
+            {available.map((batch) => (
+              <label className="row" key={batch.id}>
+                {/* Divs, not spans: `.row-title` and `.row-sub` are two lines,
+                    and inline elements ran them into one another. */}
+                <div className="grow" style={{ minWidth: 0 }}>
+                  <div className="row-title">{batch.typeName}</div>
+                  <div className="row-sub">
+                    {batch.count} available · made {formatDayMonth(batch.fabricatedOn, app.today)} ·{' '}
+                    {batch.state}
+                    {batch.location ? ` · ${batch.location}` : ''}
+                  </div>
+                </div>
+                <input
+                  className="input"
+                  type="number"
+                  min={0}
+                  max={batch.count}
+                  style={{ width: 82 }}
+                  value={picks[batch.id] ?? ''}
+                  placeholder="0"
+                  aria-label={`How many from the ${batch.typeName} batch made ${batch.fabricatedOn}`}
+                  data-testid={`pick-${batch.id}`}
+                  onChange={(event) => {
+                    const n = Math.min(Number(event.target.value) || 0, batch.count);
+                    setPicks((was) => ({ ...was, [batch.id]: n }));
+                  }}
+                />
+              </label>
+            ))}
+            {taken.length > 0 && (
+              <span className="hint" data-testid="picked-total">
+                {total} going in. The count below follows from this.
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+
+      <hr className="sep" />
+
+      <ExperimentForm value={shown} onChange={setDraft} lockSamples={taken.length > 0} />
     </Modal>
   );
 }

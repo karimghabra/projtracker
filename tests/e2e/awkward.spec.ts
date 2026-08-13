@@ -179,3 +179,95 @@ test.describe('where the scaffolds are', () => {
     await page.screenshot({ path: 'screenshots/awk-7-split.png' });
   });
 });
+
+/**
+ * Seeding through the app, taking the scaffolds with it. The command existed
+ * before this and could not be reached from the screen, which is the difference
+ * between a thing that works and a thing you can use.
+ */
+test.describe('seeding takes scaffolds from the shelf', () => {
+  test.use({ viewport: { width: 1512, height: 950 } });
+
+  const stock = (page: import('@playwright/test').Page) =>
+    page.evaluate(() => {
+      const pt = (window as any).__pt;
+      pt.run((a: any) => a.addScaffoldType('Collagen sponge'));
+      const batch = pt.run((a: any) => a.addBatch('collagen-sponge', 24));
+      pt.run((a: any) => a.storeBatch(batch.id, '-20 freezer, shelf 2'));
+      const exp = pt.run((a: any) => a.experimentQuickAdd('Osteogenic culture'));
+      return { batch: batch.id, experiment: exp.id };
+    });
+
+  test('picks scaffolds, and the count follows what went in', async ({ h }) => {
+    const { page } = h;
+    const ids = await stock(page);
+    await page.reload();
+    await page.waitForSelector('.shell');
+
+    await page.getByTestId('ready-panel')
+      .getByRole('checkbox', { name: 'Seed Osteogenic culture' }).click();
+
+    // The shelf is offered, with where it is and how much of it there is.
+    const picker = page.getByTestId('scaffold-picker');
+    await expect(picker).toContainText('24 available');
+    await expect(picker).toContainText('-20 freezer, shelf 2');
+    await page.screenshot({ path: 'screenshots/awk-8-picker.png' });
+
+    await page.getByTestId(`pick-${ids.batch}`).fill('12');
+    await expect(page.getByTestId('picked-total')).toContainText('12 going in');
+    // The sample count is no longer something to type.
+    await expect(page.getByTestId('ex-samples')).toHaveValue('12');
+    await expect(page.getByTestId('ex-samples')).toHaveAttribute('readonly', '');
+
+    await page.getByTestId('seed-save').click();
+
+    // On the card with what went in, and the shelf is twelve lighter.
+    await expect(page.getByTestId(`experiment-${ids.experiment}`)).toContainText('12 scaffolds');
+    await page.getByTestId('nav-inventory').click();
+    await expect(page.locator('tbody tr')).toHaveCount(2);
+    await expect(page.locator('tbody')).toContainText('Osteogenic culture');
+    await page.screenshot({ path: 'screenshots/awk-9-after-seeding.png' });
+  });
+
+  test('is one undo step, scaffolds and culture together', async ({ h }) => {
+    const { page } = h;
+    const ids = await stock(page);
+    await page.reload();
+    await page.waitForSelector('.shell');
+
+    await page.getByTestId('ready-panel')
+      .getByRole('checkbox', { name: 'Seed Osteogenic culture' }).click();
+    await page.getByTestId(`pick-${ids.batch}`).fill('6');
+    await page.getByTestId('seed-save').click();
+    await expect(page.getByTestId(`experiment-${ids.experiment}`)).toContainText('6 scaffolds');
+
+    await page.getByTestId('undo').click();
+
+    // The culture is waiting to be seeded again and the batch is whole.
+    await expect(page.getByTestId('ready-panel')).toContainText('Seed Osteogenic culture');
+    const count = await page.evaluate(
+      (id) => (window as any).__pt.app.state.batches.find((b: any) => b.id === id).count,
+      ids.batch,
+    );
+    expect(count).toBe(24);
+  });
+
+  test('still seeds when there is nothing in the inventory', async ({ h }) => {
+    const { page } = h;
+    await page.evaluate(() => {
+      (window as any).__pt.run((a: any) => a.experimentQuickAdd('Unstocked culture'));
+    });
+    await page.reload();
+    await page.waitForSelector('.shell');
+
+    await page.getByTestId('ready-panel')
+      .getByRole('checkbox', { name: 'Seed Unstocked culture' }).click();
+    await expect(page.getByTestId('no-scaffolds')).toBeVisible();
+
+    // The count is yours to type: plenty of work is recorded by somebody who
+    // never put its scaffolds in this inventory.
+    await page.getByTestId('ex-samples').fill('9');
+    await page.getByTestId('seed-save').click();
+    await expect(page.getByTestId('experiments-panel')).toContainText('9 scaffolds');
+  });
+});
