@@ -767,14 +767,23 @@ function ReadyPanel({
             <div className="list">
               {branches.map((branch) => (
                 <button
-                  className="row nav-row"
+                  className={branch.begun ? 'row nav-row' : 'row nav-row not-begun'}
                   key={branch.id}
                   data-testid={`ready-into-${branch.id}`}
                   onClick={() => go([...trail.map((b) => b.id), branch.id])}
                 >
                   <div className="grow" style={{ minWidth: 0 }}>
                     <div className="row-title">{branch.name}</div>
-                    <div className="row-sub">{branch.kind}</div>
+                    {/*
+                      Which of these have I already opened? Finishing one you
+                      are part-way through beats starting a fourth, and without
+                      this the two look identical — same button, different
+                      number.
+                    */}
+                    <div className="row-sub">
+                      {branch.kind}
+                      {branch.begun ? ' · under way' : ''}
+                    </div>
                   </div>
                   <span className="chip">{branch.count}</span>
                   <IconChevronRight size={13} />

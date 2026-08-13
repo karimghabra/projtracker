@@ -264,7 +264,20 @@ function TreeRow({
   return (
     <>
       <div
-        className={selected === node.id ? 'tree-row selected' : 'tree-row'}
+        /*
+          Weight says where the work is. Something in progress is the loudest
+          row on the screen; something never opened recedes without leaving.
+          Finished work was quietened in #25 and is left alone here — three
+          levels of emphasis is one more than the eye can use.
+        */
+        className={[
+          'tree-row',
+          selected === node.id ? 'selected' : '',
+          node.derived === 'in_progress' ? 'is-live' : '',
+          !node.begun && node.derived !== 'done' ? 'not-begun' : '',
+        ]
+          .filter(Boolean)
+          .join(' ')}
         style={{ paddingLeft: 6 + node.depth * 18 }}
         data-testid={`tree-${node.id}`}
         onClick={() => onSelect(node.id)}
@@ -311,7 +324,7 @@ function TreeRow({
           </span>
         )}
 
-        <span className="grow" style={{ minWidth: 0 }}>
+        <span className="grow tree-name" style={{ minWidth: 0 }}>
           <InlineEdit
             value={node.name}
             ariaLabel={`Name of ${node.kind}`}

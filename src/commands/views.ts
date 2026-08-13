@@ -33,6 +33,7 @@ import {
   blockersOf,
   completesDirectly,
   derivedStatus,
+  hasBegun,
   inProgressLeaves,
   isAbandoned,
   isDone,
@@ -114,6 +115,12 @@ export interface NodeView {
   steps: Step[];
   blockers: BlockerView[];
   progress: { done: number; total: number } | null;
+  /**
+   * Whether anything here has been touched. Carried rather than worked out by
+   * a component: "has this been opened" is a derivation over the subtree, and
+   * the row drawing it has no business walking one.
+   */
+  begun: boolean;
   childCount: number;
   /**
    * Whether ticking this off is a statement about the node itself rather than a
@@ -168,6 +175,7 @@ export function nodeView(index: GraphIndex, id: NodeId, today: DateOnly): NodeVi
       inherited: b.inherited,
     })),
     progress: isContainerKind(node.kind) ? progressOf(index, node.id) : null,
+    begun: hasBegun(index, node.id),
     childCount: (index.children.get(node.id) ?? []).length,
     completesDirectly: completesDirectly(index, node.id),
     createdAt: node.createdAt,
@@ -389,6 +397,8 @@ export interface ReadyBranch {
   kind: NodeKind;
   /** Ready leaves at or below this node. */
   count: number;
+  /** Whether anything under it has been started or finished already. */
+  begun: boolean;
   children: ReadyBranch[];
   /** Present when this node is itself one of the ready leaves. */
   row?: ReadyRow;
@@ -415,7 +425,16 @@ export function readyTree(index: GraphIndex, today: DateOnly): ReadyBranch[] {
   let misc: ReadyBranch | undefined;
   const miscBranch = (): ReadyBranch => {
     if (!misc) {
-      misc = { id: MISC_BRANCH, name: 'Miscellaneous', kind: 'project', count: 0, children: [] };
+      // Loose work has no shared history, so the bucket never claims to be
+      // under way — the rows inside it each answer for themselves.
+      misc = {
+        id: MISC_BRANCH,
+        name: 'Miscellaneous',
+        kind: 'project',
+        count: 0,
+        begun: false,
+        children: [],
+      };
       roots.push(misc);
     }
     return misc;
@@ -427,7 +446,14 @@ export function readyTree(index: GraphIndex, today: DateOnly): ReadyBranch[] {
     if (existing) return existing;
 
     const node = index.state.nodes[id]!;
-    const branch: ReadyBranch = { id, name: node.name, kind: node.kind, count: 0, children: [] };
+    const branch: ReadyBranch = {
+      id,
+      name: node.name,
+      kind: node.kind,
+      count: 0,
+      begun: hasBegun(index, id),
+      children: [],
+    };
     byId.set(id, branch);
 
     if (node.parent) branchFor(node.parent).children.push(branch);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildIndex, blockersOf, derivedStatus, downstreamIncomplete, isDone, layeredLayout, progressOf, projectProgress, readyLeaves, transitiveReduction, wouldCreateCycle } from '@core/graph.ts';
+import { buildIndex, blockersOf, derivedStatus, downstreamIncomplete, hasBegun, isDone, layeredLayout, progressOf, projectProgress, readyLeaves, transitiveReduction, wouldCreateCycle } from '@core/graph.ts';
 import { harness, readyNames, sampleBoard } from './helpers.ts';
 
 const TODAY = '2026-07-30';
@@ -434,5 +434,63 @@ describe('abandoning a goal abandons its work', () => {
     const index = buildIndex(h.app.state);
     expect(derivedStatus(index, b.draft, TODAY)).toBe('dropped');
     expect(readyNames(h.app)).not.toContain('Slice model');
+  });
+});
+
+/**
+ * "Finish what you have opened before opening another" needs the board to say
+ * which is which. A goal four tasks in and a goal nobody has touched were the
+ * same row with a different number on it.
+ */
+describe('what has been opened', () => {
+  it('is false for a board where nothing has happened', () => {
+    const h = harness();
+    const b = sampleBoard(h);
+    const index = buildIndex(h.app.state);
+    expect(hasBegun(index, b.project)).toBe(false);
+    expect(hasBegun(index, b.cad)).toBe(false);
+    expect(hasBegun(index, b.draft)).toBe(false);
+  });
+
+  it('starting one task opens everything above it', () => {
+    const h = harness();
+    const b = sampleBoard(h);
+    h.app.start(b.draft);
+
+    const index = buildIndex(h.app.state);
+    expect(hasBegun(index, b.draft)).toBe(true);
+    expect(hasBegun(index, b.cad)).toBe(true);
+    expect(hasBegun(index, b.fabrication)).toBe(true);
+    expect(hasBegun(index, b.project)).toBe(true);
+    // But not its neighbours: Testing has had nothing done to it.
+    expect(hasBegun(index, b.testing)).toBe(false);
+  });
+
+  it('counts finished work as opened, because it plainly was', () => {
+    const h = harness();
+    const b = sampleBoard(h);
+    h.app.complete(b.draft);
+    expect(hasBegun(buildIndex(h.app.state), b.cad)).toBe(true);
+  });
+
+  it('does not count work that was given up on', () => {
+    const h = harness();
+    const b = sampleBoard(h);
+    // Abandoning a goal is not progress through it.
+    h.app.drop(b.cad);
+    h.app.complete(b.slice);
+
+    const index = buildIndex(h.app.state);
+    expect(hasBegun(index, b.cad)).toBe(false);
+    // The milestone still counts, because the other goal under it moved.
+    expect(hasBegun(index, b.fabrication)).toBe(true);
+  });
+
+  it('pausing leaves it opened — you started it once', () => {
+    const h = harness();
+    const b = sampleBoard(h);
+    h.app.start(b.draft);
+    h.app.pause(b.draft);
+    expect(hasBegun(buildIndex(h.app.state), b.cad)).toBe(true);
   });
 });

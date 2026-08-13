@@ -373,6 +373,25 @@ export function leavesOf(index: GraphIndex, id: NodeId): Node[] {
 }
 
 /**
+ * Whether anything here has been touched yet.
+ *
+ * A leaf has begun when it says so — started, or finished. A container has
+ * begun when any live unit of work inside it has. Abandoned work does not
+ * count: giving up on a goal is not progress through it.
+ *
+ * Exists because "finish what you have opened before opening another" is a way
+ * of working the board could not support: a goal four tasks in and a goal never
+ * touched were the same row with a different number on it.
+ */
+export function hasBegun(index: GraphIndex, id: NodeId): boolean {
+  const node = index.state.nodes[id];
+  if (!node) return false;
+  const begun = (n: Node) => n.status === 'in_progress' || n.status === 'done' || !!n.startedAt;
+  if (!isContainerKind(node.kind)) return !isAbandoned(index, id) && begun(node);
+  return leavesOf(index, id).some((leaf) => !isAbandoned(index, leaf.id) && begun(leaf));
+}
+
+/**
  * Fraction complete, ignoring dropped work. Null when there is nothing to
  * count — except for a container the user has explicitly closed, which counts
  * as the one thing it is, so that finishing it registers somewhere.

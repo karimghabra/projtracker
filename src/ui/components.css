@@ -489,6 +489,30 @@
 .tree-row.selected { background: var(--accent-soft); }
 .tree-row.adding { background: var(--bg-sunken); }
 
+/*
+ * Where the work is, at a glance.
+ *
+ * Finishing what you have opened before opening something else needs the board
+ * to say which is which, and a row four tasks in looked exactly like a row
+ * nobody had touched. Two rules, no third: live work is marked, untouched work
+ * recedes. Done work was quietened separately and is not touched here.
+ *
+ * The name only, not the whole row: dimming the controls would make an
+ * unstarted task harder to *start*, which is the opposite of the point.
+ */
+.tree-row.not-begun .tree-name {
+  color: var(--text-faint);
+}
+
+/* Same rule in the ready pool, where the choice is actually made. */
+.nav-row.not-begun .row-title {
+  color: var(--text-faint);
+}
+
+.tree-row.is-live {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
 .seq-input {
   width: 46px;
   flex: none;
