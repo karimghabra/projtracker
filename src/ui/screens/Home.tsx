@@ -1524,12 +1524,21 @@ function ExperimentsPanel() {
                         : 'not seeded yet'}
                       {made.length ? ` · ${made.join(' · ')}` : ''}
                     </div>
+                    {/*
+                      What is next, under the name rather than beside it. A
+                      chip reading "Switch to differentiation media 14 Aug" is
+                      forty characters of fixed width, and it was taking them
+                      from the culture's name — which is the one thing on the
+                      row that tells two cultures apart.
+                    */}
+                    {exp.next && (
+                      <div className="row-sub" data-testid={`experiment-next-${node.id}`}>
+                        <span className="chip info nowrap">
+                          {exp.next.label} {formatDayMonth(exp.next.date, app.today)}
+                        </span>
+                      </div>
+                    )}
                   </div>
-                  {exp.next && (
-                    <span className="chip info nowrap" data-testid={`experiment-next-${node.id}`}>
-                      {exp.next.label} {formatDayMonth(exp.next.date, app.today)}
-                    </span>
-                  )}
                   <button
                     className="btn sm"
                     data-testid={`reseed-${node.id}`}
