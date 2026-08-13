@@ -56,8 +56,17 @@ is: click a cell, Enter commits and moves down, Tab moves right.
 
 **Experiments** take what you actually specify — samples, scaffold type, cells
 per scaffold, when the scaffolds arrive, seeding date, culture length, media
-transitions — and derive a dated timeline from it. Media changes and the
-endpoint appear on the calendar and on the day they are due.
+phases — and derive a dated timeline from it. The switch to differentiation
+media and the endpoint appear on the calendar, on the day they are due. Nothing
+else is invented: a stage exists because you said so, so there is no routine
+"change media" every second day filling the list with a chore nobody asked for.
+
+A culture is two acts with a wait between them, and the day's work reflects
+that. The ready pool offers **Seed *X*** while it is waiting to go in — ticking
+that opens the form, because how many scaffolds and which cells is known at the
+bench and nowhere else — and **Collect *X*** once it is past its endpoint. While
+it is running it is on the dashboard's card with a clock on it, and in the pool
+nowhere, because there is nothing to pick up until it comes out.
 
 **Scaffolds** tracks what you have made and what state it is in. Select some
 batches, pick EDC/NHS or genipin, and every timed step of the protocol lands in
@@ -237,8 +246,8 @@ is itself a statement that the row is done.
 ```bash
 npm install
 npm run dev          # the app in a browser, no Electron needed
-npm test             # 395 unit tests, including 60 simulated days of use
-npm run test:e2e     # 289 end-to-end tests
+npm test             # 425 unit tests, including 60 simulated days of use
+npm run test:e2e     # 306 end-to-end tests
 npm run icon         # regenerate the app icon
 npm run pack         # a Windows installer in release/
 ```
