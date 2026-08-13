@@ -57,3 +57,81 @@ test.describe('awkward', () => {
     expect(true).toBe(true);
   });
 });
+
+/**
+ * The gestures a person makes when something changes at the bench, performed
+ * rather than asserted about: change your mind, put it back, take it away, and
+ * take the taking-away back.
+ */
+test.describe('changing your mind', () => {
+  test.use({ viewport: { width: 1512, height: 950 } });
+
+  test('delete asks first, and undo brings it back whole', async ({ h }) => {
+    const { page } = h;
+    await page.getByLabel('Add a task to today').fill('Typed by mistake');
+    await page.getByRole('button', { name: 'Add', exact: true }).click();
+
+    const before = await page.evaluate(() => JSON.stringify((window as any).__pt.app.state.nodes));
+
+    await page.getByTestId('today-panel')
+      .getByRole('button', { name: 'Delete Typed by mistake' }).click();
+    await page.screenshot({ path: 'screenshots/awk-4-confirm.png' });
+    await expect(page.getByRole('dialog')).toContainText('Delete "Typed by mistake"?');
+    await page.getByRole('button', { name: 'Delete', exact: true }).click();
+    await expect(page.getByTestId('today-panel')).not.toContainText('Typed by mistake');
+
+    await page.getByTestId('undo').click();
+    await expect(page.getByTestId('today-panel')).toContainText('Typed by mistake');
+    const after = await page.evaluate(() => JSON.stringify((window as any).__pt.app.state.nodes));
+    expect(after).toBe(before);
+  });
+
+  test('a task put back in the pool can be pulled onto the day again', async ({ h }) => {
+    const { page } = h;
+    await page.getByLabel('Add a task to today').fill('Chase the PO');
+    await page.getByRole('button', { name: 'Add', exact: true }).click();
+
+    await page.getByTestId('today-panel')
+      .getByRole('button', { name: /back in the ready pool/ }).click();
+    await expect(page.getByTestId('today-panel')).not.toContainText('Chase the PO');
+
+    const pool = page.getByTestId('ready-panel');
+    await expect(pool).toContainText('Chase the PO');
+    await pool.getByRole('button', { name: 'Add Chase the PO to today' }).click();
+
+    // Back where it started, and not listed twice.
+    await expect(page.getByTestId('today-list')).toContainText('Chase the PO');
+    expect(await page.getByTestId('today-list').locator('.row').count()).toBe(1);
+  });
+
+  test('reseeding a running culture records the new count', async ({ h }) => {
+    const { page } = h;
+    const id = await page.evaluate(() => {
+      const pt = (window as any).__pt;
+      pt.run((a: any) => a.experimentQuickAdd('Chitogel culture'));
+      const node = Object.values(pt.app.state.nodes).find((n: any) => n.kind === 'experiment') as any;
+      const d = new Date();
+      d.setDate(d.getDate() - 4);
+      pt.run((a: any) =>
+        a.setExperiment(node.id, {
+          sampleCount: 6,
+          seedingDate: d.toISOString().slice(0, 10),
+          durationDays: 35,
+        }),
+      );
+      return node.id;
+    });
+    await page.reload();
+    await page.waitForSelector('.shell');
+
+    await expect(page.getByTestId(`experiment-${id}`)).toContainText('6 scaffolds');
+    await page.getByTestId(`reseed-${id}`).click();
+    await page.getByTestId('reseed-samples').fill('18');
+    await page.getByTestId('save-reseed').click();
+
+    // The count is what went in this time, and the clock restarted today.
+    await expect(page.getByTestId(`experiment-${id}`)).toContainText('18 scaffolds');
+    await expect(page.getByTestId(`experiment-${id}`)).toContainText('seeded');
+    await page.getByTestId('experiments-panel').screenshot({ path: 'screenshots/awk-5-reseeded.png' });
+  });
+});
