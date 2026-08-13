@@ -1188,6 +1188,100 @@ export function inventoryView(state: State, today: DateOnly, now: string): Inven
   };
 }
 
+// ---------------------------------------------------------- contributions
+
+export interface ContributionDay {
+  date: DateOnly;
+  /** How many things happened on this project that day. */
+  count: number;
+}
+
+export interface ContributionRow {
+  id: NodeId;
+  name: string;
+  days: ContributionDay[];
+  total: number;
+}
+
+export interface ContributionsView {
+  from: DateOnly;
+  to: DateOnly;
+  rows: ContributionRow[];
+  /** The busiest single day anywhere, which is what the shading scales to. */
+  busiest: number;
+}
+
+/**
+ * Days across, projects down, and how much happened in each cell.
+ *
+ * A fraction ticking up says where a project stands and nothing about whether
+ * it has been touched this month. This answers the other question — which
+ * projects are alive, which have gone quiet, and when anything last happened.
+ *
+ * **What counts.** Three things, each already stamped with the moment it
+ * happened: a task finished, a task started, a note written against something.
+ * Weighting them differently would be inventing a currency; counting only
+ * completions would call a day spent on a culture that finished nothing an
+ * empty day, which is the opposite of true in a lab.
+ *
+ * **What is deliberately missing.** A completion back-filled as "Q3 2026" has
+ * no day, and is not drawn on one. The alternative is picking a day it might
+ * have been, which is exactly the invention this app refuses everywhere else —
+ * and on the vault this was built against it would have painted 105 completions
+ * onto the afternoon the workbook was imported. The picture starts thin and
+ * fills in from the day it ships. A row that is honestly empty is worth more
+ * than a row that is confidently wrong.
+ */
+export function contributionsView(
+  index: GraphIndex,
+  today: DateOnly,
+  days = 91,
+): ContributionsView {
+  const state = index.state;
+  const from = addDays(today, -(days - 1));
+  const inRange = (date: DateOnly) => date >= from && date <= today;
+
+  const rows = new Map<NodeId, Map<DateOnly, number>>();
+  const add = (nodeId: NodeId | undefined, stamp: string | undefined) => {
+    if (!nodeId || !stamp) return;
+    const date = stamp.slice(0, 10);
+    if (!inRange(date)) return;
+    const node = state.nodes[nodeId];
+    if (!node) return;
+    const project = node.kind === 'project' ? node : findProject(index, nodeId);
+    if (!project) return;
+    const row = rows.get(project.id) ?? new Map<DateOnly, number>();
+    row.set(date, (row.get(date) ?? 0) + 1);
+    rows.set(project.id, row);
+  };
+
+  for (const node of Object.values(state.nodes)) {
+    // Only a completion that names a day. A period is a fact about a quarter,
+    // not about a Tuesday.
+    if (node.doneAt && (node.donePrecision ?? 'day') === 'day') add(node.id, node.doneAt);
+    add(node.id, node.startedAt);
+  }
+  for (const note of state.notes) add(note.nodeId, note.at);
+
+  const dates: DateOnly[] = [];
+  for (let at = 0; at < days; at++) dates.push(addDays(from, at));
+
+  let busiest = 0;
+  const out: ContributionRow[] = rootProjects(index).map((project) => {
+    const counts = rows.get(project.id) ?? new Map<DateOnly, number>();
+    let total = 0;
+    const row = dates.map((date) => {
+      const count = counts.get(date) ?? 0;
+      total += count;
+      if (count > busiest) busiest = count;
+      return { date, count };
+    });
+    return { id: project.id, name: project.name, days: row, total };
+  });
+
+  return { from, to: today, rows: out, busiest };
+}
+
 // --------------------------------------------------------------- progress
 
 export interface ProgressRow {

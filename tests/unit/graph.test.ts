@@ -494,3 +494,78 @@ describe('what has been opened', () => {
     expect(hasBegun(buildIndex(h.app.state), b.cad)).toBe(true);
   });
 });
+
+/**
+ * The contributions grid: days across, projects down.
+ *
+ * The value of it depends entirely on refusing to draw what is not known, so
+ * most of these are about what stays blank.
+ */
+describe('contributions', () => {
+  it('puts a completion on the day it happened', () => {
+    const h = harness('2026-08-12T09:00');
+    const b = sampleBoard(h);
+    h.app.complete(b.draft);
+
+    const view = h.app.contributions(7);
+    const row = view.rows.find((r) => r.id === b.project)!;
+    expect(row.total).toBe(1);
+    expect(row.days.at(-1)).toMatchObject({ date: '2026-08-12', count: 1 });
+    expect(view.to).toBe('2026-08-12');
+  });
+
+  it('counts starting and noting as well as finishing', () => {
+    const h = harness('2026-08-12T09:00');
+    const b = sampleBoard(h);
+    h.app.start(b.draft);
+    h.app.capture('Beading again at 60 C', b.draft);
+
+    // A day spent on something that finished nothing is still a day on it.
+    const row = h.app.contributions(7).rows.find((r) => r.id === b.project)!;
+    expect(row.days.at(-1)!.count).toBe(2);
+  });
+
+  it('draws nothing for a completion back-filled to a quarter', () => {
+    const h = harness('2026-08-12T09:00');
+    const b = sampleBoard(h);
+    h.app.setCompletion(b.draft, 'Q3 2026');
+
+    // It has no day, so it belongs on none. Picking one would be the invention
+    // this app refuses everywhere else.
+    const row = h.app.contributions(91).rows.find((r) => r.id === b.project)!;
+    expect(row.total).toBe(0);
+  });
+
+  it('leaves days before the window alone', () => {
+    const h = harness('2026-06-01T09:00');
+    const b = sampleBoard(h);
+    h.app.complete(b.draft);
+
+    h.clock.set('2026-08-12T09:00');
+    const view = h.app.contributions(7);
+    expect(view.from).toBe('2026-08-06');
+    expect(view.rows.find((r) => r.id === b.project)!.total).toBe(0);
+  });
+
+  it('scales the shading to the busiest day, and reports it', () => {
+    const h = harness('2026-08-12T09:00');
+    const b = sampleBoard(h);
+    h.app.complete(b.draft);
+    h.app.capture('One', b.draft);
+    h.app.capture('Two', b.draft);
+
+    expect(h.app.contributions(7).busiest).toBe(3);
+  });
+
+  it('has a row per project, in board order, even for a quiet one', () => {
+    const h = harness('2026-08-12T09:00');
+    const b = sampleBoard(h);
+    h.app.addProject('Quiet project');
+
+    const view = h.app.contributions(7);
+    expect(view.rows.map((r) => r.name)).toEqual(['Tendon Study', 'Quiet project']);
+    expect(view.rows[1]!.total).toBe(0);
+    expect(view.rows[1]!.days).toHaveLength(7);
+    void b;
+  });
+});

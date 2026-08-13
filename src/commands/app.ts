@@ -61,6 +61,7 @@ import type {
   GraphView,
   InventoryView,
   NodeView,
+  ContributionsView,
   ProgressRow,
   ReadyBranch,
   ReadyRow,
@@ -74,6 +75,7 @@ import {
   graphView,
   inventoryView,
   nodeView,
+  contributionsView,
   progressView,
   experimentsView,
   inProgressView,
@@ -346,6 +348,11 @@ export class App {
 
   progress(): ProgressRow[] {
     return progressView(this.index, this.today);
+  }
+
+  /** Days across, projects down: where the work has actually been going. */
+  contributions(days?: number): ContributionsView {
+    return contributionsView(this.index, this.today, days);
   }
 
   upcoming(days = 60): { reminders: ReturnType<typeof upcomingReminders>; planned: NodeView[]; late: NodeView[] } {

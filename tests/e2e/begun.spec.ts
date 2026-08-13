@@ -67,3 +67,31 @@ test.describe('started work stands out', () => {
     }
   });
 });
+
+/**
+ * Days across, projects down. The panel exists to answer "which of these have I
+ * touched lately", which a fraction cannot.
+ */
+test.describe('contributions', () => {
+  test('marks the day work happened on, and leaves the rest blank', async ({ h }) => {
+    const { page } = h;
+    await page.getByTestId('nav-projects').click();
+    await createProject(page, board);
+    await page.getByTestId('show-all').click();
+
+    // Finish one thing today.
+    await page.locator('.tree-row', { hasText: 'Twist yarn' }).first()
+      .getByRole('checkbox', { name: /^Complete/ }).check();
+
+    await page.getByTestId('nav-home').click();
+    const grid = page.getByTestId('contributions');
+    await expect(grid).toBeVisible();
+    await expect(grid).toContainText('Tendon study');
+
+    // Exactly one cell is lit, and it is today's.
+    const today = new Date().toISOString().slice(0, 10);
+    const lit = grid.locator('.contrib-cell:not(.l0)');
+    await expect(lit).toHaveCount(1);
+    await expect(lit).toHaveAttribute('title', new RegExp(`^${today}:`));
+  });
+});

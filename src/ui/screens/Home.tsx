@@ -1218,8 +1218,62 @@ function ProgressPanel({ empty }: { empty: boolean }) {
           ))}
         </div>
 
+        <hr className="sep" />
+        <Contributions />
       </div>
     </section>
+  );
+}
+
+/**
+ * Where the work has actually been going: days across, projects down.
+ *
+ * A fraction says where a project stands. This says whether it has been touched
+ * this month — which project is alive, which has gone quiet, and when anything
+ * last happened on it.
+ *
+ * Every cell is a real timestamp. A completion back-filled to a quarter has no
+ * day and is drawn on none, so the picture starts thin and fills in from here;
+ * that is the honest version, and the alternative would have painted a hundred
+ * completions onto the afternoon a workbook was imported.
+ */
+function Contributions() {
+  const { app } = useApp();
+  const view = app.contributions();
+  if (view.rows.length === 0) return null;
+
+  // Four steps, because the eye cannot read more from a square this size. The
+  // busiest day anywhere sets the top so one heavy day does not flatten
+  // everything else to the same shade.
+  const level = (count: number) => {
+    if (count === 0) return 0;
+    if (view.busiest <= 1) return 4;
+    return Math.min(4, Math.ceil((count / view.busiest) * 4));
+  };
+
+  return (
+    <div className="contrib" data-testid="contributions">
+      {view.rows.map((row) => (
+        <div className="contrib-row" key={row.id}>
+          <span className="contrib-name" title={row.name}>
+            {row.name}
+          </span>
+          <span className="contrib-days">
+            {row.days.map((day) => (
+              <span
+                key={day.date}
+                className={`contrib-cell l${level(day.count)}`}
+                title={`${day.date}: ${day.count === 0 ? 'nothing recorded' : `${day.count} thing${day.count === 1 ? '' : 's'}`}`}
+                data-testid={day.count > 0 ? `contrib-${row.id}-${day.date}` : undefined}
+              />
+            ))}
+          </span>
+        </div>
+      ))}
+      <div className="contrib-foot faint">
+        {view.from} to {view.to} · completions, starts and notes, on the day they happened
+      </div>
+    </div>
   );
 }
 

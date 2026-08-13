@@ -979,3 +979,61 @@ kbd {
   background: var(--bg-sunken);
   color: var(--text-muted);
 }
+
+/*
+ * Contributions: days across, projects down.
+ *
+ * The grid has to survive a half-width column and thirteen weeks of days, so
+ * the cells are set in fractions rather than pixels — they shrink with the
+ * panel instead of overflowing it. Gaps stay fixed so the squares keep reading
+ * as squares rather than dissolving into a bar.
+ */
+.contrib {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.contrib-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.contrib-name {
+  flex: none;
+  width: 92px;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contrib-days {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.contrib-cell {
+  aspect-ratio: 1;
+  min-height: 7px;
+  border-radius: 2px;
+  background: var(--bg-sunken);
+}
+
+/* Four steps of the accent, which is the app's own colour rather than a green
+   borrowed from somewhere else. */
+.contrib-cell.l1 { background: color-mix(in srgb, var(--accent) 25%, var(--bg-sunken)); }
+.contrib-cell.l2 { background: color-mix(in srgb, var(--accent) 50%, var(--bg-sunken)); }
+.contrib-cell.l3 { background: color-mix(in srgb, var(--accent) 75%, var(--bg-sunken)); }
+.contrib-cell.l4 { background: var(--accent); }
+
+.contrib-foot {
+  margin-top: 4px;
+  font-size: var(--text-xs);
+}

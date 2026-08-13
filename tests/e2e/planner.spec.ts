@@ -182,8 +182,10 @@ test.describe('progress', () => {
       milestones: [{ name: 'M', goals: [{ name: 'G', tasks: ['Untouched'] }] }],
     });
 
+    // The row, specifically: the contributions grid in the same panel names
+    // every project too, on its own axis.
     const progress = page.getByTestId('progress-panel');
-    await expect(progress.getByText('Quiet project')).toBeVisible();
+    await expect(progress.locator('.row-title', { hasText: 'Quiet project' })).toBeVisible();
     await expect(progress.getByText('stale')).toBeVisible();
   });
 
