@@ -50,61 +50,82 @@ test.describe('the experiments panel', () => {
     await expect(page.getByTestId(`experiment-next-${id}`)).toBeVisible();
   });
 
-  test('reseeding restarts the timeline and clears the old run’s ticks', async ({ h }) => {
+  test('reseeding adds cells to the run that is already going', async ({ h }) => {
     const { page } = h;
     await makeCulture(page, 'Chitogel culture');
 
-    // The date is computed here and passed in: `today()` is a Node helper, and
-    // the callback below runs in the browser.
-    const id = await page.evaluate((seeded) => {
+    const seeded = today(-9);
+    const id = await page.evaluate((on) => {
       const pt = (window as any).__pt;
       const node = Object.values(pt.app.state.nodes).find((n: any) => n.kind === 'experiment') as any;
       pt.run((a: any) =>
-        a.setExperiment(node.id, { sampleCount: 6, seedingDate: seeded, durationDays: 35 }),
+        a.setExperiment(node.id, { sampleCount: 6, seedingDate: on, durationDays: 35 }),
       );
+      // Nine days of proliferation already behind it, and the seeding ticked.
       pt.run((a: any) => a.tickStage(node.id, 'seed', true));
       return node.id;
-    }, today(-3));
+    }, seeded);
 
     await page.getByTestId(`reseed-${id}`).click();
-    await page.getByTestId('reseed-date').fill('2026-06-01');
+    await page.getByTestId('reseed-samples').fill('12');
     await page.getByTestId('save-reseed').click();
 
     const state = await page.evaluate((nodeId) => {
-      const pt = (window as any).__pt;
-      const exp = pt.app.node(nodeId).experiment;
+      const exp = (window as any).__pt.app.node(nodeId).experiment;
       return { seeded: exp.def.seedingDate, done: exp.def.stagesDone, samples: exp.def.sampleCount };
     }, id);
 
-    expect(state.seeded).toBe('2026-06-01');
-    // A new culture on the same design: the old ticks are not facts about it.
-    expect(state.done).toEqual([]);
-    // But the design itself survives — you reseeded the same scaffolds.
-    expect(state.samples).toBe(6);
+    // Eighteen scaffolds in it now, not twelve: cells were added, not swapped.
+    expect(state.samples).toBe(18);
+    // And it is the same culture, on the same clock, with its history intact.
+    expect(state.seeded).toBe(seeded);
+    expect(state.done).toEqual(['seed']);
   });
 
-  test('one undo puts the old run back', async ({ h }) => {
+  test('writes what went in, and when, into the culture notebook', async ({ h }) => {
     const { page } = h;
     await makeCulture(page, 'Meniscus culture');
-
-    const id = await page.evaluate((seeded) => {
+    const id = await page.evaluate((on) => {
       const pt = (window as any).__pt;
       const node = Object.values(pt.app.state.nodes).find((n: any) => n.kind === 'experiment') as any;
       pt.run((a: any) =>
-        a.setExperiment(node.id, { sampleCount: 4, seedingDate: seeded, durationDays: 35 }),
+        a.setExperiment(node.id, { sampleCount: 4, seedingDate: on, durationDays: 35 }),
+      );
+      return node.id;
+    }, today(-4));
+
+    await page.getByTestId(`reseed-${id}`).click();
+    await page.getByTestId('reseed-date').fill('2026-08-11');
+    await page.getByTestId('reseed-samples').fill('8');
+    await page.getByTestId('save-reseed').click();
+
+    await page.getByTestId('nav-journal').click();
+    await expect(page.locator('.screen')).toContainText(
+      'Reseeded on 2026-08-11: added 8 cell-seeded scaffolds.',
+    );
+  });
+
+  test('one undo takes the cells back out', async ({ h }) => {
+    const { page } = h;
+    await makeCulture(page, 'Rabbit culture');
+    const id = await page.evaluate((on) => {
+      const pt = (window as any).__pt;
+      const node = Object.values(pt.app.state.nodes).find((n: any) => n.kind === 'experiment') as any;
+      pt.run((a: any) =>
+        a.setExperiment(node.id, { sampleCount: 4, seedingDate: on, durationDays: 35 }),
       );
       return node.id;
     }, today(-3));
 
     await page.getByTestId(`reseed-${id}`).click();
-    await page.getByTestId('reseed-date').fill('2026-07-07');
+    await page.getByTestId('reseed-samples').fill('10');
     await page.getByTestId('save-reseed').click();
+    await expect(page.getByTestId(`experiment-${id}`)).toContainText('14 scaffolds');
 
+    // Adding cells and noting it are one decision, so they are one undo step.
     await page.getByTestId('undo').click();
-    const seeded = await page.evaluate(
-      (nodeId) => (window as any).__pt.app.node(nodeId).experiment.def.seedingDate,
-      id,
-    );
-    expect(seeded).toBe(today(-3));
+    await expect(page.getByTestId(`experiment-${id}`)).toContainText('4 scaffolds');
+    const notes = await page.evaluate(() => (window as any).__pt.app.state.notes.length);
+    expect(notes).toBe(0);
   });
 });

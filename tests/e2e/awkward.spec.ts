@@ -104,7 +104,7 @@ test.describe('changing your mind', () => {
     expect(await page.getByTestId('today-list').locator('.row').count()).toBe(1);
   });
 
-  test('reseeding a running culture records the new count', async ({ h }) => {
+  test('reseeding a running culture adds to what is in it', async ({ h }) => {
     const { page } = h;
     const id = await page.evaluate(() => {
       const pt = (window as any).__pt;
@@ -129,8 +129,9 @@ test.describe('changing your mind', () => {
     await page.getByTestId('reseed-samples').fill('18');
     await page.getByTestId('save-reseed').click();
 
-    // The count is what went in this time, and the clock restarted today.
-    await expect(page.getByTestId(`experiment-${id}`)).toContainText('18 scaffolds');
+    // Eighteen went in on top of the six already there, and the culture keeps
+    // the day it was seeded — it did not start again.
+    await expect(page.getByTestId(`experiment-${id}`)).toContainText('24 scaffolds');
     await expect(page.getByTestId(`experiment-${id}`)).toContainText('seeded');
     await page.getByTestId('experiments-panel').screenshot({ path: 'screenshots/awk-5-reseeded.png' });
   });

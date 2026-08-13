@@ -1257,25 +1257,29 @@ function Contributions() {
  * Reseeding usually happens at the bench on the day it happens, so today is
  * one keystroke away and any other day is still typeable.
  */
+/**
+ * How many went in, and when. Empty rather than pre-filled with what is already
+ * in the culture: the question is what was added this time, and offering the
+ * running total as the answer invites it to be submitted unchanged.
+ */
 function ReseedField({
   name,
   today,
-  samples,
   onDone,
 }: {
   name: string;
   today: string;
-  samples: number;
-  onDone: (result: { date: string; samples: number } | null) => void;
+  onDone: (result: { date: string; added: number } | null) => void;
 }) {
   const [date, setDate] = useState(today);
-  const [count, setCount] = useState(String(samples || ''));
+  const [count, setCount] = useState('');
   return (
     <form
       className="inline"
       onSubmit={(event) => {
         event.preventDefault();
-        onDone({ date, samples: Number(count) || 0 });
+        if (!Number(count)) return;
+        onDone({ date, added: Number(count) });
       }}
     >
       <input
@@ -1296,19 +1300,19 @@ function ReseedField({
       <input
         className="input"
         type="number"
-        min={0}
-        style={{ width: 78 }}
+        min={1}
+        style={{ width: 92 }}
         value={count}
-        placeholder="scaffolds"
-        aria-label={`Scaffolds seeded into ${name}`}
+        placeholder="how many"
+        aria-label={`Scaffolds added to ${name}`}
         data-testid="reseed-samples"
         onChange={(event) => setCount(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === 'Escape') onDone(null);
         }}
       />
-      <button className="btn primary sm" type="submit" data-testid="save-reseed">
-        Reseeded
+      <button className="btn primary sm" type="submit" disabled={!Number(count)} data-testid="save-reseed">
+        Added
       </button>
     </form>
   );
@@ -1542,6 +1546,7 @@ function ExperimentsPanel() {
                   <button
                     className="btn sm"
                     data-testid={`reseed-${node.id}`}
+                    title="Add more cell-seeded scaffolds to this culture"
                     aria-label={`Reseed ${node.name}`}
                     onClick={() => setReseeding(reseeding === node.id ? null : node.id)}
                   >
@@ -1551,9 +1556,8 @@ function ExperimentsPanel() {
                     <ReseedField
                       name={node.name}
                       today={app.today}
-                      samples={exp.def.sampleCount}
                       onDone={(result) => {
-                        if (result && run((a) => a.reseed(node.id, result.date, result.samples))) {
+                        if (result && run((a) => a.reseed(node.id, result.date, result.added))) {
                           setReseeding(null);
                         } else if (!result) setReseeding(null);
                       }}

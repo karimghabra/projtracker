@@ -1380,30 +1380,45 @@ export class App {
    * samples, cells, phases, duration — is the design, and stays.
    */
   /**
-   * The same scaffolds, seeded again.
+   * More cells into a culture that is already going.
    *
-   * `samples` is how many cell-seeded scaffolds actually went in this time,
-   * which is the number worth writing down at the moment you write it down.
-   * Left out, the previous run's count stands.
+   * Reseeding is not starting again. Cells are added to a run in progress —
+   * usually during expansion, when the first seeding did not give enough — and
+   * the culture keeps its seeding date, its clock and every stage already
+   * ticked. This used to reset all three, which recorded the opposite of what
+   * happened: a culture on day nine became a culture on day zero, and the
+   * fortnight of proliferation behind it stopped existing.
+   *
+   * `added` is how many cell-seeded scaffolds went in this time, so the count
+   * grows rather than being replaced.
+   *
+   * What it deliberately does not do is stretch the culture. Adding late
+   * usually means expanding a week longer, but by how much is a judgement made
+   * at the bench and often revised afterwards — so the phases stay where the
+   * user put them, and moving them is an edit like any other.
    */
-  reseed(nodeId: NodeId, on: DateOnly, samples?: number): Delta {
+  reseed(nodeId: NodeId, on: DateOnly, added: number): Delta {
     const node = this.state.nodes[nodeId];
     if (!node) throw notFound('node', nodeId);
     if (node.kind !== 'experiment') throw notAllowed(`"${node.name}" is not an experiment.`);
     if (!isDateOnly(on)) throw invalid(`"${on}" is not a date. Use YYYY-MM-DD.`);
-    if (samples !== undefined && (!Number.isInteger(samples) || samples < 0)) {
-      throw invalid('Scaffold count must be a whole number.');
+    if (!Number.isInteger(added) || added <= 0) {
+      throw invalid('Say how many scaffolds went in — a whole number, more than none.');
     }
 
+    const def = node.experiment ?? emptyExperiment();
+    const before = def.sampleCount;
+
     return this.transaction(`Reseed "${node.name}"`, (app) => {
-      app.setExperiment(nodeId, {
-        seedingDate: on,
-        stagesDone: [],
-        ...(samples === undefined ? {} : { sampleCount: samples }),
-      });
-      // A reseeded culture is running again, whatever the last one ended as.
-      if (this.state.nodes[nodeId]!.status === 'done') app.reopen(nodeId);
-      return { ok: true as const, message: `Reseeded "${node.name}" on ${on}.` };
+      app.setExperiment(nodeId, { sampleCount: before + added });
+      // The record of it, in the culture's own notebook. The day is in the text
+      // because a note is stamped when it is written, and this is often written
+      // up afterwards.
+      app.capture(`Reseeded on ${on}: added ${added} cell-seeded scaffolds.`, nodeId);
+      return {
+        ok: true as const,
+        message: `Added ${added} to "${node.name}" — ${before + added} scaffolds in it now.`,
+      };
     });
   }
 
