@@ -68,10 +68,17 @@ bench and nowhere else — and **Collect *X*** once it is past its endpoint. Whi
 it is running it is on the dashboard's card with a clock on it, and in the pool
 nowhere, because there is nothing to pick up until it comes out.
 
-**Scaffolds** tracks what you have made and what state it is in. Select some
-batches, pick EDC/NHS or genipin, and every timed step of the protocol lands in
-your to-do list automatically. Protocols are ordinary editable records; the
-shipped timings are a starting point, not a prescription.
+**Scaffolds** tracks what you have made, what state it is in and where it is
+kept. Select some batches, pick EDC/NHS or genipin, and every timed step of the
+protocol lands in your to-do list automatically. Protocols are ordinary editable
+records; the shipped timings are a starting point, not a prescription.
+
+Seeding takes them out again. The seed form lists what is on the shelf — how
+many, what state, which freezer — and picking twelve from a batch of twenty-four
+splits it: twelve stay stock, twelve go into the culture carrying their own
+history. The count of samples then follows what actually went in rather than
+being typed. None of it is compulsory: a culture seeded onto scaffolds this
+inventory never knew about says whatever number you give it.
 
 **Undo reverts the whole image**, and it survives closing the app.
 
@@ -246,8 +253,9 @@ is itself a statement that the row is done.
 ```bash
 npm install
 npm run dev          # the app in a browser, no Electron needed
-npm test             # 425 unit tests, including 60 simulated days of use
-npm run test:e2e     # 306 end-to-end tests
+npm test             # 457 unit tests, including 60 simulated days of use
+npm run test:e2e     # 321 end-to-end tests
+npm run stress       # the walker: invariants, many seeds, minutes not seconds
 npm run icon         # regenerate the app icon
 npm run pack         # a Windows installer in release/
 ```
