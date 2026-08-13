@@ -40,7 +40,13 @@ import {
 } from '../core/model.ts';
 import { buildIndex, completesDirectly, isAbandoned, isDone, wouldCreateCycle } from '../core/graph.ts';
 import type { GraphIndex } from '../core/graph.ts';
-import { emptyExperiment, stagesOf, validateExperiment } from '../core/experiments.ts';
+import {
+  defaultMediaPhases,
+  emptyExperiment,
+  hasDefaultMediaPhases,
+  stagesOf,
+  validateExperiment,
+} from '../core/experiments.ts';
 import { isRunComplete, scheduleRun } from '../core/protocols.ts';
 import { describeQuantity, quantityProblem, roundQuantity } from '../core/inventory.ts';
 import { overdue, plannedAhead, upcomingReminders } from '../core/planner.ts';
@@ -984,6 +990,12 @@ export class App {
     if (!clean) throw invalid('An experiment needs a name.');
 
     const experiment = { ...emptyExperiment(), ...def };
+    // Same rule as an edit: a length given without phases gets the phases that
+    // length implies, so quick-adding a ten-day pilot is not refused over a
+    // switch nobody asked for. See `setExperiment`.
+    if (def.durationDays !== undefined && def.mediaPhases === undefined) {
+      experiment.mediaPhases = defaultMediaPhases(experiment.durationDays);
+    }
     const problems = validateExperiment(experiment);
     if (problems.length) throw invalid(problems[0]!);
 
@@ -1427,7 +1439,27 @@ export class App {
     if (!node) throw notFound('node', nodeId);
     if (node.kind !== 'experiment') throw notAllowed(`"${node.name}" is not an experiment.`);
 
-    const merged: ExperimentDef = { ...(node.experiment ?? emptyExperiment()), ...def };
+    const current = node.experiment ?? emptyExperiment();
+    const merged: ExperimentDef = { ...current, ...def };
+
+    /*
+      Phases follow the culture's length while they are still the ones it was
+      given, and stop the moment they are somebody's own.
+
+      Shortening a culture used to make it invalid over a phase nobody typed:
+      the default sat at day fourteen, a ten-day run put it past the end, and
+      `validateExperiment` refused the edit. Now an untouched default is
+      recomputed for the new length — and a phase the user placed is left where
+      they placed it, so a contradiction they wrote is still theirs to see.
+    */
+    if (
+      def.durationDays !== undefined &&
+      def.mediaPhases === undefined &&
+      hasDefaultMediaPhases(current)
+    ) {
+      merged.mediaPhases = defaultMediaPhases(merged.durationDays);
+    }
+
     const problems = validateExperiment(merged);
     if (problems.length) throw invalid(problems.join(' '), { problems });
 

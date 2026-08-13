@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { describeExperiment, endDateOf, experimentStatus, stagesOf, validateExperiment } from '@core/experiments.ts';
+import { defaultMediaPhases, describeExperiment, endDateOf, experimentStatus, stagesOf, validateExperiment } from '@core/experiments.ts';
 import { BATCH_STATES } from '@core/model.ts';
 import { formatOffset, scheduleRun, totalHours } from '@core/protocols.ts';
 import { expectThrows, harness, sampleBoard } from './helpers.ts';
@@ -738,5 +738,76 @@ describe('crosslinking runs', () => {
     const reloaded = h.reload();
     expect(reloaded.inventory().runs[0]!.done).toBe(1);
     expect(reloaded.inventory().batches.every((x) => x.state === 'crosslinking')).toBe(true);
+  });
+});
+
+/**
+ * The default phases follow the culture's length, and stop the moment somebody
+ * has placed one themselves.
+ *
+ * Shortening a culture used to be refused over a phase nobody typed: the switch
+ * sat at day fourteen whatever happened, a ten-day run put it past the end, and
+ * validation rejected the edit.
+ */
+describe('how long a culture is, and where its switch goes', () => {
+  it('gives a five-week culture two weeks of proliferation', () => {
+    expect(defaultMediaPhases(35)).toEqual([
+      { name: 'Proliferation', startDay: 0 },
+      { name: 'Differentiation', startDay: 14 },
+    ]);
+  });
+
+  it('gives a culture too short for that no switch at all', () => {
+    // Inventing one would be the app talking rather than the user.
+    expect(defaultMediaPhases(10)).toEqual([{ name: 'Proliferation', startDay: 0 }]);
+    expect(defaultMediaPhases(14)).toEqual([{ name: 'Proliferation', startDay: 0 }]);
+  });
+
+  it('shortens a new culture without refusing it', () => {
+    const h = harness('2026-08-03T08:00');
+    const { id } = h.app.experimentQuickAdd('Pilot');
+
+    // Straight from the default five weeks down to ten days.
+    h.app.setExperiment(id, { sampleCount: 6, seedingDate: '2026-08-03', durationDays: 10 });
+
+    const def = h.app.node(id).experiment!.def;
+    expect(def.mediaPhases).toEqual([{ name: 'Proliferation', startDay: 0 }]);
+    // And the timeline is what is left: seed and endpoint.
+    expect(h.app.node(id).experiment!.stages.map((s) => s.kind)).toEqual(['seeding', 'endpoint']);
+  });
+
+  it('puts the switch back when it is lengthened again', () => {
+    const h = harness('2026-08-03T08:00');
+    const { id } = h.app.experimentQuickAdd('Pilot');
+    h.app.setExperiment(id, { durationDays: 10 });
+    h.app.setExperiment(id, { durationDays: 35 });
+
+    expect(h.app.node(id).experiment!.def.mediaPhases).toEqual([
+      { name: 'Proliferation', startDay: 0 },
+      { name: 'Differentiation', startDay: 14 },
+    ]);
+  });
+
+  it('never moves a phase somebody placed', () => {
+    const h = harness('2026-08-03T08:00');
+    const { id } = h.app.experimentQuickAdd('Pilot');
+    h.app.setExperiment(id, {
+      seedingDate: '2026-08-03',
+      durationDays: 28,
+      mediaPhases: [
+        { name: 'Proliferation', startDay: 0 },
+        { name: 'Differentiation', startDay: 21 },
+      ],
+    });
+
+    // Lengthening leaves their day 21 alone rather than snapping it to 14.
+    h.app.setExperiment(id, { durationDays: 42 });
+    expect(h.app.node(id).experiment!.def.mediaPhases[1]).toEqual({
+      name: 'Differentiation',
+      startDay: 21,
+    });
+
+    // And shortening past it is still refused: that contradiction is theirs.
+    expectThrows(() => h.app.setExperiment(id, { durationDays: 14 }));
   });
 });

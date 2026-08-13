@@ -216,14 +216,13 @@ describe('sixty days of use', () => {
 
       // --- start a culture before deciding where it belongs ----------
       if (random() < 0.06) {
-        // Short pilots, so they say what their phases are rather than
-        // inheriting a default switch that lands past the end of them.
-        const days = 7 + Math.floor(random() * 14);
+        // Pilots of every length, saying nothing about phases — so the
+        // default has to be right for a nine-day run as well as a twenty-day
+        // one, every day of the simulation.
         const loose = app.experimentQuickAdd(`Pilot culture day ${day}`, {
           sampleCount: 6,
           seedingDate: addDays(date, 1),
-          durationDays: days,
-          mediaPhases: days > 14 ? [{ name: 'Differentiation', startDay: 14 }] : [],
+          durationDays: 7 + Math.floor(random() * 14),
         });
         looseExperiments += 1;
         did.push(`started a loose culture (${loose.id})`);

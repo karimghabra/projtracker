@@ -35,18 +35,45 @@ export interface Stage {
 }
 
 /**
- * What a culture looks like here before anybody says otherwise: two weeks of
- * proliferation, then differentiation, five weeks in total. Taken from how the
- * cultures on this board actually run rather than from a textbook — the old
- * default switched at day seven and ended at three weeks, which matched nothing
- * anybody was doing and put a wrong date on every new experiment.
+ * How long a culture proliferates before it is switched, here, by default.
  */
-export const DEFAULT_MEDIA_PHASES: MediaPhase[] = [
-  { name: 'Proliferation', startDay: 0 },
-  { name: 'Differentiation', startDay: 14 },
-];
+export const PROLIFERATION_DAYS = 14;
 
 export const DEFAULT_CULTURE_DAYS = 35;
+
+/**
+ * What a culture looks like before anybody says otherwise: two weeks of
+ * proliferation, then differentiation. Taken from how the cultures on this
+ * board actually run rather than from a textbook — the previous default
+ * switched at day seven and ended at three weeks, matching nothing anybody was
+ * doing and putting a wrong date on every new experiment.
+ *
+ * It follows the culture's length rather than sitting at day fourteen whatever
+ * happens. A ten-day culture has no room for a fortnight of proliferation, and
+ * a default that lands past the end is not merely wrong — `validateExperiment`
+ * refuses it, so shortening a culture made it invalid over a phase the user
+ * never typed. Below the threshold there is no switch to make, and inventing
+ * one would be the app talking rather than the user.
+ */
+export function defaultMediaPhases(durationDays: number): MediaPhase[] {
+  const phases: MediaPhase[] = [{ name: 'Proliferation', startDay: 0 }];
+  if (durationDays > PROLIFERATION_DAYS) {
+    phases.push({ name: 'Differentiation', startDay: PROLIFERATION_DAYS });
+  }
+  return phases;
+}
+
+/** True when the phases are still exactly what the default gave this culture. */
+export function hasDefaultMediaPhases(def: ExperimentDef): boolean {
+  const expected = defaultMediaPhases(def.durationDays);
+  if (def.mediaPhases.length !== expected.length) return false;
+  return expected.every(
+    (phase, at) =>
+      def.mediaPhases[at]!.name === phase.name && def.mediaPhases[at]!.startDay === phase.startDay,
+  );
+}
+
+export const DEFAULT_MEDIA_PHASES: MediaPhase[] = defaultMediaPhases(DEFAULT_CULTURE_DAYS);
 
 export function emptyExperiment(): ExperimentDef {
   return {
