@@ -162,7 +162,7 @@ test.describe('the view agrees with the store', () => {
       return days.size;
     });
 
-    await page.getByTestId('dash-right').evaluate((el) => {
+    await page.getByTestId('dash').evaluate((el) => {
       el.scrollTop = el.scrollHeight;
     });
     const lit = await page.locator('.contrib-cell:not(.l0)').count();

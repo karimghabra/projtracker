@@ -6,7 +6,7 @@
  * projects panel, because on day one there is nothing else to do but add one.
  */
 
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { formatDayMonth, formatRelativeDay } from '../../core/dates.ts';
 import { formatOffset } from '../../core/protocols.ts';
 import { BATCH_STATES, isTerminalState } from '../../core/model.ts';
@@ -39,18 +39,36 @@ import {
   IconUndo,
 } from '../components/icons.tsx';
 import type { ViewName } from '../AppShell.tsx';
+import { DashPanel, LessRow, MoreRow } from '../components/DashPanel.tsx';
+import { DashGrid } from '../components/DashGrid.tsx';
+import { PanelChooser } from '../components/PanelChooser.tsx';
+import {
+  DEFAULT_LAYOUT,
+  capOf,
+  isCollapsed,
+  isExpanded,
+  migrateLegacy,
+  readLayout,
+  toggleCollapsed,
+  toggleExpanded,
+  writeLayout,
+  type Layout,
+  type PanelId,
+} from '../state/dashboard.ts';
+
+/** What every panel needs to draw its own frame. */
+type Frame = { id: PanelId; collapsed: boolean; onToggle: () => void };
+
+/** ...plus what a panel needs to fold a long list behind a count. */
+export type Capped = Frame & {
+  cap: <T>(id: PanelId, rows: T[]) => { shown: T[]; more: number; foldable: boolean };
+  onExpand: (id: PanelId) => void;
+  expanded: boolean;
+};
 
 export function HomeScreen({ onNavigate }: { onNavigate: (view: ViewName) => void }) {
   const { app } = useApp();
   const [pickedDay, setPickedDay] = useState<string | null>(null);
-  const [folded, setFolded] = useState<Fold>(
-    () => (window.localStorage.getItem(FOLD_KEY) as Fold | null) ?? 'none',
-  );
-  const fold = (next: Fold) => {
-    setFolded(next);
-    window.localStorage.setItem(FOLD_KEY, next);
-  };
-
   // Where the ready pool is browsing. Held here so a project dial can send it
   // somewhere: the graphic and the list are two views of one question.
   const [readyPath, setReadyPath] = useState<string[]>(storedReadyPath);
@@ -71,79 +89,166 @@ export function HomeScreen({ onNavigate }: { onNavigate: (view: ViewName) => voi
   );
   const hasProjects = app.tree().length > 0;
 
+  /*
+    The layout is the user's. Panels are looked up from it rather than written
+    out in order, so hiding one, shutting one or moving one to the other side
+    is a change to data instead of a change to this file.
+  */
+  const [layout, setLayout] = useState<Layout>(() =>
+    migrateLegacy(window.localStorage, readLayout(window.localStorage)),
+  );
+  const [chooser, setChooser] = useState(false);
+  const change = (next: Layout) => {
+    setLayout(next);
+    writeLayout(window.localStorage, next);
+  };
+  const panelProps = (id: PanelId) => ({
+    id,
+    collapsed: isCollapsed(layout, id),
+    onToggle: () => change(toggleCollapsed(layout, id)),
+  });
+  const cap = <T,>(id: PanelId, rows: T[]) => capOf(layout, id, rows);
+  const expand = (id: PanelId) => change(toggleExpanded(layout, id));
+  /** Everything a folding panel takes, so the registry below stays readable. */
+  const capProps = (id: PanelId) => ({
+    ...panelProps(id),
+    cap,
+    onExpand: expand,
+    expanded: isExpanded(layout, id),
+  });
+
+  const panels: Record<PanelId, ReactNode> = {
+    today: <TodayPanel key="today" {...panelProps('today')} />,
+    'in-progress': <InProgressPanel key="in-progress" {...capProps('in-progress')} />,
+    ready: <ReadyPanel key="ready" path={readyPath} onPath={goReady} {...capProps('ready')} />,
+    projects: <ProjectsPanel key="projects" onNavigate={onNavigate} onPick={(id) => goReady([id])} {...panelProps('projects')} />,
+    calendar: (
+      <CalendarPanel
+        key="calendar"
+        {...panelProps('calendar')}
+        span={calendarSpan}
+        onSpan={(next) => {
+          setCalendarSpan(next);
+          window.localStorage.setItem('protracker:calendar', next);
+        }}
+        pickedDay={pickedDay}
+        onPickDay={setPickedDay}
+      />
+    ),
+    upcoming: <UpcomingPanel key="upcoming" {...capProps('upcoming')} />,
+    experiments: <ExperimentsPanel key="experiments" {...capProps('experiments')} />,
+    scaffolds: <ScaffoldsPanel key="scaffolds" onNavigate={onNavigate} {...capProps('scaffolds')} />,
+    notes: <NotesPanel key="notes" {...panelProps('notes')} />,
+    progress: <ProgressPanel key="progress" empty={!hasProjects} {...capProps('progress')} />,
+  };
   return (
     /*
-     * Two columns that scroll independently, so the page itself never does and
-     * Today is on screen the moment the app opens — which is the whole point of
-     * the screen. Nothing is capped or hidden to achieve it: a long day still
-     * lists every item, it just scrolls inside its own column rather than
-     * pushing the calendar and the projects off the bottom of the window.
+     * One surface, packed rather than laid out in columns: cards go where they
+     * are put and rise as far as they fit, so a short card leaves no hole and
+     * a long one does not drag its neighbour down with it. Today is first, so
+     * the day is on screen the moment the app opens — which is the whole point
+     * of the screen — and nothing is capped or hidden to achieve it.
      */
-    <div className={`dash ${folded === 'left' ? 'fold-left' : ''} ${folded === 'right' ? 'fold-right' : ''}`}>
-      <div className="dash-col" data-testid="dash-left">
-        <ColumnFold side="left" folded={folded} onFold={fold} />
-        <TodayPanel />
-        <InProgressPanel />
-        <ReadyPanel path={readyPath} onPath={goReady} />
-        <ProjectsPanel onNavigate={onNavigate} onPick={(id) => goReady([id])} />
-      </div>
-
-      <div className="dash-col" data-testid="dash-right">
-        <ColumnFold side="right" folded={folded} onFold={fold} />
-        <div className="panel">
-          <div className="panel-head">
-            <IconCalendar size={15} />
-            <h2>Calendar</h2>
-            <span className="spacer" />
-            {/*
-              Six weeks of grid is the tallest thing on this screen by a long
-              way, and most days most of it is empty. A week is the same view
-              one row deep; "off" gives the space to the lists below.
-            */}
-            <div className="segmented" role="group" aria-label="How much calendar to show">
-              {(['off', 'week', 'month'] as const).map((option) => (
-                <button
-                  key={option}
-                  className={calendarSpan === option ? 'seg on' : 'seg'}
-                  aria-pressed={calendarSpan === option}
-                  data-testid={`calendar-span-${option}`}
-                  onClick={() => {
-                    setCalendarSpan(option);
-                    window.localStorage.setItem('protracker:calendar', option);
-                  }}
-                >
-                  {option === 'off' ? 'Off' : option === 'week' ? 'Week' : 'Month'}
-                </button>
-              ))}
-            </div>
-          </div>
-          {calendarSpan !== 'off' && (
-            <div className="panel-body flush">
-              <Calendar
-                span={calendarSpan}
-                selected={pickedDay}
-                onPickDay={(date) => setPickedDay(date === pickedDay ? null : date)}
-              />
-              {pickedDay && <DayPanel date={pickedDay} onClose={() => setPickedDay(null)} />}
-            </div>
+    <DashGrid
+      layout={layout}
+      onLayout={change}
+      render={(id: PanelId) => panels[id]}
+      footer={
+        <>
+          <button className="btn ghost sm panels-button" data-testid="open-panels" onClick={() => setChooser(true)}>
+            Panels
+          </button>
+          {/*
+            Sticky, and last: whatever else is on screen, the box is. Last
+            matters — anything below it is what the box comes to rest above
+            when the board is scrolled to the bottom, and then it is not at the
+            bottom of the screen any more.
+          */}
+          <CapturePanel />
+          {chooser && (
+            <PanelChooser
+              layout={layout}
+              onChange={change}
+              onReset={() => change(DEFAULT_LAYOUT)}
+              onClose={() => setChooser(false)}
+            />
           )}
-        </div>
+        </>
+      }
+    />
+  );
+}
 
-        <UpcomingPanel />
-        <ExperimentsPanel />
-        <ScaffoldsPanel onNavigate={onNavigate} />
-        <NotesPanel />
-        <ProgressPanel empty={!hasProjects} />
-        {/* Last, and sticky: whatever else is on screen, the box is. */}
-        <CapturePanel />
-      </div>
-    </div>
+// --------------------------------------------------------------- calendar
+
+/**
+ * The calendar, which used to be written inline in the column because it was
+ * the only panel with a control in its heading.
+ */
+function CalendarPanel({
+  id,
+  collapsed,
+  onToggle,
+  span,
+  onSpan,
+  pickedDay,
+  onPickDay,
+}: {
+  id: PanelId;
+  collapsed: boolean;
+  onToggle: () => void;
+  span: 'off' | CalendarSpan;
+  onSpan: (next: 'off' | CalendarSpan) => void;
+  pickedDay: string | null;
+  onPickDay: (date: string | null) => void;
+}) {
+  return (
+    <DashPanel
+      id={id}
+      title="Calendar"
+      testId="calendar-panel"
+      icon={<IconCalendar size={15} />}
+      collapsed={collapsed}
+      onToggle={onToggle}
+      flush
+      actions={
+        /*
+          Six weeks of grid is the tallest thing on this screen by a long way,
+          and most days most of it is empty. A week is the same view one row
+          deep; "off" gives the space to the lists below.
+        */
+        <div className="segmented" role="group" aria-label="How much calendar to show">
+          {(['off', 'week', 'month'] as const).map((option) => (
+            <button
+              key={option}
+              className={span === option ? 'seg on' : 'seg'}
+              aria-pressed={span === option}
+              data-testid={`calendar-span-${option}`}
+              onClick={() => onSpan(option)}
+            >
+              {option === 'off' ? 'Off' : option === 'week' ? 'Week' : 'Month'}
+            </button>
+          ))}
+        </div>
+      }
+    >
+      {span !== 'off' && (
+        <>
+          <Calendar
+            span={span}
+            selected={pickedDay}
+            onPickDay={(date) => onPickDay(date === pickedDay ? null : date)}
+          />
+          {pickedDay && <DayPanel date={pickedDay} onClose={() => onPickDay(null)} />}
+        </>
+      )}
+    </DashPanel>
   );
 }
 
 // ------------------------------------------------------------------ today
 
-function TodayPanel() {
+function TodayPanel({ id, collapsed, onToggle }: Frame) {
   const { app, run } = useApp();
   const today = app.todayList();
   const [hideDone, setHideDone] = useState(
@@ -172,34 +277,39 @@ function TodayPanel() {
   };
 
   return (
-    <section className="panel" data-testid="today-panel">
-      <div className="panel-head">
-        <IconHome size={15} />
-        <h2>Today</h2>
-        <span className="spacer" />
-        {today.doneCount > 0 && (
-          <button
-            className="btn ghost sm"
-            aria-pressed={hideDone}
-            data-testid="toggle-done"
-            title={hideDone ? 'Show what is finished' : 'Hide what is finished'}
-            onClick={() => {
-              const next = !hideDone;
-              setHideDone(next);
-              window.localStorage.setItem('protracker:hideDone', next ? 'yes' : 'no');
-            }}
-          >
-            {hideDone ? 'Show done' : 'Hide done'}
-          </button>
-        )}
-        {today.items.length > 0 && (
-          <span className="faint mono">
-            {today.doneCount}/{today.items.length} done
-          </span>
-        )}
-      </div>
-
-      <div className="panel-body tight">
+    <DashPanel
+      id={id}
+      title="Today"
+      testId="today-panel"
+      icon={<IconHome size={15} />}
+      collapsed={collapsed}
+      onToggle={onToggle}
+      actions={
+        <>
+          {today.doneCount > 0 && (
+            <button
+              className="btn ghost sm"
+              aria-pressed={hideDone}
+              data-testid="toggle-done"
+              title={hideDone ? 'Show what is finished' : 'Hide what is finished'}
+              onClick={() => {
+                const next = !hideDone;
+                setHideDone(next);
+                window.localStorage.setItem('protracker:hideDone', next ? 'yes' : 'no');
+              }}
+            >
+              {hideDone ? 'Show done' : 'Hide done'}
+            </button>
+          )}
+          {today.items.length > 0 && (
+            <span className="faint mono">
+              {today.doneCount}/{today.items.length} done
+            </span>
+          )}
+        </>
+      }
+    >
+      <>
         {today.items.length === 0 ? (
           <Empty title="Nothing on today yet" icon={<IconCheck size={20} />}>
             Pull something in from the ready list below, or just type what you need to do.
@@ -226,24 +336,24 @@ function TodayPanel() {
             )}
           </div>
         )}
-      </div>
 
-      <div style={{ padding: '0 var(--space-4) var(--space-4)' }}>
-        <QuickAdd
-          label="Add a task to today"
-          placeholder="Add anything — it need not belong to a project"
-          onAdd={(text) => run((a) => a.todayQuickAdd(text))}
-          /* Same field, two answers to "when": on the day, or in the pool
-             with everything else waiting to be chosen. */
-          secondary={{
-            label: 'To the pool',
-            title: 'Add it to the ready pool instead, with no day attached',
-            testId: 'quick-add-pool',
-            onAdd: (text) => run((a) => a.poolQuickAdd(text)),
-          }}
-        />
-      </div>
-    </section>
+        <div style={{ padding: 'var(--space-3) 0 0' }}>
+          <QuickAdd
+            label="Add a task to today"
+            placeholder="Add anything — it need not belong to a project"
+            onAdd={(text) => run((a) => a.todayQuickAdd(text))}
+            /* Same field, two answers to "when": on the day, or in the pool
+               with everything else waiting to be chosen. */
+            secondary={{
+              label: 'To the pool',
+              title: 'Add it to the ready pool instead, with no day attached',
+              testId: 'quick-add-pool',
+              onAdd: (text) => run((a) => a.poolQuickAdd(text)),
+            }}
+          />
+        </div>
+      </>
+    </DashPanel>
   );
 }
 
@@ -597,22 +707,24 @@ function StartProtocolDialog({
  * is ordinary, three weeks is the thing that stalled, and that is the whole
  * reason to have the panel rather than a badge.
  */
-function InProgressPanel() {
+function InProgressPanel({ id, collapsed, onToggle, cap, onExpand, expanded }: Capped) {
   const { app, run } = useApp();
   const rows = app.inProgress();
+  const { shown, more, foldable } = cap(id, rows);
   if (!rows.length) return null;
 
   return (
-    <section className="panel" data-testid="in-progress-panel">
-      <div className="panel-head">
-        <IconPlay size={15} />
-        <h2>In progress</h2>
-        <span className="spacer" />
-        <span className="faint mono">{rows.length}</span>
-      </div>
-      <div className="panel-body tight">
-        <div className="list">
-          {rows.map((row) => (
+    <DashPanel
+      id={id}
+      title="In progress"
+      testId="in-progress-panel"
+      icon={<IconPlay size={15} />}
+      collapsed={collapsed}
+      onToggle={onToggle}
+      badge={<span className="faint mono">{rows.length}</span>}
+    >
+      <div className="list">
+        {shown.map((row) => (
             <div className="row" key={row.id} data-testid={`doing-${row.id}`}>
               <input
                 type="checkbox"
@@ -644,9 +756,10 @@ function InProgressPanel() {
               </button>
             </div>
           ))}
-        </div>
+        <MoreRow id={id} more={more} onExpand={() => onExpand(id)} />
+        {expanded && foldable && <LessRow id={id} onCollapse={() => onExpand(id)} />}
       </div>
-    </section>
+    </DashPanel>
   );
 }
 
@@ -674,14 +787,17 @@ export function storedReadyPath(): string[] {
 function ReadyPanel({
   path,
   onPath,
-}: {
+  id,
+  collapsed,
+  onToggle,
+  cap,
+  onExpand,
+  expanded,
+}: Capped & {
   path: string[];
   onPath: (next: string[]) => void;
 }) {
   const { app, run } = useApp();
-  const [open, setOpen] = useState(
-    () => window.localStorage.getItem('protracker:ready') !== 'closed',
-  );
   /** The culture whose seeding form is open, if any. */
   const [seeding, setSeeding] = useState<string | null>(null);
 
@@ -714,50 +830,44 @@ function ReadyPanel({
   if (app.tree().length === 0 && total === 0) return null;
 
   const here = trail.length ? trail[trail.length - 1]!.children : tree;
-  const leaves = here.filter((branch) => branch.row);
-  const branches = here.filter((branch) => !branch.row);
+  // Capped as one list: containers first, then the work inside this level. Two
+  // separate caps would show four of each and call it a cap of four.
+  const { shown, more, foldable } = cap(id, here);
+  const leaves = shown.filter((branch) => branch.row);
+  const branches = shown.filter((branch) => !branch.row);
 
   return (
-    <section className="panel" data-testid="ready-panel">
-      <div className="panel-head">
-        <button
-          className="btn ghost icon sm"
-          aria-expanded={open}
-          aria-label={open ? 'Collapse the ready list' : 'Expand the ready list'}
-          data-testid="toggle-ready"
-          onClick={() => {
-            const next = !open;
-            setOpen(next);
-            window.localStorage.setItem('protracker:ready', next ? 'open' : 'closed');
-          }}
-        >
-          {open ? <IconChevronDown size={13} /> : <IconChevronRight size={13} />}
-        </button>
-        <IconCheck size={15} />
-        <h2>Ready to work on</h2>
-        <span className="spacer" />
+    <DashPanel
+      id={id}
+      title="Ready to work on"
+      testId="ready-panel"
+      icon={<IconCheck size={15} />}
+      collapsed={collapsed}
+      onToggle={onToggle}
+      badge={
         <span className="faint mono">{trail.length ? trail[trail.length - 1]!.count : total}</span>
-      </div>
-
-      {open && trail.length > 0 && (
-        <div className="inline wrap crumbs" data-testid="ready-crumbs">
-          <button className="btn ghost sm" data-testid="ready-crumb-all" onClick={() => go([])}>
-            All work
-          </button>
-          {trail.map((branch, at) => (
-            <button
-              key={branch.id}
-              className="btn ghost sm"
-              data-testid={`ready-crumb-${branch.id}`}
-              onClick={() => go(trail.slice(0, at + 1).map((b) => b.id))}
-            >
-              › {branch.name}
+      }
+      flush
+    >
+      <>
+        {trail.length > 0 && (
+          <div className="inline wrap crumbs" data-testid="ready-crumbs">
+            <button className="btn ghost sm" data-testid="ready-crumb-all" onClick={() => go([])}>
+              All work
             </button>
-          ))}
-        </div>
-      )}
+            {trail.map((branch, at) => (
+              <button
+                key={branch.id}
+                className="btn ghost sm"
+                data-testid={`ready-crumb-${branch.id}`}
+                onClick={() => go(trail.slice(0, at + 1).map((b) => b.id))}
+              >
+                › {branch.name}
+              </button>
+            ))}
+          </div>
+        )}
 
-      {open && (
         <div className="panel-body tight">
           {total === 0 ? (
             <Empty title="Nothing is unblocked right now">
@@ -861,13 +971,15 @@ function ReadyPanel({
                 </button>
                 </div>
               ))}
+              <MoreRow id={id} more={more} onExpand={() => onExpand(id)} noun="more here" />
+              {expanded && foldable && <LessRow id={id} onCollapse={() => onExpand(id)} />}
             </div>
           )}
         </div>
-      )}
 
-      {seeding && <SeedDialog nodeId={seeding} onClose={() => setSeeding(null)} />}
-    </section>
+        {seeding && <SeedDialog nodeId={seeding} onClose={() => setSeeding(null)} />}
+      </>
+    </DashPanel>
   );
 }
 
@@ -999,20 +1111,22 @@ function SeedDialog({ nodeId, onClose }: { nodeId: string; onClose: () => void }
  * is worth a scroll. Docking both would put four notes permanently across the
  * bottom of the screen.
  */
-function NotesPanel() {
+function NotesPanel({ id, collapsed, onToggle }: Frame) {
   const { app } = useApp();
   const recent = app.journal().slice(0, 4);
   if (recent.length === 0) return null;
 
   return (
-    <section className="panel" data-testid="notes-panel">
-      <div className="panel-head">
-        <IconClock size={15} />
-        <h2>Recent thoughts</h2>
-      </div>
-      <div className="panel-body">
-        <div className="stack tight">
-          {recent.map((note) => (
+    <DashPanel
+      id={id}
+      title="Recent thoughts"
+      testId="notes-panel"
+      icon={<IconClock size={15} />}
+      collapsed={collapsed}
+      onToggle={onToggle}
+    >
+      <div className="stack tight">
+        {recent.map((note) => (
             <div key={note.id}>
               <div className="faint mono" style={{ fontSize: 11 }}>
                 {formatRelativeDay(note.at.slice(0, 10), app.today)} · {note.at.slice(11, 16)}
@@ -1021,9 +1135,8 @@ function NotesPanel() {
               <div style={{ whiteSpace: 'pre-wrap' }}>{note.text}</div>
             </div>
           ))}
-        </div>
       </div>
-    </section>
+    </DashPanel>
   );
 }
 
@@ -1131,7 +1244,10 @@ function Dial({
 function ProjectsPanel({
   onNavigate,
   onPick,
-}: {
+  id,
+  collapsed,
+  onToggle,
+}: Frame & {
   onNavigate: (view: ViewName) => void;
   /** Send the ready pool to this project. Absent when there is nowhere to send it. */
   onPick?: (projectId: string) => void;
@@ -1144,17 +1260,20 @@ function ProjectsPanel({
   const readyCounts = new Map(app.readyTree().map((branch) => [branch.id, branch.count]));
 
   return (
-    <section className="panel" data-testid="projects-panel">
-      <div className="panel-head">
-        <IconProjects size={15} />
-        <h2>Projects</h2>
-        <span className="spacer" />
+    <DashPanel
+      id={id}
+      title="Projects"
+      testId="projects-panel"
+      icon={<IconProjects size={15} />}
+      collapsed={collapsed}
+      onToggle={onToggle}
+      actions={
         <button className="btn primary sm" onClick={() => setWizard(true)} data-testid="add-project">
           <IconPlus size={13} /> New project
         </button>
-      </div>
-
-      <div className="panel-body tight">
+      }
+    >
+      <>
         {projects.length === 0 ? (
           <Empty
             title="No projects yet"
@@ -1200,20 +1319,20 @@ function ProjectsPanel({
             })}
           </div>
         )}
-      </div>
-
-      {wizard && <NewProjectWizard onClose={() => setWizard(false)} />}
-    </section>
+        {wizard && <NewProjectWizard onClose={() => setWizard(false)} />}
+      </>
+    </DashPanel>
   );
 }
 
 // --------------------------------------------------------------- progress
 
-function ProgressPanel({ empty }: { empty: boolean }) {
+function ProgressPanel({ empty, id, collapsed, onToggle, cap, onExpand, expanded }: Capped & { empty: boolean }) {
   const { app } = useApp();
   const rows = app.progress();
   const view = app.contributions();
   const days = new Map(view.rows.map((r) => [r.id, r]));
+  const { shown, more, foldable } = cap(id, rows);
   if (empty) return null;
 
   // Four steps, because the eye cannot read more from a square this size. The
@@ -1226,12 +1345,14 @@ function ProgressPanel({ empty }: { empty: boolean }) {
   };
 
   return (
-    <section className="panel" data-testid="progress-panel">
-      <div className="panel-head">
-        <IconFlask size={15} />
-        <h2>Recent progress</h2>
-      </div>
-      <div className="panel-body tight">
+    <DashPanel
+      id={id}
+      title="Recent progress"
+      testId="progress-panel"
+      icon={<IconFlask size={15} />}
+      collapsed={collapsed}
+      onToggle={onToggle}
+    >
         {/*
           One row per project, carrying both answers: how far along it is, and
           which days it was touched.
@@ -1242,8 +1363,8 @@ function ProgressPanel({ empty }: { empty: boolean }) {
           asked for *instead of* the fractions ticking up, and arrived as well
           as them.
         */}
-        <div className="list" data-testid="contributions">
-          {rows.map((row) => (
+      <div className="list" data-testid="contributions">
+        {shown.map((row) => (
             <div className="row" key={row.id}>
               <div className="grow" style={{ minWidth: 0 }}>
                 <div className="row-title">{row.name}</div>
@@ -1277,12 +1398,13 @@ function ProgressPanel({ empty }: { empty: boolean }) {
               </span>
             </div>
           ))}
-        </div>
-        <div className="contrib-foot faint">
-          {view.from} to {view.to} · completions, starts and notes, on the day they happened
-        </div>
+        <MoreRow id={id} more={more} onExpand={() => onExpand(id)} noun="more projects" />
+        {expanded && foldable && <LessRow id={id} onCollapse={() => onExpand(id)} />}
       </div>
-    </section>
+      <div className="contrib-foot faint">
+        {view.from} to {view.to} · completions, starts and notes, on the day they happened
+      </div>
+    </DashPanel>
   );
 }
 
@@ -1353,62 +1475,7 @@ function ReseedField({
   );
 }
 
-export type Fold = 'none' | 'left' | 'right';
-
-const FOLD_KEY = 'protracker:dashFold';
-
-/**
- * Give one column the whole screen.
- *
- * Cheaper than choosing, once, which panels deserve to exist: what you want on
- * screen at 9am with a day to plan is not what you want at 3pm with a culture
- * to check, and either way the answer is "one of these two columns, all of it".
- * The folded column keeps a handle so it is obviously folded rather than gone.
- */
-function ColumnFold({
-  side,
-  folded,
-  onFold,
-}: {
-  side: 'left' | 'right';
-  folded: Fold;
-  onFold: (next: Fold) => void;
-}) {
-  const other = side === 'left' ? 'right' : 'left';
-  const isFolded = folded === side;
-  const label = isFolded
-    ? `Unfold the ${side} column`
-    : folded === other
-      ? `Bring the ${other} column back`
-      : `Fold the ${side} column away`;
-
-  return (
-    <div className="col-fold">
-      <button
-        className="btn ghost icon sm"
-        title={label}
-        aria-label={label}
-        aria-pressed={isFolded}
-        data-testid={`fold-${side}`}
-        onClick={() => onFold(isFolded || folded === other ? 'none' : side)}
-      >
-        {isFolded ? <IconChevronRight size={13} /> : <IconChevronDown size={13} />}
-      </button>
-    </div>
-  );
-}
-
-// -------------------------------------------------------------- scaffolds
-
-/**
- * What is in the fabrication pipeline, and which stage it is at.
- *
- * Grouped by stage rather than by batch, because the question this answers is
- * "what is crosslinking right now" — you are standing in the lab deciding what
- * to touch, not auditing an inventory. Terminal stages are left out: consumed
- * and discarded are not pipeline, they are history.
- */
-function ScaffoldsPanel({ onNavigate }: { onNavigate: (view: ViewName) => void }) {
+function ScaffoldsPanel({ onNavigate, id, collapsed, onToggle, cap, onExpand, expanded }: Capped & { onNavigate: (view: ViewName) => void }) {
   const { app } = useApp();
   const inventory = app.inventory();
 
@@ -1433,20 +1500,24 @@ function ScaffoldsPanel({ onNavigate }: { onNavigate: (view: ViewName) => void }
     return at === -1 ? BATCH_STATES.length : at;
   };
   stages.sort((a, b) => rank(a.state) - rank(b.state) || a.state.localeCompare(b.state));
+  const { shown, more, foldable } = cap(id, stages);
 
   return (
-    <section className="panel" data-testid="scaffolds-panel">
-      <div className="panel-head">
-        <IconFlask size={15} />
-        <h2>In the pipeline</h2>
-        <span className="spacer" />
+    <DashPanel
+      id={id}
+      title="In the pipeline"
+      testId="scaffolds-panel"
+      icon={<IconFlask size={15} />}
+      collapsed={collapsed}
+      onToggle={onToggle}
+      actions={
         <button className="btn ghost sm" onClick={() => onNavigate('inventory')}>
           Scaffolds
         </button>
-      </div>
-      <div className="panel-body tight">
-        <div className="list">
-          {stages.map((stage) => (
+      }
+    >
+      <div className="list">
+        {shown.map((stage) => (
             <div className="row" key={stage.state} data-testid={`pipeline-${stage.state}`}>
               <div className="grow" style={{ minWidth: 0 }}>
                 <div className="row-title">{stage.state}</div>
@@ -1455,9 +1526,10 @@ function ScaffoldsPanel({ onNavigate }: { onNavigate: (view: ViewName) => void }
               <span className="chip">{stage.count}</span>
             </div>
           ))}
-        </div>
+        <MoreRow id={id} more={more} onExpand={() => onExpand(id)} noun="more stages" />
+        {expanded && foldable && <LessRow id={id} onCollapse={() => onExpand(id)} />}
       </div>
-    </section>
+    </DashPanel>
   );
 }
 
@@ -1471,25 +1543,29 @@ function ScaffoldsPanel({ onNavigate }: { onNavigate: (view: ViewName) => void }
  * which is where it used to live, filtered in the component. The ordering and
  * the "what counts as ongoing" question both come from `app.experiments()`.
  */
-function ExperimentsPanel() {
+function ExperimentsPanel({ id, collapsed, onToggle, cap, onExpand, expanded }: Capped) {
   const { app, run } = useApp();
   const experiments = app.experiments();
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
   const [reseeding, setReseeding] = useState<string | null>(null);
+  const { shown, more, foldable } = cap(id, experiments);
 
   return (
-    <section className="panel" data-testid="experiments-panel">
-      <div className="panel-head">
-        <IconFlask size={15} />
-        <h2>Experiments</h2>
-        <span className="spacer" />
+    <DashPanel
+      id={id}
+      title="Experiments"
+      testId="experiments-panel"
+      icon={<IconFlask size={15} />}
+      collapsed={collapsed}
+      onToggle={onToggle}
+      actions={
         <button className="btn sm" data-testid="add-experiment" onClick={() => setAdding(!adding)}>
           <IconPlus size={13} /> Experiment
         </button>
-      </div>
-
-      <div className="panel-body tight">
+      }
+    >
+      <>
         {adding && (
           <form
             className="inline"
@@ -1530,7 +1606,7 @@ function ExperimentsPanel() {
               the bench: when it went in, what it is made of, how many cells it
               got, and what is next. Everything else lives on the experiment.
             */}
-            {experiments.map((node) => {
+            {shown.map((node) => {
               const exp = node.experiment!;
               const made = [
                 exp.def.sampleCount ? `${exp.def.sampleCount} scaffolds` : null,
@@ -1601,9 +1677,11 @@ function ExperimentsPanel() {
                 </div>
               );
             })}
+            <MoreRow id={id} more={more} onExpand={() => onExpand(id)} noun="more cultures" />
+            {expanded && foldable && <LessRow id={id} onCollapse={() => onExpand(id)} />}
           </div>
         )}
-      </div>
-    </section>
+      </>
+    </DashPanel>
   );
 }

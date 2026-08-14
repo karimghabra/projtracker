@@ -89,7 +89,7 @@ test.describe('walkthrough', () => {
     await shot('5-today-row');
 
     // And the bottom of the right column, where the cards and the grid live.
-    await page.getByTestId('dash-right').evaluate((el) => { el.scrollTop = el.scrollHeight; });
+    await page.getByTestId('dash').evaluate((el) => { el.scrollTop = el.scrollHeight; });
     await shot('6-cards-and-grid');
 
     // The small components, at their own size rather than a twelfth of the

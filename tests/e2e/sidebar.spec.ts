@@ -39,7 +39,9 @@ test.describe('the sidebar collapses', () => {
       ['nav-journal', 'Journal'],
       ['nav-home', 'Today'],
     ] as const) {
-      await expect(page.getByRole('button', { name })).toHaveCount(1);
+      // Scoped to the sidebar: a panel's own controls are named after it too
+      // ("Collapse Projects", "Move Projects"), and this is about the nav.
+      await expect(page.locator('.sidebar').getByRole('button', { name })).toHaveCount(1);
       await page.getByTestId(id).click();
     }
 
