@@ -573,6 +573,89 @@ export class App {
     });
   }
 
+  /**
+   * Several tasks that were always one job, made into one.
+   *
+   * A goal on this board reads: fabricate the thread, soak it, wrap it, set
+   * it, wash it, crosslink it, sterilise it — then the culture. Seven rows for
+   * one afternoon at the bench, and six of them exist because the recipe was
+   * written down as a to-do list. One task called "Prepare scaffolds" says the
+   * same thing and leaves the pool with one line to pick up.
+   *
+   * The recipe survives as the task's steps, in order, ticked where the task
+   * was — so this is a change of shape rather than a loss. Its own steps
+   * rather than a standard checklist, because every one of these recipes is
+   * different: soak in chitogel, wrap on a needle, set at 4°C is not what the
+   * braid goal does, and a template would be the app inventing a method.
+   *
+   * Refused when every one of them is finished: a run that was completed is
+   * history, and rewriting it as one unfinished task would be a lie about a
+   * day that already happened.
+   */
+  combineTasks(ids: NodeId[], name = 'Prepare scaffolds'): Delta & { id: NodeId } {
+    const clean = name.trim();
+    if (!clean) throw invalid('The combined task needs a name.');
+    if (ids.length < 2) throw invalid('Pick at least two tasks to combine.');
+
+    const unique = [...new Set(ids)];
+    const nodes = unique.map((id) => {
+      const node = this.state.nodes[id];
+      if (!node) throw notFound('node', id);
+      if (node.kind !== 'task') {
+        throw notAllowed(`"${node.name}" is a ${node.kind}, and only tasks can be combined.`);
+      }
+      return node;
+    });
+
+    const parent = nodes[0]!.parent;
+    if (nodes.some((n) => n.parent !== parent)) {
+      throw notAllowed('Those tasks are not in the same place. Combine the ones under one goal.');
+    }
+    if (nodes.every((n) => n.status === 'done')) {
+      throw notAllowed('That run is finished. Combining it would rewrite a day that happened.');
+    }
+
+    // In the order they were meant to be done, which is the order the notes
+    // should read in.
+    const order = [...nodes].sort((a, b) => a.seq - b.seq || a.name.localeCompare(b.name));
+    const doomed = new Set(unique);
+    // Notes on a swallowed task are a record of the bench, and there is nowhere
+    // on a step to put them; they go on the task, under the name they belonged
+    // to, rather than nowhere.
+    const keptNotes = order
+      .filter((n) => n.notes?.trim())
+      .map((n) => `${n.name}: ${n.notes!.trim()}`);
+
+    return this.transaction(`Combine ${order.length} tasks into "${clean}"`, (app) => {
+      const made = app.addNode(parent, clean, {
+        seq: order[0]!.seq,
+        seqSource: order[0]!.seqSource,
+        notes: keptNotes.length ? keptNotes.join('\n\n') : undefined,
+      });
+
+      // The recipe, in the order it was done in, ticked where it was done.
+      for (const node of order) app.addStep(made.id, node.name);
+      const steps = app.state.nodes[made.id]!.steps;
+      order.forEach((node, at) => {
+        if (node.status === 'done') app.tickStep(made.id, steps[at]!.id, true);
+      });
+
+      /*
+        Anything that waited on one of these now waits on the one that replaced
+        it, and anything they all waited on is now waited on once. Edges inside
+        the group are gone with the tasks — they were the order of a recipe
+        that is now a single row.
+      */
+      for (const dep of this.state.deps) {
+        if (doomed.has(dep.from) && !doomed.has(dep.to)) app.addDep(made.id, dep.to);
+        else if (doomed.has(dep.to) && !doomed.has(dep.from)) app.addDep(dep.from, made.id);
+      }
+
+      for (const node of order) app.deleteNode(node.id);
+      return { ...made, message: `Combined ${order.length} tasks into "${clean}".` };
+    });
+  }
+
   deleteNode(id: NodeId): Delta {
     const node = this.state.nodes[id];
     if (!node) throw notFound('node', id);
