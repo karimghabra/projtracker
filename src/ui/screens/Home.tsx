@@ -7,6 +7,7 @@
  */
 
 import { useState, type ReactNode } from 'react';
+import { useRowDrag } from '../state/rowDrag.ts';
 import { formatDayMonth, formatRelativeDay } from '../../core/dates.ts';
 import { formatOffset } from '../../core/protocols.ts';
 import { BATCH_STATES, isTerminalState } from '../../core/model.ts';
@@ -20,13 +21,13 @@ import { Calendar, DayPanel } from '../components/Calendar.tsx';
 import { UpcomingPanel } from '../components/UpcomingPanel.tsx';
 import { ConfirmDialog, Empty, InlineEdit, Modal, QuickAdd } from '../components/ui.tsx';
 import { PlanButton, PlanDialog } from '../components/PlanDialog.tsx';
+import { RowMenu } from '../components/RowMenu.tsx';
 import { NewProjectWizard } from './NewProject.tsx';
 import {
   IconCalendar,
   IconCheck,
   IconChevronDown,
   IconChevronRight,
-  IconChevronUp,
   IconClock,
   IconFlask,
   IconHome,
@@ -262,19 +263,33 @@ function TodayPanel({ id, collapsed, onToggle }: Frame) {
    */
   const shown = hideDone ? today.items.filter((item) => !item.done) : today.items;
 
-  // Reordering is by button rather than drag: it works from the keyboard, it
-  // works on a laptop trackpad in gloves, and it cannot be started by accident
-  // while ticking something off.
-  const move = (key: string, direction: -1 | 1) => {
-    const keys = today.items.filter((i) => i.kind === 'task').map((i) => i.key);
+  /*
+    Only tasks can be reordered; a reminder sits on the day its date says. The
+    order is written as the whole list of task keys, so both the drag and the
+    keys below go through the same one call.
+  */
+  const taskKeys = () => today.items.filter((i) => i.kind === 'task').map((i) => i.key);
+  const reorder = (key: string, to: number) => {
+    const keys = taskKeys();
     const at = keys.indexOf(key);
-    const to = at + direction;
-    if (at < 0 || to < 0 || to >= keys.length) return;
+    if (at < 0 || to < 0 || to > keys.length || to === at) return;
     const next = [...keys];
     next.splice(at, 1);
-    next.splice(to, 0, key);
+    next.splice(to > at ? to - 1 : to, 0, key);
     run((a) => a.todayReorder(next), { silent: true });
   };
+  /*
+    Alt and an arrow, which is what the two chevrons on every row used to be.
+    They were four of the eight buttons that left a third-width card about a
+    hundred pixels for the name of the task; dragging replaced them, and this
+    replaces what dragging cannot do — work without a pointer.
+  */
+  const move = (key: string, direction: -1 | 1) => {
+    const at = taskKeys().indexOf(key);
+    if (at < 0) return;
+    reorder(key, direction === -1 ? at - 1 : at + 2);
+  };
+  const drag = useRowDrag(reorder);
 
   return (
     <DashPanel
@@ -315,7 +330,7 @@ function TodayPanel({ id, collapsed, onToggle }: Frame) {
             Pull something in from the ready list below, or just type what you need to do.
           </Empty>
         ) : (
-          <div className="list" data-testid="today-list">
+          <div className={drag.active ? 'list dragging' : 'list'} data-testid="today-list">
             {groupRuns(shown).map((group) =>
               group.group ? (
                 <TodayGroup
@@ -330,6 +345,7 @@ function TodayPanel({ id, collapsed, onToggle }: Frame) {
                     key={item.key}
                     item={item}
                     onMove={item.kind === 'task' ? (d) => move(item.key, d) : undefined}
+                    {...(item.kind === 'task' ? drag.row(item.key) : {})}
                   />
                 ))
               ),
@@ -413,9 +429,20 @@ function TodayGroup({
 function TodayRow({
   item,
   onMove,
+  onGrab,
+  rowRef,
+  dragging,
+  dropBefore,
+  dropAfter,
 }: {
   item: TodayItemView;
+  /** Absent when the row cannot be reordered — a reminder, or a run's step. */
   onMove?: (direction: -1 | 1) => void;
+  onGrab?: (event: React.PointerEvent) => void;
+  rowRef?: (element: HTMLElement | null) => void;
+  dragging?: boolean;
+  dropBefore?: boolean;
+  dropAfter?: boolean;
 }) {
   const { app, run } = useApp();
   const [startingProtocol, setStartingProtocol] = useState(false);
@@ -434,18 +461,47 @@ function TodayRow({
 
   const inProgress = item.node?.derived === 'in_progress';
 
+  const classes = ['row'];
+  if (item.done) classes.push('done');
+  if (onMove) classes.push('draggable');
+  if (dragging) classes.push('dragging');
+  if (dropBefore) classes.push('drop-before');
+  if (dropAfter) classes.push('drop-after');
+
   return (
-    <div className={item.done ? 'row done' : 'row'} data-testid={`today-${item.key}`}>
+    <div
+      ref={rowRef}
+      className={classes.join(' ')}
+      data-testid={`today-${item.key}`}
+      onPointerDown={onGrab}
+      /*
+        Reordering was two chevrons on every row, which is four of the eight
+        buttons that left a third-width card about a hundred pixels for the
+        name of the task. Dragging replaces them, and the keys replace what
+        dragging cannot do: work without a pointer.
+      */
+      onKeyDown={
+        onMove &&
+        ((event) => {
+          if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return;
+          event.preventDefault();
+          onMove(event.key === 'ArrowUp' ? -1 : 1);
+        })
+      }
+    >
       <input
         type="checkbox"
         className="check"
         checked={item.done}
         onChange={toggle}
         aria-label={`${item.done ? 'Reopen' : 'Complete'} ${item.title}`}
+        aria-keyshortcuts={onMove ? 'Alt+ArrowUp Alt+ArrowDown' : undefined}
       />
 
       <div className="grow" style={{ minWidth: 0 }}>
-        <div className="row-title">{item.title}</div>
+        <div className="row-title" title={onMove ? 'Drag to reorder, or Alt+↑ / Alt+↓' : undefined}>
+          {item.title}
+        </div>
         <div className="inline" style={{ gap: 6, marginTop: 1 }}>
           {item.node?.projectName && <span className="row-sub">{item.node.projectName}</span>}
           {item.source === 'rolled-over' && (
@@ -462,28 +518,6 @@ function TodayRow({
       </div>
 
       <div className="row-actions">
-        {onMove && (
-          <>
-            <button
-              className="btn ghost icon sm"
-              title="Move up"
-              aria-label={`Move ${item.title} up`}
-              data-testid={`up-${item.key}`}
-              onClick={() => onMove(-1)}
-            >
-              <IconChevronUp size={13} />
-            </button>
-            <button
-              className="btn ghost icon sm"
-              title="Move down"
-              aria-label={`Move ${item.title} down`}
-              data-testid={`down-${item.key}`}
-              onClick={() => onMove(1)}
-            >
-              <IconChevronDown size={13} />
-            </button>
-          </>
-        )}
         {/*
           Putting something off is a first-class act, not a failure to do it.
           A task moves by its planned date; a manual reminder moves its own day.
@@ -516,25 +550,14 @@ function TodayRow({
         )}
 
         {item.kind === 'task' && !item.done && (
-          <>
-            <button
-              className="btn ghost icon sm"
-              title="Run a protocol for this"
-              aria-label={`Run a protocol for ${item.title}`}
-              data-testid={`run-protocol-${item.key}`}
-              onClick={() => setStartingProtocol(true)}
-            >
-              <IconFlask size={13} />
-            </button>
-            <button
-              className="btn ghost icon sm"
-              title={inProgress ? 'Pause' : 'Start'}
-              aria-label={inProgress ? `Pause ${item.title}` : `Start ${item.title}`}
-              onClick={() => run((a) => (inProgress ? a.pause(item.id) : a.start(item.id)))}
-            >
-              {inProgress ? <IconPause size={13} /> : <IconPlay size={13} />}
-            </button>
-          </>
+          <button
+            className="btn ghost icon sm"
+            title={inProgress ? 'Pause' : 'Start'}
+            aria-label={inProgress ? `Pause ${item.title}` : `Start ${item.title}`}
+            onClick={() => run((a) => (inProgress ? a.pause(item.id) : a.start(item.id)))}
+          >
+            {inProgress ? <IconPause size={13} /> : <IconPlay size={13} />}
+          </button>
         )}
         {/*
           Three different things, and the row used to offer only the first:
@@ -546,6 +569,11 @@ function TodayRow({
           The middle one is the gap that made an eight-day-old row eight days
           old: dismissing it said "not today" every morning, which is exactly
           what leaving it alone already said.
+
+          The first is still on the row, because putting today's work off is
+          today's work. The other two are things you do to a row once, so they
+          are one press further away rather than permanently in front of the
+          name of the task.
         */}
         <button
           className="btn ghost icon sm"
@@ -555,26 +583,42 @@ function TodayRow({
         >
           <IconClose size={13} />
         </button>
-        {item.kind === 'task' && (
-          <button
-            className="btn ghost icon sm"
-            title="Back to the ready pool"
-            aria-label={`Put ${item.title} back in the ready pool`}
-            data-testid={`today-return-${item.key}`}
-            onClick={() => run((a) => a.todayReturn(item.key, app.today))}
-          >
-            <IconUndo size={13} />
-          </button>
-        )}
-        <button
-          className="btn ghost icon sm"
-          title="Delete"
-          aria-label={`Delete ${item.title}`}
-          data-testid={`today-delete-${item.key}`}
-          onClick={() => setConfirmDelete(true)}
-        >
-          <IconTrash size={13} />
-        </button>
+        <RowMenu
+          label={item.title}
+          testId={`more-${item.key}`}
+          actions={[
+            ...(item.kind === 'task' && !item.done
+              ? [
+                  {
+                    label: 'Run a protocol for this',
+                    name: `Run a protocol for ${item.title}`,
+                    icon: <IconFlask size={13} />,
+                    testId: `run-protocol-${item.key}`,
+                    onSelect: () => setStartingProtocol(true),
+                  },
+                ]
+              : []),
+            ...(item.kind === 'task'
+              ? [
+                  {
+                    label: 'Back to the ready pool',
+                    name: `Put ${item.title} back in the ready pool`,
+                    icon: <IconUndo size={13} />,
+                    testId: `today-return-${item.key}`,
+                    onSelect: () => run((a) => a.todayReturn(item.key, app.today)),
+                  },
+                ]
+              : []),
+            {
+              label: 'Delete',
+              name: `Delete ${item.title}`,
+              icon: <IconTrash size={13} />,
+              testId: `today-delete-${item.key}`,
+              danger: true,
+              onSelect: () => setConfirmDelete(true),
+            },
+          ]}
+        />
       </div>
 
       {confirmDelete && (

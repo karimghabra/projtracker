@@ -42,6 +42,7 @@ test.describe('a protocol run against a task', () => {
     const today = await h.today();
 
     const row = page.getByTestId('today-list').locator('.row', { hasText: 'Prepare threads' });
+    await row.getByRole('button', { name: /^More for/ }).click();
     await row.getByRole('button', { name: /Run a protocol/ }).click();
 
     // The start time is a field, not "now": a run written up after the fact
@@ -62,6 +63,7 @@ test.describe('a protocol run against a task', () => {
     const today = await h.today();
 
     const row = page.getByTestId('today-list').locator('.row', { hasText: 'Prepare threads' });
+    await row.getByRole('button', { name: /^More for/ }).click();
     await row.getByRole('button', { name: /Run a protocol/ }).click();
     await page.locator('#tp-start').fill(`${today}T06:00`);
     await page.getByTestId('confirm-run-protocol').click();
@@ -77,6 +79,7 @@ test.describe('a protocol run against a task', () => {
     const today = await h.today();
 
     const row = page.getByTestId('today-list').locator('.row', { hasText: 'Prepare threads' });
+    await row.getByRole('button', { name: /^More for/ }).click();
     await row.getByRole('button', { name: /Run a protocol/ }).click();
     await page.locator('#tp-start').fill(`${today}T06:00`);
     await page.getByTestId('confirm-run-protocol').click();
@@ -92,6 +95,7 @@ test.describe('a protocol run against a task', () => {
     const today = await h.today();
 
     const row = page.getByTestId('today-list').locator('.row', { hasText: 'Prepare threads' });
+    await row.getByRole('button', { name: /^More for/ }).click();
     await row.getByRole('button', { name: /Run a protocol/ }).click();
     await page.locator('#tp-start').fill(`${today}T06:00`);
     await page.getByTestId('confirm-run-protocol').click();

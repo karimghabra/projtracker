@@ -11,6 +11,7 @@
  */
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { IconDrag } from './icons.tsx';
 import { columnFor, insertionIndex, place, type Card, type Placed } from '../state/grid.ts';
 import {
   COLUMNS,
@@ -34,6 +35,14 @@ const GAP = 16;
  * anybody chose; it is a layout that happens to somebody on a laptop.
  */
 const NARROW = 900;
+
+interface Sizing {
+  id: PanelId;
+  /** How many columns wide it would be if the pointer were released now. */
+  w: number;
+  /** A deliberate height, or null for as tall as its contents. */
+  h: number | null;
+}
 
 export interface Drag {
   id: PanelId;
@@ -65,7 +74,7 @@ export function DashGrid({
   const [width, setWidth] = useState(0);
   const [heights, setHeights] = useState<Record<string, number>>({});
   const [drag, setDrag] = useState<Drag | null>(null);
-  const [sizing, setSizing] = useState<{ id: PanelId; w: number; h: number | null } | null>(null);
+  const [sizing, setSizing] = useState<Sizing | null>(null);
 
   const columns = width > 0 && width < NARROW ? 1 : COLUMNS;
   const columnWidth = width > 0 ? (width - GAP * (columns - 1)) / columns : 0;
@@ -106,6 +115,22 @@ export function DashGrid({
     else cards.current.delete(id);
   }, []);
 
+  /*
+    The gesture in progress is kept in a ref as well as in state, and every
+    handler reads the ref.
+
+    React flushes a pointerdown synchronously but batches the moves that follow,
+    so a handler can be one render behind the gesture it is handling. The state
+    is for drawing; the ref is what the gesture actually is. Without this, a
+    drag whose moves all arrive before a re-paint commits nothing at all — which
+    is exactly what it looked like: an intermittently dead resize handle.
+  */
+  const live = useRef<{
+    drag: (Drag & { fromLeft: number; fromTop: number }) | null;
+    sizing: (Sizing & { fromLeft: number; fromTop: number; x: number }) | null;
+    preview: { x: number; index: number } | null;
+  }>({ drag: null, sizing: null, preview: null });
+
   // --------------------------------------------------------------- placing
 
   /*
@@ -127,13 +152,8 @@ export function DashGrid({
         : { id: panel.id, x: spot.x, w: spot.w, h };
     });
 
-  let preview: { x: number; index: number } | null = null;
-  if (drag && drag.moved && columnWidth > 0) {
-    const settled = place(toCards(working), columns, GAP).placed;
-    const x = columnFor(drag.atX - drag.grabX, columnWidth, GAP, spanOf(working, drag.id, columns), columns);
-    const index = insertionIndex(settled, { col: drag.atX / (columnWidth + GAP), y: drag.atY }, drag.id);
-    preview = { x, index };
-    working = moveCard(working, drag.id, { x, index });
+  if (drag?.moved && live.current.preview) {
+    working = moveCard(working, drag.id, live.current.preview);
   }
 
   const { placed, height } = place(toCards(working), columns, GAP);
@@ -151,32 +171,52 @@ export function DashGrid({
     if (!card || !box) return;
     event.preventDefault();
     (event.target as HTMLElement).setPointerCapture(event.pointerId);
-    setDrag({
+    const started = {
       id,
       grabX: event.clientX - box.left - left(card),
       grabY: event.clientY - box.top - card.y,
       atX: event.clientX - box.left,
       atY: event.clientY - box.top,
       moved: false,
-    });
+      fromLeft: left(card),
+      fromTop: card.y,
+    };
+    live.current = { drag: started, sizing: null, preview: null };
+    setDrag(started);
   };
 
   const onDragMove = (event: React.PointerEvent) => {
+    const held = live.current.drag;
     const box = surface.current?.getBoundingClientRect();
-    if (!drag || !box) return;
+    if (!held || !box) return;
     const atX = event.clientX - box.left;
     const atY = event.clientY - box.top;
-    setDrag({
-      ...drag,
+    const next = {
+      ...held,
       atX,
       atY,
-      // Three pixels of slop, so a click on the grip is still a click.
-      moved: drag.moved || Math.abs(atX - drag.grabX - left(at.get(drag.id)!)) > 3 || Math.abs(atY - drag.grabY - at.get(drag.id)!.y) > 3,
-    });
+      // Three pixels of slop, so a press on the grip is still a press.
+      moved:
+        held.moved ||
+        Math.abs(atX - held.grabX - held.fromLeft) > 3 ||
+        Math.abs(atY - held.grabY - held.fromTop) > 3,
+    };
+    live.current.drag = next;
+    if (next.moved && columnWidth > 0) {
+      const settled = place(toCards(layout), columns, GAP).placed;
+      live.current.preview = {
+        x: columnFor(atX - next.grabX, columnWidth, GAP, spanOf(layout, held.id, columns), columns),
+        index: insertionIndex(settled, { col: atX / (columnWidth + GAP), y: atY }, held.id),
+      };
+    }
+    setDrag(next);
   };
 
   const endDrag = () => {
-    if (drag?.moved && preview) onLayout(moveCard(layout, drag.id, preview));
+    const held = live.current.drag;
+    const where = live.current.preview;
+    if (held?.moved && where) onLayout(moveCard(layout, held.id, where));
+    live.current = { drag: null, sizing: null, preview: null };
     setDrag(null);
   };
 
@@ -184,22 +224,34 @@ export function DashGrid({
 
   const startResize = (id: PanelId) => (event: React.PointerEvent) => {
     if (event.button !== 0 || columns === 1) return;
+    const card = at.get(id);
+    if (!card) return;
     event.preventDefault();
     event.stopPropagation();
     (event.target as HTMLElement).setPointerCapture(event.pointerId);
-    const spot = placeOf(layout, id);
-    setSizing({ id, w: spot.w, h: heightOf(layout, id) ?? null });
+    const started = {
+      id,
+      w: card.w,
+      h: heightOf(layout, id) ?? null,
+      // Where the card is now: resizing moves its right and bottom edges, never
+      // its top-left, so these hold for the whole gesture.
+      fromLeft: left(card),
+      fromTop: card.y,
+      x: card.x,
+    };
+    live.current = { drag: null, sizing: started, preview: null };
+    setSizing({ id, w: started.w, h: started.h });
   };
 
   const onResizeMove = (event: React.PointerEvent) => {
-    const card = sizing && at.get(sizing.id);
+    const held = live.current.sizing;
     const box = surface.current?.getBoundingClientRect();
-    if (!sizing || !card || !box) return;
+    if (!held || !box) return;
     const right = event.clientX - box.left;
     const bottom = event.clientY - box.top;
     const w = Math.max(
       MIN_SPAN,
-      Math.min(COLUMNS - card.x, Math.round((right - left(card) + GAP) / (columnWidth + GAP))),
+      Math.min(COLUMNS - held.x, Math.round((right - held.fromLeft + GAP) / (columnWidth + GAP))),
     );
     /*
       Height is in steps so two cards can be made to match by eye. Going back to
@@ -207,16 +259,17 @@ export function DashGrid({
       a magic zone near the natural height — a card you shortened once should
       not silently grow again because the list inside it did.
     */
-    const asked = Math.max(MIN_HEIGHT, Math.round((bottom - card.y) / ROW_STEP) * ROW_STEP);
-    setSizing({ ...sizing, w, h: asked });
+    const asked = Math.max(MIN_HEIGHT, Math.round((bottom - held.fromTop) / ROW_STEP) * ROW_STEP);
+    live.current.sizing = { ...held, w, h: asked };
+    setSizing({ id: held.id, w, h: asked });
   };
 
   const endResize = () => {
-    if (sizing) {
-      let next = moveCard(layout, sizing.id, { w: sizing.w });
-      next = setHeight(next, sizing.id, sizing.h);
-      onLayout(next);
+    const held = live.current.sizing;
+    if (held) {
+      onLayout(setHeight(moveCard(layout, held.id, { w: held.w }), held.id, held.h));
     }
+    live.current = { drag: null, sizing: null, preview: null };
     setSizing(null);
   };
 
@@ -290,7 +343,7 @@ export function DashGrid({
                     aria-label={`Move ${panel.title}`}
                     onPointerDown={startDrag(panel.id)}
                   >
-                    <Grip />
+                    <IconDrag size={13} />
                   </button>
                   <button
                     className="card-resize"
@@ -313,13 +366,3 @@ export function DashGrid({
 
 const spanOf = (layout: Layout, id: PanelId, columns: number) =>
   columns === 1 ? 1 : placeOf(layout, id).w;
-
-function Grip() {
-  return (
-    <svg width="10" height="14" viewBox="0 0 10 14" aria-hidden="true">
-      {[3, 7].map((x) =>
-        [3, 7, 11].map((y) => <circle key={`${x}-${y}`} cx={x} cy={y} r="1.2" fill="currentColor" />),
-      )}
-    </svg>
-  );
-}

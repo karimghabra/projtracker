@@ -73,6 +73,10 @@ test.describe('changing your mind', () => {
 
     const before = await page.evaluate(() => JSON.stringify((window as any).__pt.app.state.nodes));
 
+    // Delete is one of the verbs that live behind the row's More button now,
+    // so that the name of the task has room on a third-width card.
+    await page.getByTestId('today-panel')
+      .getByRole('button', { name: 'More for Typed by mistake' }).click();
     await page.getByTestId('today-panel')
       .getByRole('button', { name: 'Delete Typed by mistake' }).click();
     await page.screenshot({ path: 'screenshots/awk-4-confirm.png' });
@@ -91,6 +95,8 @@ test.describe('changing your mind', () => {
     await page.getByLabel('Add a task to today').fill('Chase the PO');
     await page.getByRole('button', { name: 'Add', exact: true }).click();
 
+    await page.getByTestId('today-panel')
+      .getByRole('button', { name: 'More for Chase the PO' }).click();
     await page.getByTestId('today-panel')
       .getByRole('button', { name: /back in the ready pool/ }).click();
     await expect(page.getByTestId('today-panel')).not.toContainText('Chase the PO');

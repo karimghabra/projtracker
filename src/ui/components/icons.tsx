@@ -175,6 +175,14 @@ export const IconDrag = svg(
     <circle cx="15" cy="18" r="1.3" fill="currentColor" />
   </>,
 );
+/** The rest of the verbs, for a row that cannot hold them all. */
+export const IconMore = svg(
+  <>
+    <circle cx="5" cy="12" r="1.4" fill="currentColor" />
+    <circle cx="12" cy="12" r="1.4" fill="currentColor" />
+    <circle cx="19" cy="12" r="1.4" fill="currentColor" />
+  </>,
+);
 export const IconImport = svg(
   <>
     <path d="M12 3v11" />

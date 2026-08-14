@@ -1102,9 +1102,15 @@ svg text {
   white-space: nowrap;
 }
 
+/* One line, clipped. Wrapped, a two-word project name made every row in a
+   narrow card two rows tall. */
 .row-sub {
   font-size: var(--text-xs);
   color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 /* Where a row belongs, when its own name is not enough to tell two apart. One
@@ -1135,6 +1141,99 @@ svg text {
 .row:hover .row-actions,
 .row:focus-within .row-actions {
   opacity: 1;
+}
+
+/*
+ * Reordering the day by dragging the row, which is what replaced the two
+ * chevrons every row used to carry.
+ */
+.row.draggable { cursor: grab; }
+.row.draggable:active { cursor: grabbing; }
+
+/* The row in the air stays where it was, faded: the line below says where it
+   is going, and a row that vanished mid-drag would take the list with it. */
+.row.dragging {
+  opacity: 0.4;
+}
+
+.list.dragging { user-select: none; }
+
+/* Where it will land. Drawn inside the row's own box, so it cannot change the
+   height of the list and make everything move while the pointer is down. */
+.row.drop-before,
+.row.drop-after {
+  position: relative;
+}
+
+.row.drop-before::before,
+.row.drop-after::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.row.drop-before::before { top: -1px; }
+.row.drop-after::after { bottom: -1px; }
+
+/*
+ * The rest of a row's verbs.
+ *
+ * Fixed, positioned from the button: a panel clips its own overflow, so a menu
+ * drawn inside the row would be cut off by the bottom of its card.
+ */
+.row-menu {
+  position: fixed;
+  z-index: 40;
+  min-width: 190px;
+  padding: 4px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.row-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 6px var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.row-menu-item:hover,
+.row-menu-item:focus-visible {
+  background: var(--bg-hover);
+}
+
+.row-menu-item.danger { color: var(--danger); }
+.row-menu-item.danger:hover { background: var(--danger-soft); }
+
+/* Apart from the rest: the ones you cannot take back by shrugging. */
+.row-menu-item.danger {
+  margin-top: 3px;
+  border-top: 1px solid var(--border);
+  padding-top: 7px;
+}
+
+/* ...unless it is the only thing in the menu, and has nothing to be apart from. */
+.row-menu-item.danger:first-child {
+  margin-top: 0;
+  border-top: 0;
+  padding-top: 6px;
 }
 
 /* A real checkbox, styled — keeps keyboard and screen-reader behaviour free. */

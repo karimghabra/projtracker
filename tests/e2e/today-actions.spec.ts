@@ -8,6 +8,10 @@ import { expect, test } from './fixtures.ts';
  * decided not to do now came back every morning, and work that should never
  * have been typed could only be deleted from the spreadsheet, among every other
  * row on the board.
+ *
+ * The two you do to a row once — back to the pool, delete — are behind the
+ * row's More button, so the name of the task has room on a narrow card. Still
+ * on the dashboard, still one press away.
  */
 test.describe('getting something off the day', () => {
   test('puts a task back in the pool, and it is gone from the day', async ({ h }) => {
@@ -18,6 +22,7 @@ test.describe('getting something off the day', () => {
     const today = page.getByTestId('today-list');
     await expect(today).toContainText('Pick up badge from Scripps');
 
+    await today.getByRole('button', { name: /^More for/ }).click();
     await today.getByRole('button', { name: /back in the ready pool/ }).click();
 
     // The list unmounts when the day empties, so this asks the panel.
@@ -34,8 +39,9 @@ test.describe('getting something off the day', () => {
     await page.getByLabel('Add a task to today').fill('Typo I never meant to add');
     await page.getByRole('button', { name: 'Add', exact: true }).click();
 
-    await page.getByTestId('today-list')
-      .getByRole('button', { name: 'Delete Typo I never meant to add' }).click();
+    const row = page.getByTestId('today-list');
+    await row.getByRole('button', { name: 'More for Typo I never meant to add' }).click();
+    await row.getByRole('button', { name: 'Delete Typo I never meant to add' }).click();
     await expect(page.getByRole('dialog')).toContainText('Delete "Typo I never meant to add"?');
     await page.getByRole('button', { name: 'Delete', exact: true }).click();
 
@@ -52,8 +58,9 @@ test.describe('getting something off the day', () => {
     await page.getByLabel('Add a task to today').fill('Deleted by accident');
     await page.getByRole('button', { name: 'Add', exact: true }).click();
 
-    await page.getByTestId('today-list')
-      .getByRole('button', { name: 'Delete Deleted by accident' }).click();
+    const row = page.getByTestId('today-list');
+    await row.getByRole('button', { name: 'More for Deleted by accident' }).click();
+    await row.getByRole('button', { name: 'Delete Deleted by accident' }).click();
     await page.getByRole('button', { name: 'Delete', exact: true }).click();
     await expect(page.getByTestId('today-panel')).not.toContainText('Deleted by accident');
 

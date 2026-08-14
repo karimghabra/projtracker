@@ -13,6 +13,36 @@ async function titles(page: Page): Promise<string[]> {
   return page.getByTestId('today-list').locator('.row .row-title').allTextContents();
 }
 
+const rowOf = (page: Page, name: string) =>
+  page.getByTestId('today-list').locator('.row', { hasText: name }).first();
+
+/**
+ * Drag one row onto another, the way a hand would.
+ *
+ * `above` decides which half of the target it lands on, because that is what
+ * the list reads: past a row's middle means after it.
+ */
+async function dragOnto(page: Page, name: string, target: string, above = true) {
+  const from = (await rowOf(page, name).boundingBox())!;
+  const to = (await rowOf(page, target).boundingBox())!;
+  const startX = from.x + from.width / 2;
+  const startY = from.y + from.height / 2;
+  // Grabbed in the middle, well away from the checkbox and the buttons.
+  await page.mouse.move(startX, startY);
+  await page.mouse.down();
+  const endY = above ? to.y + 3 : to.y + to.height - 3;
+  for (let step = 1; step <= 6; step++) {
+    await page.mouse.move(startX, startY + ((endY - startY) * step) / 6);
+  }
+  await page.mouse.up();
+}
+
+/** Move by keyboard, which is what the two chevrons on every row became. */
+async function nudge(page: Page, name: string, key: 'ArrowUp' | 'ArrowDown') {
+  await page.getByRole('checkbox', { name: `Complete ${name}` }).focus();
+  await page.keyboard.press(`Alt+${key}`);
+}
+
 test.describe('putting the day in order', () => {
   test.beforeEach(async ({ h }) => {
     for (const name of ['First thing', 'Second thing', 'Third thing']) {
@@ -26,41 +56,50 @@ test.describe('putting the day in order', () => {
     expect(await titles(h.page)).toEqual(['First thing', 'Second thing', 'Third thing']);
   });
 
-  test('moves an item down', async ({ h }) => {
+  test('drags an item down the list', async ({ h }) => {
     const { page } = h;
-    await page.getByRole('button', { name: 'Move First thing down' }).click();
+    await dragOnto(page, 'First thing', 'Second thing', false);
     expect(await titles(page)).toEqual(['Second thing', 'First thing', 'Third thing']);
   });
 
-  test('moves an item up', async ({ h }) => {
+  test('drags an item up the list', async ({ h }) => {
     const { page } = h;
-    await page.getByRole('button', { name: 'Move Third thing up' }).click();
+    await dragOnto(page, 'Third thing', 'Second thing');
     expect(await titles(page)).toEqual(['First thing', 'Third thing', 'Second thing']);
   });
 
-  test('moves something all the way to the top', async ({ h }) => {
+  test('drags something all the way to the top', async ({ h }) => {
     const { page } = h;
-    await page.getByRole('button', { name: 'Move Third thing up' }).click();
-    await page.getByRole('button', { name: 'Move Third thing up' }).click();
+    await dragOnto(page, 'Third thing', 'First thing');
     expect(await titles(page)).toEqual(['Third thing', 'First thing', 'Second thing']);
+  });
+
+  test('a press that goes nowhere leaves the order alone', async ({ h }) => {
+    const { page } = h;
+    // The threshold, which is what keeps a click on a row from being a move.
+    const row = (await rowOf(page, 'Second thing').boundingBox())!;
+    await page.mouse.move(row.x + row.width / 2, row.y + row.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(row.x + row.width / 2, row.y + row.height / 2 + 2);
+    await page.mouse.up();
+    expect(await titles(page)).toEqual(['First thing', 'Second thing', 'Third thing']);
   });
 
   test('will not move the first item off the top', async ({ h }) => {
     const { page } = h;
-    await page.getByRole('button', { name: 'Move First thing up' }).click();
+    await nudge(page, 'First thing', 'ArrowUp');
     expect(await titles(page)).toEqual(['First thing', 'Second thing', 'Third thing']);
   });
 
   test('will not move the last item off the bottom', async ({ h }) => {
     const { page } = h;
-    await page.getByRole('button', { name: 'Move Third thing down' }).click();
+    await nudge(page, 'Third thing', 'ArrowDown');
     expect(await titles(page)).toEqual(['First thing', 'Second thing', 'Third thing']);
   });
 
   test('the order survives a reload', async ({ h }) => {
     const { page } = h;
-    await page.getByRole('button', { name: 'Move Third thing up' }).click();
-    await page.getByRole('button', { name: 'Move Third thing up' }).click();
+    await dragOnto(page, 'Third thing', 'First thing');
 
     await page.reload();
     expect(await titles(page)).toEqual(['Third thing', 'First thing', 'Second thing']);
@@ -68,24 +107,26 @@ test.describe('putting the day in order', () => {
 
   test('undo puts the order back', async ({ h }) => {
     const { page } = h;
-    await page.getByRole('button', { name: 'Move First thing down' }).click();
+    await dragOnto(page, 'First thing', 'Second thing', false);
     expect(await titles(page)).toEqual(['Second thing', 'First thing', 'Third thing']);
 
+    // One drag, one undo step — however many rows it passed on the way.
     await page.getByTestId('undo').click();
     expect(await titles(page)).toEqual(['First thing', 'Second thing', 'Third thing']);
   });
 
   test('reordering is reachable from the keyboard', async ({ h }) => {
     const { page } = h;
-    // Buttons, not a drag handle: a drag cannot be done from a keyboard, and
-    // on a trackpad it is easy to start one while trying to tick a box.
-    const button = page.getByRole('button', { name: 'Move Second thing up' });
-    await button.focus();
-    await page.keyboard.press('Enter');
+    // A drag cannot be done from a keyboard, so Alt and an arrow does it. That
+    // is what the two chevrons on every row were there to protect.
+    await nudge(page, 'Second thing', 'ArrowUp');
     expect(await titles(page)).toEqual(['Second thing', 'First thing', 'Third thing']);
+
+    await nudge(page, 'Second thing', 'ArrowDown');
+    expect(await titles(page)).toEqual(['First thing', 'Second thing', 'Third thing']);
   });
 
-  test('ticking something off does not disturb the order', async ({ h }) => {
+  test('ticking something off does not disturb the order, or start a drag', async ({ h }) => {
     const { page } = h;
     await page.getByRole('checkbox', { name: 'Complete Second thing' }).check();
     expect(await titles(page)).toEqual(['First thing', 'Second thing', 'Third thing']);
