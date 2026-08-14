@@ -130,6 +130,8 @@ test.describe('changing your mind', () => {
     await page.reload();
     await page.waitForSelector('.shell');
 
+    // No type on this one and nothing assigned to it, so the card says how
+    // many and not what of.
     await expect(page.getByTestId(`experiment-${id}`)).toContainText('6 scaffolds');
     await page.getByTestId(`reseed-${id}`).click();
     await page.getByTestId('reseed-samples').fill('18');
@@ -228,7 +230,7 @@ test.describe('seeding takes scaffolds from the shelf', () => {
     await page.getByTestId('seed-save').click();
 
     // On the card with what went in, and the shelf is twelve lighter.
-    await expect(page.getByTestId(`experiment-${ids.experiment}`)).toContainText('12 scaffolds');
+    await expect(page.getByTestId(`experiment-${ids.experiment}`)).toContainText('12 × Collagen sponge');
     await page.getByTestId('nav-inventory').click();
     await expect(page.locator('tbody tr')).toHaveCount(2);
     await expect(page.locator('tbody')).toContainText('Osteogenic culture');
@@ -245,7 +247,7 @@ test.describe('seeding takes scaffolds from the shelf', () => {
       .getByRole('checkbox', { name: 'Seed Osteogenic culture' }).click();
     await page.getByTestId(`pick-${ids.batch}`).fill('6');
     await page.getByTestId('seed-save').click();
-    await expect(page.getByTestId(`experiment-${ids.experiment}`)).toContainText('6 scaffolds');
+    await expect(page.getByTestId(`experiment-${ids.experiment}`)).toContainText('6 × Collagen sponge');
 
     await page.getByTestId('undo').click();
 

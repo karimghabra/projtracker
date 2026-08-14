@@ -267,6 +267,131 @@ describe('the experiments panel reads', () => {
   });
 });
 
+describe('a designed culture asks for what it is short of', () => {
+  /** A design that names its scaffolds: twelve of a type, no date yet. */
+  const board = (now: string) => {
+    const h = harness(now);
+    const type = h.app.addScaffoldType('PCL 12%').id;
+    const id = h.app.experimentQuickAdd('Osteogenic run').id;
+    h.app.setExperiment(id, {
+      sampleCount: 12,
+      scaffoldTypeId: type,
+      scaffoldTypeName: 'PCL 12%',
+      durationDays: 35,
+      mediaPhases: [],
+    });
+    return { h, id, type };
+  };
+
+  it('asks for scaffolds to be made when the shelf is empty', () => {
+    const { h, id } = board('2026-08-10T08:00');
+    const row = h.app.ready().find((r) => r.id === id);
+    expect(row?.action).toBe('fabricate');
+    expect(row?.shortfall).toBe(12);
+  });
+
+  it('asks for seeding once there are enough on the shelf', () => {
+    const { h, id, type } = board('2026-08-10T08:00');
+    h.app.addBatch(type, 12);
+    expect(h.app.ready().find((r) => r.id === id)?.action).toBe('seed');
+  });
+
+  it('still asks for the rest when the shelf is short', () => {
+    const { h, id, type } = board('2026-08-10T08:00');
+    h.app.addBatch(type, 5);
+    const row = h.app.ready().find((r) => r.id === id);
+    expect(row?.action).toBe('fabricate');
+    expect(row?.shortfall).toBe(7);
+  });
+
+  it('does not count somebody else\'s scaffolds', () => {
+    const { h, id, type } = board('2026-08-10T08:00');
+    const other = h.app.experimentQuickAdd('Another culture').id;
+    const batch = h.app.addBatch(type, 12).id;
+    h.app.assignScaffolds(other, [{ batchId: batch, count: 12 }]);
+
+    // Twelve exist, and none of them are available to this one.
+    expect(h.app.ready().find((r) => r.id === id)?.action).toBe('fabricate');
+  });
+
+  it('counts what the culture already holds', () => {
+    const { h, id, type } = board('2026-08-10T08:00');
+    const batch = h.app.addBatch(type, 12).id;
+    h.app.assignScaffolds(id, [{ batchId: batch, count: 12 }]);
+    expect(h.app.ready().find((r) => r.id === id)?.action).toBe('seed');
+  });
+
+  it('counts stock of the named type only', () => {
+    const { h, id } = board('2026-08-10T08:00');
+    const wrong = h.app.addScaffoldType('Collagen braid').id;
+    h.app.addBatch(wrong, 40);
+    expect(h.app.ready().find((r) => r.id === id)?.action).toBe('fabricate');
+  });
+
+  it('says nothing about scaffolds when the design does not name a type', () => {
+    // "Twelve samples" of nothing in particular cannot be short of anything;
+    // guessing which type was meant would be the app inventing a fact.
+    const h = harness('2026-08-10T08:00');
+    const id = h.app.experimentQuickAdd('Unspecified').id;
+    h.app.setExperiment(id, { sampleCount: 12, durationDays: 35, mediaPhases: [] });
+    const row = h.app.ready().find((r) => r.id === id);
+    expect(row?.action).toBe('seed');
+    expect(row?.shortfall).toBeUndefined();
+  });
+
+  it('leaves a running culture out of it entirely', () => {
+    const { h, id } = board('2026-08-10T08:00');
+    h.app.setExperiment(id, { seedingDate: '2026-08-05' });
+    // Short of scaffolds on paper, and in the incubator in fact. The cells are
+    // already in; making more scaffolds is not what it is asking for.
+    expect(h.app.ready().some((r) => r.id === id)).toBe(false);
+  });
+});
+
+describe('a culture says what it is made of', () => {
+  it('names the type its design asks for, before anything is assigned', () => {
+    const h = harness('2026-08-10T08:00');
+    const type = h.app.addScaffoldType('PCL 12%').id;
+    const id = h.app.experimentQuickAdd('Planned run').id;
+    h.app.setExperiment(id, {
+      sampleCount: 6,
+      scaffoldTypeId: type,
+      seedingDate: '2026-08-09',
+      durationDays: 21,
+      mediaPhases: [],
+    });
+
+    const view = h.app.experiments().find((n) => n.id === id)!;
+    expect(view.experiment!.scaffolds).toEqual({ label: 'PCL 12%', held: 0 });
+  });
+
+  it('names what actually went in, once it holds it', () => {
+    const h = harness('2026-08-10T08:00');
+    const pcl = h.app.addScaffoldType('PCL 12%').id;
+    const braid = h.app.addScaffoldType('Collagen braid').id;
+    const id = h.app.experimentQuickAdd('Mixed run').id;
+    h.app.setExperiment(id, { sampleCount: 8, durationDays: 21, mediaPhases: [] });
+    const a = h.app.addBatch(pcl, 6).id;
+    const b = h.app.addBatch(braid, 2).id;
+    h.app.assignScaffolds(id, [
+      { batchId: a, count: 6 },
+      { batchId: b, count: 2 },
+    ]);
+    h.app.setExperiment(id, { seedingDate: '2026-08-09' });
+
+    const view = h.app.experiments().find((n) => n.id === id)!;
+    // Both, biggest first, with counts — because there are two of them.
+    expect(view.experiment!.scaffolds).toEqual({ label: '6 × PCL 12%, 2 × Collagen braid', held: 8 });
+  });
+
+  it('says nothing when there is nothing to say', () => {
+    const h = harness('2026-08-10T08:00');
+    const id = h.app.experimentQuickAdd('Bare').id;
+    h.app.setExperiment(id, { sampleCount: 4, seedingDate: '2026-08-09', durationDays: 21, mediaPhases: [] });
+    expect(h.app.experiments().find((n) => n.id === id)!.experiment!.scaffolds).toBeUndefined();
+  });
+});
+
 describe('protocol scheduling', () => {
   it('turns offsets into real times', () => {
     const h = harness('2026-07-30T09:00');

@@ -45,6 +45,25 @@ async function card(page: Page, id: string) {
 }
 
 /**
+ * Where something is, once it has stopped moving.
+ *
+ * Cards are placed from measured heights and slide on a transition, so a box
+ * read the moment the page settles can be a box the card has already left —
+ * and then the press lands somewhere else. Two readings that agree is the
+ * cheapest way to know it has arrived.
+ */
+async function still(page: Page, testId: string) {
+  let last = await page.getByTestId(testId).boundingBox();
+  for (let tries = 0; tries < 20; tries++) {
+    await page.waitForTimeout(50);
+    const now = await page.getByTestId(testId).boundingBox();
+    if (now && last && Math.abs(now.x - last.x) < 0.5 && Math.abs(now.y - last.y) < 0.5) return now;
+    last = now;
+  }
+  return last!;
+}
+
+/**
  * A card's resize corner, with the board scrolled so the pointer can reach it.
  *
  * Not `scrollIntoViewIfNeeded`: that leaves the card's bottom edge flush with
@@ -52,13 +71,14 @@ async function card(page: Page, id: string) {
  * corner is on screen and underneath something.
  */
 async function corner(page: Page, id: string) {
+  await still(page, `card-${id}`);
   await page.getByTestId(`card-${id}`).evaluate((el) => {
     const board = document.querySelector('[data-testid="dash"]')!;
     const seen = board.getBoundingClientRect();
     board.scrollTop += el.getBoundingClientRect().bottom - (seen.top + seen.height / 2);
   });
-  const box = await page.getByTestId(`resize-${id}`).boundingBox();
-  return { x: box!.x + 6, y: box!.y + 6 };
+  const box = await still(page, `resize-${id}`);
+  return { x: box.x + 6, y: box.y + 6 };
 }
 
 /** Drag from one point to another in steps, so the move is seen as a move. */
@@ -80,12 +100,12 @@ test.describe('moving a card', () => {
     const before = await card(page, 'calendar');
     expect(before.x).toBe(7);
 
-    const grip = await page.getByTestId('grip-calendar').boundingBox();
-    const today = await page.getByTestId('card-today').boundingBox();
+    const grip = await still(page, 'grip-calendar');
+    const today = await still(page, 'card-today');
     await dragTo(
       page,
-      { x: grip!.x + 8, y: grip!.y + 8 },
-      { x: today!.x + 30, y: today!.y + 20 },
+      { x: grip.x + 8, y: grip.y + 8 },
+      { x: today.x + 30, y: today.y + 20 },
     );
 
     await expect.poll(async () => (await card(page, 'calendar')).x).toBe(0);

@@ -44,11 +44,12 @@ import {
   transitiveReduction,
 } from '../core/graph.ts';
 import type { ExperimentDef } from '../core/model.ts';
-import type { ExperimentAction, Stage } from '../core/experiments.ts';
+import type { ExperimentAction, ScaffoldSupply, Stage } from '../core/experiments.ts';
 import {
   describeExperiment,
   endDateOf,
   experimentAction,
+  scaffoldShortfall,
   experimentStatus,
   stagesOf,
 } from '../core/experiments.ts';
@@ -82,6 +83,12 @@ export interface ExperimentView {
   missed: { date: DateOnly; title: string }[];
   /** The next stage still ahead of it — usually the phase switch. */
   next?: { date: DateOnly; label: string };
+  /**
+   * What it is built on: the scaffolds it holds, or the type its design names
+   * before it holds any. "12 samples" says how many; this says of what, which
+   * is the difference between two cultures that otherwise read the same.
+   */
+  scaffolds?: { label: string; held: number };
 }
 
 export interface NodeView {
@@ -204,9 +211,46 @@ export function nodeView(index: GraphIndex, id: NodeId, today: DateOnly): NodeVi
       next: stagesOf(node.experiment)
         .filter((stage) => stage.date >= today && !node.experiment!.stagesDone.includes(stage.id))
         .map((stage) => ({ date: stage.date, label: stage.label }))[0],
+      scaffolds: scaffoldsOf(state, node.id, node.experiment),
     };
   }
   return view;
+}
+
+/**
+ * What a culture is made of.
+ *
+ * The batches it holds, by type, because that is what actually went in — a
+ * culture seeded from two lots of the same thing is one line, and one seeded
+ * from two types says both. Before anything is assigned it falls back to the
+ * type the design names, which is a plan rather than a fact and reads as one:
+ * `held` is zero.
+ */
+function scaffoldsOf(
+  state: State,
+  id: NodeId,
+  def: ExperimentDef,
+): { label: string; held: number } | undefined {
+  const byType = new Map<string, number>();
+  let held = 0;
+  for (const batch of state.batches) {
+    if (batch.usedBy !== id) continue;
+    const name = state.scaffoldTypes.find((t) => t.id === batch.typeId)?.name ?? 'scaffolds';
+    byType.set(name, (byType.get(name) ?? 0) + batch.count);
+    held += batch.count;
+  }
+  if (byType.size > 0) {
+    const label = [...byType.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([name, count]) => (byType.size === 1 ? name : `${count} × ${name}`))
+      .join(', ');
+    return { label, held };
+  }
+  const planned =
+    (def.scaffoldTypeId
+      ? state.scaffoldTypes.find((t) => t.id === def.scaffoldTypeId)?.name
+      : undefined) ?? def.scaffoldTypeName;
+  return planned ? { label: planned, held: 0 } : undefined;
 }
 
 function findProject(index: GraphIndex, id: NodeId): Node | undefined {
@@ -335,14 +379,41 @@ function groupOf(
 
 // ------------------------------------------------------------------ ready
 
+/**
+ * What an experiment has to seed with, read off the inventory.
+ *
+ * Held scaffolds are found by asking the batches which culture they went into,
+ * exactly as the inventory screen does — there is no second list on the
+ * experiment to disagree with this one. Stock is whatever is unassigned, not
+ * used up, and of the type the design names.
+ */
+export function scaffoldSupply(state: State, id: NodeId, def: ExperimentDef): ScaffoldSupply {
+  let held = 0;
+  let inStock = 0;
+  for (const batch of state.batches) {
+    if (batch.usedBy === id) {
+      held += batch.count;
+      continue;
+    }
+    if (!def.scaffoldTypeId || batch.typeId !== def.scaffoldTypeId) continue;
+    if (batch.usedBy || isTerminalState(batch.state)) continue;
+    inStock += batch.count;
+  }
+  return { held, inStock };
+}
+
+
 export interface ReadyRow extends NodeView {
   stepsDone: number;
   stepsTotal: number;
   /**
    * Set when this row is a moment in a culture's life rather than a task: the
-   * node is the experiment, and the row offers seeding or collecting it.
+   * node is the experiment, and the row offers seeding, collecting, or making
+   * the scaffolds it will need.
    */
   action?: ExperimentAction;
+  /** How many scaffolds a `fabricate` row is short of, and of what. */
+  shortfall?: number;
 }
 
 /**
@@ -361,11 +432,13 @@ export function readyView(index: GraphIndex, today: DateOnly): ReadyRow[] {
       stepsTotal: node.steps.length,
     };
     if (node.experiment) {
-      const action = experimentAction(node.experiment, today);
+      const supply = scaffoldSupply(index.state, node.id, node.experiment);
+      const action = experimentAction(node.experiment, today, supply);
       // In the incubator, or seeding on a day already chosen. Either way there
       // is nothing here to pick up.
       if (!action) continue;
       row.action = action;
+      if (action === 'fabricate') row.shortfall = scaffoldShortfall(node.experiment, supply);
     }
     rows.push(row);
   }

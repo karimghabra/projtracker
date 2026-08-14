@@ -219,9 +219,37 @@ export function experimentStatus(def: ExperimentDef, today: DateOnly): Experimen
  * the future is a plan, and the calendar carries plans. `undefined` here means
  * the pool says nothing about this culture at all.
  */
-export type ExperimentAction = 'seed' | 'collect';
+export type ExperimentAction = 'seed' | 'collect' | 'fabricate';
 
-export function experimentAction(def: ExperimentDef, today: DateOnly): ExperimentAction | undefined {
+/**
+ * What an experiment has to seed with.
+ *
+ * `held` is what it already owns — batches assigned to it, which is stock that
+ * has left the shelf. `inStock` is unassigned stock of the type its design
+ * names, which is what it could still be given.
+ */
+export interface ScaffoldSupply {
+  held: number;
+  inStock: number;
+}
+
+/**
+ * How many more scaffolds this design needs than exist anywhere for it.
+ *
+ * Zero when the design does not name a type: "twelve samples" of nothing in
+ * particular cannot be short of anything, and guessing which type was meant is
+ * the app inventing a fact about the bench.
+ */
+export function scaffoldShortfall(def: ExperimentDef, supply: ScaffoldSupply): number {
+  if (!def.scaffoldTypeId || def.sampleCount <= 0) return 0;
+  return Math.max(0, def.sampleCount - supply.held - supply.inStock);
+}
+
+export function experimentAction(
+  def: ExperimentDef,
+  today: DateOnly,
+  supply?: ScaffoldSupply,
+): ExperimentAction | undefined {
   const { state } = experimentStatus(def, today);
   // Past its endpoint and never ticked off: it wants harvesting.
   if (state === 'finished') return 'collect';
@@ -229,6 +257,15 @@ export function experimentAction(def: ExperimentDef, today: DateOnly): Experimen
   // No seeding date. Seeding is the next real act — unless the scaffolds it
   // needs are still expected, in which case there is nothing to seed with.
   if (def.scaffoldsExpected && def.scaffoldsExpected > today) return undefined;
+  /*
+    A design that names its scaffolds says which of the two acts comes next. If
+    the shelf cannot cover it, seeding is not the work — making them is, and
+    the pool should say so rather than offering a form that will refuse.
+
+    Without a supply this is the old answer, `seed`, which is what a caller
+    that knows nothing about the inventory should get.
+  */
+  if (supply && scaffoldShortfall(def, supply) > 0) return 'fabricate';
   return 'seed';
 }
 

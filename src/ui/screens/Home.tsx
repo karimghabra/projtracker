@@ -844,6 +844,8 @@ function ReadyPanel({
   const { app, run } = useApp();
   /** The culture whose seeding form is open, if any. */
   const [seeding, setSeeding] = useState<string | null>(null);
+  /** ...and the one whose scaffolds are about to be made. */
+  const [fabricating, setFabricating] = useState<string | null>(null);
 
   const tree = app.readyTree();
   const total = tree.reduce((sum, branch) => sum + branch.count, 0);
@@ -966,11 +968,14 @@ function ReadyPanel({
                       ? `Seed ${row.name}`
                       : row.action === 'collect'
                         ? `Collect ${row.name}`
-                        : `Complete ${row.name}`
+                        : row.action === 'fabricate'
+                          ? `Make scaffolds for ${row.name}`
+                          : `Complete ${row.name}`
                   }
                   data-testid={`ready-complete-${row.id}`}
                   onChange={() => {
                     if (row.action === 'seed') setSeeding(row.id);
+                    else if (row.action === 'fabricate') setFabricating(row.id);
                     else run((a) => a.complete(row.id));
                   }}
                 />
@@ -978,7 +983,13 @@ function ReadyPanel({
                   <div className="row-title">
                     {row.action ? (
                       <span data-testid={`ready-action-${row.id}`}>
-                        <span className="verb">{row.action === 'seed' ? 'Seed' : 'Collect'}</span>{' '}
+                        <span className="verb">
+                          {row.action === 'seed'
+                            ? 'Seed'
+                            : row.action === 'collect'
+                              ? 'Collect'
+                              : `Make ${row.shortfall} scaffolds for`}
+                        </span>{' '}
                         {row.name}
                       </span>
                     ) : (
@@ -1022,8 +1033,96 @@ function ReadyPanel({
         </div>
 
         {seeding && <SeedDialog nodeId={seeding} onClose={() => setSeeding(null)} />}
+        {fabricating && (
+          <FabricateDialog nodeId={fabricating} onClose={() => setFabricating(null)} />
+        )}
       </>
     </DashPanel>
+  );
+}
+
+/**
+ * Making the scaffolds a culture is waiting on.
+ *
+ * The pool asks for this when a design names a scaffold type and the shelf
+ * cannot cover it, so the count is already known: the shortfall, which is what
+ * the field opens on. It is still a field, because a run that yields sixteen
+ * when you asked for twelve is an ordinary morning and the tracker should take
+ * the sixteen.
+ *
+ * What it writes is stock, not a link to the experiment. Nothing is reserved:
+ * the batch goes on the shelf like any other, the culture's row turns into
+ * "Seed" because the shelf can now cover it, and the scaffolds are chosen for
+ * real when they actually go in.
+ */
+function FabricateDialog({ nodeId, onClose }: { nodeId: string; onClose: () => void }) {
+  const { app, run } = useApp();
+  const node = app.node(nodeId);
+  const def = node.experiment!.def;
+  const row = app.ready().find((r) => r.id === nodeId);
+  const [count, setCount] = useState(() => row?.shortfall ?? def.sampleCount);
+  const [on, setOn] = useState(app.today);
+  const type = app.inventory().types.find((t) => t.id === def.scaffoldTypeId);
+
+  const save = () => {
+    if (!def.scaffoldTypeId || count <= 0) return;
+    if (run((a) => a.addBatch(def.scaffoldTypeId!, count, { fabricatedOn: on }))) onClose();
+  };
+
+  return (
+    <Modal
+      title={`Scaffolds for ${node.name}`}
+      onClose={onClose}
+      footer={
+        <>
+          <span className="spacer" />
+          <button className="btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            className="btn primary"
+            disabled={count <= 0}
+            data-testid="fabricate-save"
+            onClick={save}
+          >
+            Made
+          </button>
+        </>
+      }
+    >
+      <div className="field">
+        <label htmlFor="fab-count">How many {type?.name ?? 'scaffolds'} did you make?</label>
+        <input
+          id="fab-count"
+          className="input"
+          type="number"
+          min={0}
+          autoFocus
+          value={count}
+          data-testid="fabricate-count"
+          onChange={(event) => setCount(Number(event.target.value) || 0)}
+        />
+        <span className="hint">
+          {node.name} needs {def.sampleCount}
+          {row?.shortfall !== undefined && row.shortfall !== def.sampleCount
+            ? `, and is ${row.shortfall} short`
+            : ''}
+          . They go on the shelf, and are picked for real when they go in.
+        </span>
+      </div>
+
+      <div className="field">
+        <label htmlFor="fab-on">Made on</label>
+        <input
+          id="fab-on"
+          className="input"
+          type="date"
+          value={on}
+          data-testid="fabricate-on"
+          onChange={(event) => setOn(event.target.value)}
+        />
+      </div>
+    </Modal>
   );
 }
 
@@ -1652,8 +1751,18 @@ function ExperimentsPanel({ id, collapsed, onToggle, cap, onExpand, expanded }: 
             */}
             {shown.map((node) => {
               const exp = node.experiment!;
+              /*
+                What it is made of, not merely how many: two cultures with
+                twelve samples each read identically until one of them says
+                "PCL 12%" and the other says "collagen braid".
+              */
+              const scaffolds = exp.scaffolds;
               const made = [
-                exp.def.sampleCount ? `${exp.def.sampleCount} scaffolds` : null,
+                exp.def.sampleCount
+                  ? scaffolds
+                    ? `${exp.def.sampleCount} × ${scaffolds.label}`
+                    : `${exp.def.sampleCount} scaffolds`
+                  : scaffolds?.label ?? null,
                 exp.def.cellsPerScaffold
                   ? `${exp.def.cellsPerScaffold.toLocaleString()} cells each`
                   : null,
