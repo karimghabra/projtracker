@@ -18,7 +18,7 @@ import { MISC_BRANCH } from '../../commands/views.ts';
 import { useApp } from '../state/store.ts';
 import { Calendar, DayPanel } from '../components/Calendar.tsx';
 import { UpcomingPanel } from '../components/UpcomingPanel.tsx';
-import { ConfirmDialog, Empty, InlineEdit, Modal, ProgressBar, QuickAdd } from '../components/ui.tsx';
+import { ConfirmDialog, Empty, InlineEdit, Modal, QuickAdd } from '../components/ui.tsx';
 import { PlanButton, PlanDialog } from '../components/PlanDialog.tsx';
 import { NewProjectWizard } from './NewProject.tsx';
 import {
@@ -1212,8 +1212,18 @@ function ProjectsPanel({
 function ProgressPanel({ empty }: { empty: boolean }) {
   const { app } = useApp();
   const rows = app.progress();
-
+  const view = app.contributions();
+  const days = new Map(view.rows.map((r) => [r.id, r]));
   if (empty) return null;
+
+  // Four steps, because the eye cannot read more from a square this size. The
+  // busiest day anywhere sets the top, so one heavy day does not flatten the
+  // rest to a single tone.
+  const level = (count: number) => {
+    if (count === 0) return 0;
+    if (view.busiest <= 1) return 4;
+    return Math.min(4, Math.ceil((count / view.busiest) * 4));
+  };
 
   return (
     <section className="panel" data-testid="progress-panel">
@@ -1222,23 +1232,35 @@ function ProgressPanel({ empty }: { empty: boolean }) {
         <h2>Recent progress</h2>
       </div>
       <div className="panel-body tight">
-        <div className="list">
+        {/*
+          One row per project, carrying both answers: how far along it is, and
+          which days it was touched.
+
+          These were two stacked lists — a fraction per project, then the same
+          projects again underneath as a grid — which is one job done twice and
+          was half the height of a column already two screens long. The grid was
+          asked for *instead of* the fractions ticking up, and arrived as well
+          as them.
+        */}
+        <div className="list" data-testid="contributions">
           {rows.map((row) => (
             <div className="row" key={row.id}>
               <div className="grow" style={{ minWidth: 0 }}>
                 <div className="row-title">{row.name}</div>
-                <div className="row-sub">
-                  {row.state === 'empty'
-                    ? 'nothing in it yet'
-                    : row.lastActivity
-                      ? `last touched ${formatRelativeDay(row.lastActivity, app.today)}`
-                      : 'not started'}
-                </div>
+                <span className="contrib-days">
+                  {(days.get(row.id)?.days ?? []).map((day) => (
+                    <span
+                      key={day.date}
+                      className={`contrib-cell l${level(day.count)}`}
+                      title={`${day.date}: ${day.count === 0 ? 'nothing recorded' : `${day.count} thing${day.count === 1 ? '' : 's'}`}`}
+                    />
+                  ))}
+                </span>
               </div>
               {row.total > 0 && (
-                <div style={{ width: 110 }}>
-                  <ProgressBar done={row.done} total={row.total} />
-                </div>
+                <span className="faint mono nowrap" title={`${row.done} of ${row.total} done`}>
+                  {row.done}/{row.total}
+                </span>
               )}
               <span
                 className={
@@ -1256,63 +1278,11 @@ function ProgressPanel({ empty }: { empty: boolean }) {
             </div>
           ))}
         </div>
-
-        <hr className="sep" />
-        <Contributions />
+        <div className="contrib-foot faint">
+          {view.from} to {view.to} · completions, starts and notes, on the day they happened
+        </div>
       </div>
     </section>
-  );
-}
-
-/**
- * Where the work has actually been going: days across, projects down.
- *
- * A fraction says where a project stands. This says whether it has been touched
- * this month — which project is alive, which has gone quiet, and when anything
- * last happened on it.
- *
- * Every cell is a real timestamp. A completion back-filled to a quarter has no
- * day and is drawn on none, so the picture starts thin and fills in from here;
- * that is the honest version, and the alternative would have painted a hundred
- * completions onto the afternoon a workbook was imported.
- */
-function Contributions() {
-  const { app } = useApp();
-  const view = app.contributions();
-  if (view.rows.length === 0) return null;
-
-  // Four steps, because the eye cannot read more from a square this size. The
-  // busiest day anywhere sets the top so one heavy day does not flatten
-  // everything else to the same shade.
-  const level = (count: number) => {
-    if (count === 0) return 0;
-    if (view.busiest <= 1) return 4;
-    return Math.min(4, Math.ceil((count / view.busiest) * 4));
-  };
-
-  return (
-    <div className="contrib" data-testid="contributions">
-      {view.rows.map((row) => (
-        <div className="contrib-row" key={row.id}>
-          <span className="contrib-name" title={row.name}>
-            {row.name}
-          </span>
-          <span className="contrib-days">
-            {row.days.map((day) => (
-              <span
-                key={day.date}
-                className={`contrib-cell l${level(day.count)}`}
-                title={`${day.date}: ${day.count === 0 ? 'nothing recorded' : `${day.count} thing${day.count === 1 ? '' : 's'}`}`}
-                data-testid={day.count > 0 ? `contrib-${row.id}-${day.date}` : undefined}
-              />
-            ))}
-          </span>
-        </div>
-      ))}
-      <div className="contrib-foot faint">
-        {view.from} to {view.to} · completions, starts and notes, on the day they happened
-      </div>
-    </div>
   );
 }
 
