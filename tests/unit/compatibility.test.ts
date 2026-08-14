@@ -236,7 +236,15 @@ describe('a vault written by 1.3.2', () => {
     expect(state.scaffoldTypes).toHaveLength(1);
     expect(state.batches).toHaveLength(1);
     expect(state.runs).toHaveLength(1);
-    expect(state.nextId).toBe(14);
+    /*
+      21, not the 14 the file says. This vault contains a note with id `j20`
+      and a counter claiming the next id is 14 — a counter behind its own
+      contents, which is the condition that makes the next `add` overwrite an
+      existing record instead of creating one. `deserialize` moves the counter
+      past everything it can see, so a vault in that state repairs itself on
+      load rather than deleting a project on the next click.
+    */
+    expect(state.nextId).toBe(21);
   });
 
   it('keeps every field on a node', () => {
@@ -362,6 +370,21 @@ describe('a vault written by 1.3.2', () => {
     const expected = canonicalFixture();
     expect(rewritten.list('')).toEqual(Object.keys(expected));
     for (const [path, text] of Object.entries(expected)) {
+      /*
+        One number in one file is allowed to move, and only upwards: this
+        vault's id counter sits behind the ids already in it (`nextId: 14`
+        against a note called `j20`), and loading repairs that. Everything
+        else — every node, every journal entry, every inventory record — must
+        still be byte-for-byte what was frozen, which is what stops a
+        serializer change from quietly rewriting every file in a live vault.
+      */
+      if (path === 'meta.pt') {
+        expect(rewritten.read(path)!.replace(/nextId: \d+/, 'nextId: N'), path).toBe(
+          text.replace(/nextId: \d+/, 'nextId: N'),
+        );
+        expect(rewritten.read(path), path).toContain('nextId: 21');
+        continue;
+      }
       expect(rewritten.read(path), path).toBe(text);
     }
   });
@@ -439,8 +462,10 @@ describe('a vault written by 1.3.2', () => {
     const app = new App(vault, CLOCK);
     const created = app.addNode('n3', 'Fresh', { seq: 9 });
 
-    // nextId was 14; the new node takes it and the counter moves on.
-    expect(created.id).toBe('n14');
+    // The file said 14, which is behind the `j20` already in the vault; the
+    // repaired counter hands out the first id nothing is using.
+    expect(created.id).toBe('n21');
+    expect(app.state.nodes['n1']).toBeDefined();
     expect(app.state.deps[0]!.from).toBe('n3');
   });
 });

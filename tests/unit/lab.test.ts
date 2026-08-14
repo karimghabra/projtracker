@@ -435,7 +435,7 @@ describe('a recipe written as seven tasks, made into one', () => {
   it('refuses a run that is entirely finished', () => {
     const { h, tasks } = attempt();
     for (const id of tasks) h.app.complete(id);
-    expectThrows(() => h.app.combineTasks(tasks), /finished/i);
+    expect(expectThrows(() => h.app.combineTasks(tasks)).message).toMatch(/finished/i);
     // ...and nothing moved.
     expect(h.app.tree()[0]!.children[0]!.children[0]!.children).toHaveLength(4);
   });
@@ -453,13 +453,13 @@ describe('a recipe written as seven tasks, made into one', () => {
   it('refuses tasks from different goals', () => {
     const { h, tasks } = attempt();
     const loose = h.app.poolQuickAdd('Something unfiled').id;
-    expectThrows(() => h.app.combineTasks([tasks[0]!, loose]), /same place/i);
+    expect(expectThrows(() => h.app.combineTasks([tasks[0]!, loose])).message).toMatch(/same place/i);
   });
 
   it('refuses to swallow a culture', () => {
     const { h, tasks } = attempt();
     const culture = h.app.experimentQuickAdd('Cell infiltration').id;
-    expectThrows(() => h.app.combineTasks([tasks[0]!, culture]), /only tasks/i);
+    expect(expectThrows(() => h.app.combineTasks([tasks[0]!, culture])).message).toMatch(/only tasks/i);
   });
 
   it('keeps the notes that were on them, under the names they belonged to', () => {

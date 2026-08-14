@@ -54,6 +54,8 @@ usage: pt [--vault DIR] [--json] <command> [args]
     wait <ref> <reason> [--until DATE]
     arrived <ref>
     rm <ref>
+    combine <ref>... [--name X]
+                              several tasks into one, their names its steps
 
   dependencies
     link <from-ref> <to-ref>  make the second wait for the first
@@ -393,6 +395,19 @@ async function run(
       return say(app.reopen(ref(rest[0]))), 0;
     case 'rm':
       return say(app.deleteNode(ref(rest[0]))), 0;
+
+    /*
+      Several tasks that were always one job, made into one — a bench recipe
+      written down as six rows becomes one task with six steps.
+
+      Here rather than in the app: it is vault surgery, done once to a goal
+      that was written the long way, not something to offer beside "start" on
+      every row for the rest of time.
+    */
+    case 'combine': {
+      const named = typeof flags['name'] === 'string' ? flags['name'] : undefined;
+      return say(app.combineTasks(rest.map((token) => ref(token)), named)), 0;
+    }
 
     case 'plan': {
       const date = rest[1] === 'none' ? null : rest[1] ?? null;

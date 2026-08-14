@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { App } from '@commands/app.ts';
+import { fixedClock } from '@core/dates.ts';
 import { Store, loadState, saveState } from '@store/store.ts';
 import { MemoryVault } from '@store/vault.ts';
 import { serializeAll } from '@store/serialize.ts';
@@ -124,6 +126,101 @@ describe('vault round trip', () => {
 
     expect(h.vault.list('journal/')).toEqual(['journal/2026-07.pt', 'journal/2026-08.pt']);
     expect(loadState(h.vault).notes).toHaveLength(2);
+  });
+});
+
+/**
+ * The id counter, which is the one number the whole vault leans on.
+ *
+ * Ids are handed out from a counter in `meta.pt`, and `draft.nodes[id] = node`
+ * is an assignment: an id that is already in use does not collide loudly, it
+ * replaces. A vault whose counter has fallen behind its contents — a workbook
+ * import, a restored backup, a hand-edited file — will therefore delete a
+ * project the next time somebody adds a task, and say "Added task".
+ *
+ * This was found in a real vault: 372 nodes, ids up to n379, `nextId: 1`.
+ * Adding one task took its first project and everything under it.
+ */
+describe('a vault whose id counter has fallen behind', () => {
+  /** A vault with three nodes and a counter that says the next id is n1. */
+  const behind = () => {
+    const vault = new MemoryVault();
+    vault.write('meta.pt', ['meta vault', '  version: 1', '  nextId: 1', ''].join('\n'));
+    vault.write(
+      'projects/study.pt',
+      [
+        'project study',
+        '  id: n1',
+        '  name: A study',
+        '  seq: 1',
+        '  status: active',
+        '  createdAt: 2026-08-01T09:00',
+        '  milestone stage',
+        '    id: n2',
+        '    name: A stage',
+        '    seq: 1',
+        '    status: active',
+        '    createdAt: 2026-08-01T09:00',
+        '    goal work',
+        '      id: n7',
+        '      name: Some work',
+        '      seq: 1',
+        '      status: active',
+        '      createdAt: 2026-08-01T09:00',
+        '',
+      ].join('\n'),
+    );
+    return vault;
+  };
+
+  it('starts the counter past everything in the vault', () => {
+    expect(loadState(behind()).nextId).toBe(8);
+  });
+
+  it('adds a node without deleting one', () => {
+    const vault = behind();
+    const app = new App(vault, fixedClock('2026-08-13T09:00'));
+    expect(Object.keys(app.state.nodes)).toHaveLength(3);
+
+    const made = app.addNode('n7', 'A brand new task');
+
+    expect(made.id).not.toBe('n1');
+    expect(Object.keys(app.state.nodes)).toHaveLength(4);
+    expect(app.state.nodes['n1']).toMatchObject({ kind: 'project', name: 'A study' });
+  });
+
+  it('leaves a counter that is already ahead alone', () => {
+    // Ids are never reused, so a gap under the counter stays a gap.
+    const vault = behind();
+    vault.write('meta.pt', ['meta vault', '  version: 1', '  nextId: 40', ''].join('\n'));
+    expect(loadState(vault).nextId).toBe(40);
+  });
+
+  it('counts the number inside a step id too', () => {
+    const h = harness();
+    const b = sampleBoard(h);
+    h.app.addStep(b.draft, 'One');
+    const before = h.app.state.nextId;
+
+    // A vault reloaded from these bytes must not hand out an id that a step
+    // was built from.
+    expect(loadState(h.vault).nextId).toBeGreaterThanOrEqual(before);
+  });
+
+  it('refuses to hand out an id that is taken, even if asked to', () => {
+    // The second lock: `deserialize` should have moved the counter, and if
+    // something else ever sets it back, allocation still steps over what
+    // exists rather than through it.
+    const h = harness();
+    const b = sampleBoard(h);
+    // Straight at the state, which is the only way to get a counter this
+    // wrong past the repair on load.
+    (h.app.state as { nextId: number }).nextId = 1;
+
+    const made = h.app.addNode(b.cad, 'After the counter was wound back');
+    expect(h.app.state.nodes[made.id]).toMatchObject({ name: 'After the counter was wound back' });
+    expect(h.app.state.nodes['n1']).toBeDefined();
+    expect(made.id).not.toBe('n1');
   });
 });
 

@@ -11,7 +11,6 @@ import { childKindOf } from '../../core/model.ts';
 import type { NodeView, TreeNode } from '../../commands/views.ts';
 import { useApp } from '../state/store.ts';
 import { ConfirmDialog, Empty, HealthChip, InlineEdit, ProgressBar, StatusChip } from '../components/ui.tsx';
-import { CombineDialog } from '../components/CombineDialog.tsx';
 import { NodeDetail } from '../components/NodeDetail.tsx';
 import { PlanButton } from '../components/PlanDialog.tsx';
 import { NewProjectWizard } from './NewProject.tsx';
@@ -21,7 +20,6 @@ import {
   IconChevronDown,
   IconChevronRight,
   IconFlask,
-  IconMerge,
   IconPause,
   IconPlay,
   IconPlus,
@@ -261,14 +259,7 @@ function TreeRow({
   const [adding, setAdding] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmComplete, setConfirmComplete] = useState(false);
-  const [combining, setCombining] = useState(false);
   const childKind = childKindOf(node.kind);
-  /*
-    A goal whose tasks are a recipe — fabricate, soak, wrap, crosslink,
-    sterilise — is seven rows for one afternoon. Offered wherever there are
-    two or more tasks to fold together, and only there.
-  */
-  const combinable = node.children.filter((child) => child.kind === 'task');
 
   return (
     <>
@@ -377,17 +368,6 @@ function TreeRow({
           {(node.kind === 'task' || node.kind === 'experiment') && (
             <PlanButton nodeId={node.id} name={node.name} plannedFor={node.plannedFor} />
           )}
-          {node.kind === 'goal' && combinable.length > 1 && (
-            <button
-              className="btn ghost icon sm"
-              title="Combine these tasks into one"
-              aria-label={`Combine the tasks in ${node.name}`}
-              data-testid={`combine-${node.id}`}
-              onClick={() => setCombining(true)}
-            >
-              <IconMerge size={13} />
-            </button>
-          )}
           {childKind && (
             <button
               className="btn ghost icon sm"
@@ -431,10 +411,6 @@ function TreeRow({
           bulk={bulk}
         />
       ))}
-
-      {combining && (
-        <CombineDialog goal={node} tasks={combinable} onClose={() => setCombining(false)} />
-      )}
 
       {confirmDelete && (
         <ConfirmDialog

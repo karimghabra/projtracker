@@ -661,7 +661,52 @@ export function deserialize(files: VaultFiles): State {
   }
 
   dropRoutineMediaStages(state);
+  repairIdCounter(state);
   return state;
+}
+
+/**
+ * Make sure the id counter is past everything the vault already contains.
+ *
+ * Ids are handed out from a counter kept in `meta.pt`, and the whole system
+ * rests on that counter being ahead of every id in use: `draft.nodes[id] =
+ * node` is an assignment, so an id that is already taken does not collide
+ * loudly — it silently replaces whatever was there, and a project with a
+ * hundred things under it stops existing.
+ *
+ * A vault can arrive with a counter behind its contents: a workbook import
+ * builds records with ids of its own, a restored backup brings back records
+ * without the counter that produced them, and a hand-edited meta file is a
+ * text file like any other. Rather than trust it, this reads the highest
+ * number any id was built from and starts after it. It runs on load, so a
+ * vault repairs itself the first time it is opened and stays repaired the
+ * first time it is saved.
+ *
+ * Only ever forwards: a counter that is already ahead is left alone, which is
+ * what keeps this from renumbering anything or changing a file that was
+ * already correct.
+ */
+function repairIdCounter(state: State): void {
+  let highest = 0;
+  const look = (id: string | undefined) => {
+    if (!id) return;
+    // `s3-s41` is a step id built from allocation 41; both halves count.
+    for (const match of id.matchAll(/[a-z]+(\d+)/gi)) {
+      highest = Math.max(highest, Number(match[1]));
+    }
+  };
+
+  for (const id of Object.keys(state.nodes)) look(id);
+  for (const node of Object.values(state.nodes)) for (const step of node.steps) look(step.id);
+  for (const dep of state.deps) look(dep.id);
+  for (const reminder of state.reminders) look(reminder.id);
+  for (const note of state.notes) look(note.id);
+  for (const type of state.scaffoldTypes) look(type.id);
+  for (const batch of state.batches) look(batch.id);
+  for (const protocol of state.protocols) look(protocol.id);
+  for (const run of state.runs) look(run.id);
+
+  state.nextId = Math.max(state.nextId, highest + 1);
 }
 
 function blockToReminder(b: Block): Reminder {

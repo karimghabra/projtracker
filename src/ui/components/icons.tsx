@@ -175,15 +175,6 @@ export const IconDrag = svg(
     <circle cx="15" cy="18" r="1.3" fill="currentColor" />
   </>,
 );
-/** Several rows becoming one. */
-export const IconMerge = svg(
-  <>
-    <path d="M5 5h5l4 7 5 0" />
-    <path d="M5 19h5l2-3.5" />
-    <path d="m16.5 9 2.5 3-2.5 3" />
-  </>,
-);
-
 /** The rest of the verbs, for a row that cannot hold them all. */
 export const IconMore = svg(
   <>
