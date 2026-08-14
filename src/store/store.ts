@@ -30,18 +30,51 @@ export function loadState(vault: Vault): State {
   });
 }
 
+/** Thrown instead of overwriting work somebody else wrote. */
+export class VaultChangedError extends Error {
+  readonly code = 'conflict';
+  constructor(readonly path: string) {
+    super(
+      `The vault changed on disk since it was opened (${path}). ` +
+        'Something else — another window, the CLI, a sync — has written to it. ' +
+        'Reopen the vault to see what is there now; saving over it would lose that work.',
+    );
+    this.name = 'VaultChangedError';
+  }
+}
+
 /**
  * Write the state out, removing files that no longer have a source. Files whose
  * content is unchanged are not rewritten, so a no-op save touches no mtimes and
  * a sync tool sees nothing move.
+ *
+ * `known` is what the caller believes is on disk — the bytes it last read or
+ * wrote. Given it, every file about to be written or removed is checked first,
+ * and a save that would overwrite somebody else's work throws instead.
+ *
+ * The vault is a directory of text files precisely so that the app, the CLI and
+ * a sync tool can all point at one. That design means a long-running window
+ * holds a state that can go stale under it, and saving then does not merge or
+ * fail — it silently replaces whatever arrived. This is where that stops.
  */
-export function saveState(vault: Vault, state: State): { written: string[]; removed: string[] } {
+export function saveState(
+  vault: Vault,
+  state: State,
+  known?: ReadonlyMap<string, string>,
+): { written: string[]; removed: string[]; onDisk: Map<string, string> } {
   const target = serializeAll(state);
   const written: string[] = [];
   const removed: string[] = [];
 
+  const existing = new Map<string, string>();
+  for (const path of new Set([...target.keys(), ...vault.list('projects/'), ...vault.list('journal/')])) {
+    const text = vault.read(path);
+    if (text !== null) existing.set(path, text);
+    if (known && (text ?? undefined) !== known.get(path)) throw new VaultChangedError(path);
+  }
+
   for (const [path, text] of target) {
-    if (vault.read(path) !== text) {
+    if (existing.get(path) !== text) {
       vault.write(path, text);
       written.push(path);
     }
@@ -56,7 +89,17 @@ export function saveState(vault: Vault, state: State): { written: string[]; remo
     }
   }
 
-  return { written, removed };
+  return { written, removed, onDisk: new Map(target) };
+}
+
+/** What is on disk now, for a caller that is about to start trusting it. */
+export function readOnDisk(vault: Vault): Map<string, string> {
+  const seen = new Map<string, string>();
+  for (const path of ['meta.pt', 'deps.pt', 'planner.pt', 'inventory.pt', ...vault.list('projects/'), ...vault.list('journal/')]) {
+    const text = vault.read(path);
+    if (text !== null) seen.set(path, text);
+  }
+  return seen;
 }
 
 /**
@@ -105,6 +148,21 @@ export class Store {
   ) {
     this.current = initial ?? loadState(vault);
     this.index = this.readIndex();
+    this.onDisk = readOnDisk(vault);
+  }
+
+  /**
+   * The bytes this store believes are on disk: what it read when it opened, and
+   * what it has written since. Anything else there was written by somebody
+   * else, and `persist` refuses rather than replacing it.
+   */
+  private onDisk: Map<string, string>;
+
+  /** Start trusting the vault as it is now — after a reload, or a restore. */
+  reload(): void {
+    this.current = loadState(this.vault);
+    this.index = this.readIndex();
+    this.onDisk = readOnDisk(this.vault);
   }
 
   private readIndex(): HistoryIndex {
@@ -243,6 +301,9 @@ export class Store {
 
   /** Replace state without recording history. For loading and for tests. */
   reset(state: State, persist = false): void {
+    // A restore replaces what is there on purpose, so the vault as it stands is
+    // no longer something to protect.
+    this.onDisk = readOnDisk(this.vault);
     this.current = state;
     for (const entry of [...this.index.past, ...this.index.future]) this.vault.remove(entry.file);
     this.index = emptyIndex();
@@ -300,7 +361,7 @@ export class Store {
   }
 
   persist(): void {
-    saveState(this.vault, this.current);
+    this.onDisk = saveState(this.vault, this.current, this.onDisk).onDisk;
   }
 }
 

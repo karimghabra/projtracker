@@ -224,6 +224,86 @@ describe('a vault whose id counter has fallen behind', () => {
   });
 });
 
+/**
+ * Two writers on one vault.
+ *
+ * The vault is a directory of text files precisely so the app, the CLI and a
+ * sync tool can all point at one — the CLI's own header says neither needs to
+ * know the other exists. What that costs is a long-running window holding a
+ * state that goes stale under it, and a save that then does not merge and does
+ * not fail: it replaces whatever arrived, silently.
+ *
+ * Found the hard way. A vault was compacted from the CLI while the desktop app
+ * sat open on the same directory; the app wrote once afterwards and put the
+ * whole board back, leaving a vault that looked as though the work had never
+ * happened and an undo that appeared to lie about it.
+ */
+describe('a vault two things are writing to', () => {
+  const boardWith = (vault: MemoryVault) => {
+    const app = new App(vault, fixedClock('2026-08-14T09:00'));
+    return app;
+  };
+
+  it('refuses to write over work that arrived while it was open', () => {
+    const vault = new MemoryVault();
+    const first = boardWith(vault);
+    first.addProject('Tendon study');
+
+    // A second window, or the CLI: opens the same vault, does something.
+    const second = boardWith(vault);
+    const added = second.addProject('Something else entirely');
+
+    // The first one has never re-read the vault. It must not simply win.
+    expect(() => first.addProject('A third thing')).toThrow(/changed on disk/i);
+    expect(loadState(vault).nodes[added.id]).toBeDefined();
+  });
+
+  it('names the file that moved', () => {
+    const vault = new MemoryVault();
+    const first = boardWith(vault);
+    first.addProject('Tendon study');
+    boardWith(vault).addProject('Elsewhere');
+
+    let thrown: unknown;
+    try {
+      first.capture('a passing thought');
+    } catch (error) {
+      thrown = error;
+    }
+    expect((thrown as { code?: string }).code).toBe('conflict');
+    expect((thrown as { path?: string }).path).toBeTruthy();
+  });
+
+  it('carries on once it has looked again', () => {
+    const vault = new MemoryVault();
+    const first = boardWith(vault);
+    first.addProject('Tendon study');
+    boardWith(vault).addProject('Elsewhere');
+
+    expect(() => first.capture('blocked')).toThrow();
+    first.store.reload();
+
+    // Both are there, and the window that was stale can work again.
+    expect(Object.values(first.state.nodes).map((n) => n.name)).toEqual(
+      expect.arrayContaining(['Tendon study', 'Elsewhere']),
+    );
+    expect(() => first.capture('fine now')).not.toThrow();
+    expect(loadState(vault).notes).toHaveLength(1);
+  });
+
+  it('says nothing about a vault only it is writing to', () => {
+    // The guard must be invisible in the ordinary case, which is every case.
+    const vault = new MemoryVault();
+    const app = boardWith(vault);
+    const project = app.addProject('Tendon study').id;
+    for (let n = 0; n < 20; n++) app.addNode(project, `Milestone ${n}`, { kind: 'milestone' });
+    app.capture('a thought');
+    app.undo();
+    app.redo();
+    expect(Object.keys(app.state.nodes)).toHaveLength(21);
+  });
+});
+
 describe('undo reverts the whole image', () => {
   it('walks back and forward through a history', () => {
     const h = harness();
