@@ -355,6 +355,43 @@ describe('two machines that both moved', () => {
   });
 });
 
+/**
+ * A deletion made on one machine, against a file the other only tidied.
+ *
+ * Reported: a task deleted on one computer came back after syncing on the
+ * other. Deleting a task rarely deletes a file — it rewrites the project file
+ * with one fewer node — so the two sides do not differ by presence, they differ
+ * by content, and the tie-break is the local file's mtime against the remote
+ * commit's time.
+ *
+ * That is fine while a local write means somebody typed something. It is not
+ * fine when the app rewrites a file for its own reasons: opening a vault from
+ * an older build strips a retired field and repairs the id counter, which
+ * touches files nobody edited and makes this machine "newer" than a real change
+ * made elsewhere.
+ */
+describe('a deletion made elsewhere, against a local tidy-up', () => {
+  const WITH_TASK = ['project p', '  id: n1', '  name: Study', '  task t', '    id: n2', '    name: Doomed', ''].join('\n');
+  const WITHOUT_TASK = ['project p', '  id: n1', '  name: Study', ''].join('\n');
+  // The same file as WITH_TASK, minus a field a newer build no longer writes.
+  const TIDIED = WITH_TASK.replace('  id: n1\n', '  id: n1\n  legacy: 2\n');
+
+  it('loses the deletion when the local copy was merely rewritten', () => {
+    const plan = planSync({
+      base: files({ 'projects/p.pt': TIDIED }),
+      // This machine opened the vault; the upgrade rewrote the file.
+      mine: files({ 'projects/p.pt': WITH_TASK }),
+      // The other machine deleted the task and pushed.
+      theirs: files({ 'projects/p.pt': WITHOUT_TASK }),
+      mineAt: new Map([['projects/p.pt', '2026-08-15T10:00:00Z']]),
+      theirsAt: '2026-08-15T09:00:00Z',
+    });
+
+    // What the user saw: the task is still there.
+    expect(plan.merged.get('projects/p.pt')).toBe(WITHOUT_TASK);
+  });
+});
+
 describe('an edit against a deletion', () => {
   it('keeps the edit when they deleted and we wrote', () => {
     const plan = planSync({

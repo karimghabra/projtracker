@@ -61,12 +61,12 @@ export interface PanelSpec {
    */
   cap?: number;
   /**
-   * A height set on this panel is a floor, not a ceiling: it grows past it to
-   * keep everything on screen rather than scrolling inside itself.
+   * This panel is as tall as its contents, always. Width is yours; height is
+   * the day's.
    *
-   * For the day's list, which must show all of it. Shortening the card is then
-   * a way of saying "at least this tall", and a day with thirty things on it
-   * says so by being thirty things tall.
+   * For the day's list, which must show all of it — a scrollbar is a quieter
+   * way of hiding a task than a cap is, and a floor is a quieter way still:
+   * delete something and the card would sit there at its old size.
    */
   grows?: boolean;
 }
@@ -128,7 +128,7 @@ export function placeOf(layout: Layout, id: PanelId): { x: number; w: number } {
 
 export const heightOf = (layout: Layout, id: PanelId): number | undefined => layout.height[id];
 
-/** True when a set height is a floor rather than a fixed size. */
+/** True when the panel sizes itself, and no stored height applies to it. */
 export const growsPast = (id: PanelId): boolean => specOf(id).grows === true;
 
 /**
@@ -207,7 +207,9 @@ export function panelOrderIds(layout: Layout): PanelId[] {
 
 /** A deliberate height, or `null` to go back to being as tall as its contents. */
 export function setHeight(layout: Layout, id: PanelId, px: number | null): Layout {
-  if (!KNOWN.has(id)) return layout;
+  // A panel that sizes itself has no height to set; asking is not an error,
+  // it just does nothing.
+  if (!KNOWN.has(id) || growsPast(id)) return layout;
   const height = { ...layout.height };
   if (px === null) delete height[id];
   else height[id] = Math.max(MIN_HEIGHT, Math.round(px / ROW_STEP) * ROW_STEP);

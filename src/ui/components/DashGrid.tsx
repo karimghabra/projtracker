@@ -145,14 +145,14 @@ export function DashGrid({
   /**
    * How tall a card is: what it was given, or what it measured.
    *
-   * A panel that grows treats a given height as a floor — the day's list has to
-   * show all of it, so shortening that card says "at least this tall" rather
-   * than "hide the rest behind a scrollbar".
+   * A panel that grows is always what it measured — the day's list has to show
+   * all of it, and a height given to it would keep it at that size after
+   * something was ticked off or deleted.
    */
   const heightOfCard = (id: PanelId, given: number | null | undefined): number => {
     const measured = heights[id] ?? 0;
-    if (given === null || given === undefined) return measured;
-    return growsPast(id) ? Math.max(given, measured) : given;
+    if (growsPast(id) || given === null || given === undefined) return measured;
+    return given;
   };
 
   const toCards = (from: Layout): Card[] =>
@@ -273,7 +273,9 @@ export function DashGrid({
       a magic zone near the natural height — a card you shortened once should
       not silently grow again because the list inside it did.
     */
-    const asked = Math.max(MIN_HEIGHT, Math.round((bottom - held.fromTop) / ROW_STEP) * ROW_STEP);
+    const asked = growsPast(held.id)
+      ? null
+      : Math.max(MIN_HEIGHT, Math.round((bottom - held.fromTop) / ROW_STEP) * ROW_STEP);
     live.current.sizing = { ...held, w, h: asked };
     setSizing({ id: held.id, w, h: asked });
   };
@@ -334,7 +336,6 @@ export function DashGrid({
               data-fixed={fixed ? 'true' : undefined}
               style={{
                 width: columnWidth > 0 ? wide(card) : undefined,
-                minHeight: growsPast(panel.id) ? (given ?? undefined) : undefined,
                 /*
                   `left`/`top` rather than a transform, which would look the
                   same and quietly break every dialog: a transformed element is

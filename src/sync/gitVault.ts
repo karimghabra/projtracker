@@ -16,6 +16,8 @@
  * files and returns what should happen to them.
  */
 
+import { merge3 } from './merge3.ts';
+
 export type Files = Map<string, string>;
 
 /** What the sync needs a repository to do, and nothing more. */
@@ -82,6 +84,13 @@ export interface SyncPlan {
  * timestamp to compare — the file is simply not there — and of the two ways to
  * be wrong, resurrecting something you deleted is an annoyance while discarding
  * an afternoon's notes is not.
+ *
+ * Both sides editing one file is tried as a three-way merge first, because the
+ * file is the wrong unit for this vault: deleting a task rewrites a project
+ * file rather than removing one, so "we both touched this project" is the
+ * ordinary case and not a disagreement at all. Only where both sides changed
+ * the same lines does the newest-wins rule apply — and then the loser is still
+ * written down as a commit, so the rule costs a click rather than the work.
  */
 export function planSync(input: {
   base: Files;
@@ -133,7 +142,18 @@ export function planSync(input: {
       continue;
     }
 
-    // Both moved. An edit beats a deletion; otherwise the newer stamp wins.
+    // Both moved. Where both are still there, most of the time they moved in
+    // different places and there is nothing to choose between.
+    if (was !== undefined && ours !== undefined && yours !== undefined) {
+      const merged3 = merge3(was, ours, yours);
+      if (!merged3.conflict && merged3.text !== undefined) {
+        merged.set(path, merged3.text);
+        if (merged3.text !== ours) write.set(path, merged3.text);
+        continue;
+      }
+    }
+
+    // An edit beats a deletion; otherwise the newer stamp wins.
     const deletion = ours === undefined || yours === undefined;
     const winner: 'mine' | 'theirs' = deletion
       ? ours === undefined

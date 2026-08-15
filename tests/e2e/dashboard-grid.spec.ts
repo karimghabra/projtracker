@@ -197,15 +197,22 @@ test.describe('the day is never hidden by its own size', () => {
     expect(await body.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(false);
   });
 
-  test('a height given to it is a floor, so an empty day still keeps the room', async ({ h }) => {
+  test('cannot be given a height at all: it is as tall as the day', async ({ h }) => {
     const { page } = h;
     const natural = (await card(page, 'today')).height;
 
+    // Dragged taller and dragged shorter both leave it the size of its
+    // contents — a card stuck at yesterday's height is a card that hides what
+    // you delete and keeps room for what you finished.
     const handle = await corner(page, 'today');
     await dragTo(page, handle, { x: handle.x, y: handle.y + 200 });
+    expect((await card(page, 'today')).height).toBe(natural);
 
-    // Taller than it needs, which is what asking for a floor means.
-    await expect.poll(async () => (await card(page, 'today')).height).toBeGreaterThan(natural);
+    // The width is still yours.
+    const wide = await corner(page, 'today');
+    await dragTo(page, wide, { x: wide.x - 200, y: wide.y });
+    expect((await card(page, 'today')).w).toBeLessThan(7);
+    expect((await card(page, 'today')).height).toBe(natural);
   });
 });
 

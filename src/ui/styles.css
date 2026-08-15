@@ -1094,27 +1094,19 @@ svg text {
   text-decoration: line-through;
 }
 
+/*
+ * Names wrap. All of them.
+ *
+ * A clipped name is a tidy list of things you cannot read: "Fabricate 2x2
+ * matrix of derm/non derm + reinforced/ non reinf..." tells you nothing that
+ * "Fabricate 2x2 matrix of derm/non..." does not. The tidiness was worth
+ * something when a panel was half the screen and rows were short; it is worth
+ * nothing on a card a third that wide, which is where these panels now live.
+ */
 .row-title {
   flex: 1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/*
- * The pool wraps instead of clipping.
- *
- * Everywhere else a row is something you already know, so one line and an
- * ellipsis is a reasonable trade for a tidy list. The ready pool is the one
- * place you are choosing between things you have not looked at in a month, and
- * "Fabricate 2x2 matrix of derm/non derm + reinforced/ non reinf..." is not
- * something anybody can choose between.
- */
-[data-testid='ready-panel'] .row-title,
-[data-testid='ready-panel'] .row-title .inline-edit {
   white-space: normal;
-  overflow: visible;
   overflow-wrap: anywhere;
 }
 
@@ -1130,9 +1122,8 @@ svg text {
   font: inherit;
   color: inherit;
   width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 /* One line, clipped. Wrapped, a two-word project name made every row in a
