@@ -18,6 +18,7 @@ import {
   MIN_HEIGHT,
   MIN_SPAN,
   ROW_STEP,
+  growsPast,
   heightOf,
   moveCard,
   panelOrder,
@@ -141,12 +142,25 @@ export function DashGrid({
   let working = layout;
   if (sizing) working = moveCard(layout, sizing.id, { w: sizing.w });
 
+  /**
+   * How tall a card is: what it was given, or what it measured.
+   *
+   * A panel that grows treats a given height as a floor — the day's list has to
+   * show all of it, so shortening that card says "at least this tall" rather
+   * than "hide the rest behind a scrollbar".
+   */
+  const heightOfCard = (id: PanelId, given: number | null | undefined): number => {
+    const measured = heights[id] ?? 0;
+    if (given === null || given === undefined) return measured;
+    return growsPast(id) ? Math.max(given, measured) : given;
+  };
+
   const toCards = (from: Layout): Card[] =>
     panelOrder(from).map((panel) => {
       const spot = placeOf(from, panel.id);
       const set = heightOf(from, panel.id);
-      const measured = heights[panel.id] ?? 0;
-      const h = sizing?.id === panel.id && sizing.h !== null ? sizing.h : (set ?? measured);
+      const given = sizing?.id === panel.id ? sizing.h : set;
+      const h = heightOfCard(panel.id, given);
       return columns === 1
         ? { id: panel.id, x: 0, w: 1, h }
         : { id: panel.id, x: spot.x, w: spot.w, h };
@@ -300,7 +314,9 @@ export function DashGrid({
           const card = at.get(panel.id)!;
           const held = drag?.id === panel.id && drag.moved;
           const set = heightOf(working, panel.id);
-          const fixed = sizing?.id === panel.id ? sizing.h : set;
+          const given = sizing?.id === panel.id ? sizing.h : set;
+          // A growing card is never given a fixed height, so it cannot clip.
+          const fixed = growsPast(panel.id) ? undefined : given;
           /*
             Several panels draw nothing until there is something to draw — no
             experiments, no notes yet. Measured at nothing, they get no handles
@@ -318,6 +334,7 @@ export function DashGrid({
               data-fixed={fixed ? 'true' : undefined}
               style={{
                 width: columnWidth > 0 ? wide(card) : undefined,
+                minHeight: growsPast(panel.id) ? (given ?? undefined) : undefined,
                 /*
                   `left`/`top` rather than a transform, which would look the
                   same and quietly break every dialog: a transformed element is

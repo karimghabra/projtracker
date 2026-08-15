@@ -1,14 +1,17 @@
 /**
  * What is coming, and what slipped past.
  *
- * Three groups, in the order they matter: what is late, what you planned, and
- * what is waiting to fire. Overdue is listed plainly with the date — no alarm,
- * no red, no badge demanding attention. Deadlines are soft here by decision,
- * and a planner that shouts is one people stop opening.
+ * Two groups: what you planned for a day still ahead, and what is waiting to
+ * fire. No alarm, no red, no badge demanding attention — deadlines are soft
+ * here by decision, and a planner that shouts is one people stop opening.
+ *
+ * What is late is not here. A day chosen and missed is a debt, and debts go on
+ * the day's list, which knows how to say how old they are. Two places to look
+ * for work that is owed is one too many.
  */
 
 import { Fragment, useState, type ReactNode } from 'react';
-import { formatDayMonth, formatRelativeDay } from '../../core/dates.ts';
+import { formatRelativeDay } from '../../core/dates.ts';
 import { useApp } from '../state/store.ts';
 import { ReminderDialog } from './ReminderDialog.tsx';
 import { Empty } from './ui.tsx';
@@ -19,36 +22,19 @@ import type { Capped } from '../screens/Home.tsx';
 /**
  * One row, with the heading it belongs under.
  *
- * Flat rather than three lists, because the fold has to count rows across all
- * three: capping each group separately would show five late things and five
- * reminders and call that a cap of five.
+ * Flat rather than one list per group, because the fold has to count rows
+ * across both: capping each group separately would show five planned things
+ * and five reminders and call that a cap of five.
  */
 type Entry = { key: string; group: string; row: ReactNode };
 
 export function UpcomingPanel({ id, collapsed, onToggle, cap, onExpand, expanded }: Capped) {
   const { app, run } = useApp();
   const [adding, setAdding] = useState(false);
-  const { reminders, planned, late } = app.upcoming();
-  const nothing = reminders.length === 0 && planned.length === 0 && late.length === 0;
+  const { reminders, planned } = app.upcoming();
+  const nothing = reminders.length === 0 && planned.length === 0;
 
   const entries: Entry[] = [
-    ...late.map((node) => ({
-      key: `late-${node.id}`,
-      group: 'Slipped past',
-      row: (
-        <div className="row" data-testid={`late-${node.id}`}>
-          <span className="chip warn nowrap">{formatDayMonth(node.plannedFor!, app.today)}</span>
-          <span className="grow row-title">{node.name}</span>
-          <button
-            className="btn sm"
-            onClick={() => run((a) => a.planFor(node.id, app.today))}
-            aria-label={`Move ${node.name} to today`}
-          >
-            Today
-          </button>
-        </div>
-      ),
-    })),
     ...planned.map((node) => ({
       key: `planned-${node.id}`,
       group: 'Planned',

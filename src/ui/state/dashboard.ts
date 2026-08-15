@@ -60,6 +60,15 @@ export interface PanelSpec {
    * and a capped day list would be exactly that.
    */
   cap?: number;
+  /**
+   * A height set on this panel is a floor, not a ceiling: it grows past it to
+   * keep everything on screen rather than scrolling inside itself.
+   *
+   * For the day's list, which must show all of it. Shortening the card is then
+   * a way of saying "at least this tall", and a day with thirty things on it
+   * says so by being thirty things tall.
+   */
+  grows?: boolean;
 }
 
 /**
@@ -70,7 +79,7 @@ export interface PanelSpec {
  * with it.
  */
 export const PANELS: readonly PanelSpec[] = [
-  { id: 'today', title: 'Today', x: 0, w: 7, required: true },
+  { id: 'today', title: 'Today', x: 0, w: 7, required: true, grows: true },
   { id: 'calendar', title: 'Calendar', x: 7, w: 5 },
   { id: 'in-progress', title: 'In progress', x: 0, w: 7, cap: 6 },
   { id: 'upcoming', title: 'Coming up', x: 7, w: 5, cap: 5 },
@@ -118,6 +127,9 @@ export function placeOf(layout: Layout, id: PanelId): { x: number; w: number } {
 }
 
 export const heightOf = (layout: Layout, id: PanelId): number | undefined => layout.height[id];
+
+/** True when a set height is a floor rather than a fixed size. */
+export const growsPast = (id: PanelId): boolean => specOf(id).grows === true;
 
 /**
  * The panels to draw, in the order they pack.

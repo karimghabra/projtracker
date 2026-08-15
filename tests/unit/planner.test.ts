@@ -251,11 +251,18 @@ describe('planning for a specific day', () => {
     expect(h.app.node(id).plannedFor).toBe('2026-08-05');
   });
 
-  it('lists a planned day that has passed as overdue, without alarm', () => {
+  it('rolls a planned day that has passed onto the day list, saying how late', () => {
+    // It used to sit in a panel of its own with a button to move it to today.
+    // A day chosen and missed is the same debt as a list not finished.
     const h = harness('2026-07-30T09:00');
     const b = sampleBoard(h);
     h.app.planFor(b.draft, '2026-07-28');
-    expect(h.app.upcoming().late.map((n) => n.name)).toEqual(['Draft geometry']);
+
+    const item = h.app.todayList().items.find((i) => i.title === 'Draft geometry')!;
+    expect(item.source).toBe('rolled-over');
+    expect(item.rolledFrom).toBe('2026-07-28');
+    expect(item.ageDays).toBe(2);
+    expect(h.app.upcoming().planned.map((n) => n.name)).not.toContain('Draft geometry');
   });
 
   it('clears a planned date', () => {

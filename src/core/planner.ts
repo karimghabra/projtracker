@@ -6,7 +6,8 @@
  *   1. what you explicitly put on today
  *   2. what you planned for today on some earlier day
  *   3. reminders that came due
- *   4. what you left unfinished yesterday, rolled forward
+ *   4. what you left unfinished yesterday, rolled forward — whether it was on
+ *      a list or merely planned for that day
  *   5. anything you have started and not finished
  *
  * The last one is not dated at all, which is the point: work in flight is
@@ -195,6 +196,33 @@ export function todayItems(state: State, index: GraphIndex, date: DateOnly): Tod
       node,
       rolledFrom: entry.date,
       ageDays: dayNumber(date) - dayNumber(entry.date),
+      done: false,
+    });
+  }
+
+  /*
+    A day chosen and then missed is the same debt as a list not finished, so it
+    rolls the same way: onto the next day's list, saying how late it is. It used
+    to sit in a panel of its own called "slipped past", with a button to move it
+    to today — which is a second place to look and a gesture for something the
+    list already knows how to say.
+  */
+  for (const node of Object.values(state.nodes)) {
+    if (!node.plannedFor || dayNumber(node.plannedFor) >= dayNumber(date)) continue;
+    const key = `node:${node.id}`;
+    if (seen.has(key) || settled.has(node.id)) continue;
+    if (node.status === 'dropped' || isDone(index, node.id)) continue;
+    if (derivedStatus(index, node.id, date) === 'done') continue;
+    seen.add(key);
+    items.push({
+      key,
+      kind: 'task',
+      title: node.name,
+      order: order++,
+      source: 'rolled-over',
+      node,
+      rolledFrom: node.plannedFor,
+      ageDays: dayNumber(date) - dayNumber(node.plannedFor),
       done: false,
     });
   }

@@ -50,7 +50,7 @@ import {
 } from '../core/experiments.ts';
 import { isRunComplete, scheduleRun } from '../core/protocols.ts';
 import { describeQuantity, quantityProblem, roundQuantity } from '../core/inventory.ts';
-import { overdue, plannedAhead, upcomingReminders } from '../core/planner.ts';
+import { plannedAhead, upcomingReminders } from '../core/planner.ts';
 import { parsePeriod } from '../core/periods.ts';
 import type { RestoreReport, VaultFiles } from '../store/backup.ts';
 import { restoreVault, snapshotVault } from '../store/backup.ts';
@@ -369,13 +369,17 @@ export class App {
     return contributionsView(this.index, this.today, days);
   }
 
-  upcoming(days = 60): { reminders: ReturnType<typeof upcomingReminders>; planned: NodeView[]; late: NodeView[] } {
+  /**
+   * What is ahead. Not what is late — that is on the day's list now, where work
+   * that is owed belongs, saying how late it is rather than waiting in a second
+   * panel for somebody to press a button on it.
+   */
+  upcoming(days = 60): { reminders: ReturnType<typeof upcomingReminders>; planned: NodeView[] } {
     return {
       reminders: upcomingReminders(this.state, this.today, days),
       planned: plannedAhead(this.state, this.index, this.today, days).map((n) =>
         nodeView(this.index, n.id, this.today),
       ),
-      late: overdue(this.state, this.index, this.today).map((n) => nodeView(this.index, n.id, this.today)),
     };
   }
 

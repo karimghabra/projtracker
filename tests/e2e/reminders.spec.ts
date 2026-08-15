@@ -190,7 +190,7 @@ test.describe('Coming up', () => {
     await expect(h.page.getByTestId('upcoming-panel')).toContainText('Nothing scheduled ahead');
   });
 
-  test('separates what slipped, what is planned, and what is waiting', async ({ h }) => {
+  test('separates what is planned from what is waiting, and leaves the late to today', async ({ h }) => {
     const { page } = h;
     await createProject(page, {
       name: 'Bench',
@@ -210,15 +210,18 @@ test.describe('Coming up', () => {
     await page.getByTestId('save-reminder').click();
 
     const panel = page.getByTestId('upcoming-panel');
-    await expect(panel).toContainText('Slipped past');
-    await expect(panel).toContainText('Late thing');
     await expect(panel).toContainText('Planned');
     await expect(panel).toContainText('Future thing');
     await expect(panel).toContainText('Reminders waiting');
     await expect(panel).toContainText('A waiting reminder');
+
+    // A day chosen and missed is a debt, and debts are on the day's list.
+    await expect(panel).not.toContainText('Slipped past');
+    await expect(panel).not.toContainText('Late thing');
+    await expect(page.getByTestId('today-list')).toContainText('Late thing');
   });
 
-  test('pulls something that slipped onto today in one click', async ({ h }) => {
+  test('puts something that slipped onto today without being asked', async ({ h }) => {
     const { page } = h;
     await createProject(page, {
       name: 'Bench',
@@ -230,9 +233,12 @@ test.describe('Coming up', () => {
     await page.getByTestId('detail-planned').fill(await h.addDays(-2));
 
     await page.getByTestId('nav-home').click();
-    await page.getByRole('button', { name: 'Move Overdue task to today' }).click();
 
-    await expect(page.getByTestId('today-list')).toContainText('Overdue task');
+    // No button to press: it rolled forward the way an unfinished list does,
+    // and it says how late it is.
+    const today = page.getByTestId('today-list');
+    await expect(today).toContainText('Overdue task');
+    await expect(today).toContainText('carried 2d');
     await expect(page.getByTestId('upcoming-panel')).not.toContainText('Slipped past');
   });
 
@@ -248,7 +254,7 @@ test.describe('Coming up', () => {
 
     await page.getByTestId('nav-home').click();
     // Deadlines are soft by decision: a date and a word, no red, no siren.
-    await expect(page.getByTestId('upcoming-panel')).toContainText('Slipped past');
+    await expect(page.getByTestId('today-list')).toContainText('carried 5d');
     await expect(page.locator('.toast.error')).toHaveCount(0);
   });
 });

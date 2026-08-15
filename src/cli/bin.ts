@@ -270,10 +270,10 @@ async function run(
       const days = Number(flags['days'] ?? 60);
       const data = app.upcoming(days);
       if (json) return out(data), 0;
-      for (const late of data.late) out(`overdue  ${late.plannedFor}  ${late.name}`);
+      // What is late is on `today`, saying how late it is, rather than here.
       for (const planned of data.planned) out(`planned  ${planned.plannedFor}  ${planned.name}`);
       for (const reminder of data.reminders) out(`remind   ${reminder.date}  ${reminder.title}`);
-      if (!data.late.length && !data.planned.length && !data.reminders.length) out('Nothing coming up.');
+      if (!data.planned.length && !data.reminders.length) out('Nothing coming up.');
       return 0;
     }
 

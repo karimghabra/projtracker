@@ -177,6 +177,38 @@ test.describe('resizing a card', () => {
   });
 });
 
+test.describe('the day is never hidden by its own size', () => {
+  test('grows past a height it was given, rather than scrolling inside', async ({ h }) => {
+    const { page } = h;
+    for (let i = 0; i < 12; i++) {
+      await page.getByLabel('Add a task to today').fill(`Thing number ${i}`);
+      await page.getByRole('button', { name: 'Add', exact: true }).click();
+    }
+    const tall = (await card(page, 'today')).height;
+
+    // Drag it much shorter. Any other card would then scroll inside itself.
+    const handle = await corner(page, 'today');
+    await dragTo(page, handle, { x: handle.x, y: handle.y - 300 });
+
+    const after = await card(page, 'today');
+    expect(after.height).toBe(tall);
+    await expect(page.getByTestId('today-list').locator('.row:not(.more-row)')).toHaveCount(12);
+    const body = page.getByTestId('card-today').locator('.panel-body').first();
+    expect(await body.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(false);
+  });
+
+  test('a height given to it is a floor, so an empty day still keeps the room', async ({ h }) => {
+    const { page } = h;
+    const natural = (await card(page, 'today')).height;
+
+    const handle = await corner(page, 'today');
+    await dragTo(page, handle, { x: handle.x, y: handle.y + 200 });
+
+    // Taller than it needs, which is what asking for a floor means.
+    await expect.poll(async () => (await card(page, 'today')).height).toBeGreaterThan(natural);
+  });
+});
+
 test.describe('choosing what is on the dashboard', () => {
   test('hides a panel, and puts it back', async ({ h }) => {
     const { page } = h;

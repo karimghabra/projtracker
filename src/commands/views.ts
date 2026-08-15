@@ -1338,15 +1338,14 @@ export function contributionsView(
   index: GraphIndex,
   today: DateOnly,
   /*
-    Six weeks, not a quarter. The panel is half a screen wide, so ninety-one
-    columns came out at four pixels each with a two-pixel gap — a dotted line
-    rather than a grid, in which the one day that had anything on it could not
-    be picked out. Five weeks fits the column at a legible size without
-    overflowing it, which matters more than it sounds: the row scrolled, and the
-    cell that fell off the end was today's. A longer view belongs on a screen
-    with room for it.
+    Three weeks. Asked for, and the arithmetic agrees: a quarter came out at
+    ninety-one columns of four pixels — a dotted line rather than a grid, in
+    which the one day that had anything on it could not be picked out — and the
+    row scrolled, so the cell that fell off the end was today's. Twenty-one
+    columns are wide enough to read at a third of the screen, which is where
+    this panel now often sits. A longer view belongs on a screen with room.
   */
-  days = 35,
+  days = 21,
 ): ContributionsView {
   const state = index.state;
   const from = addDays(today, -(days - 1));
