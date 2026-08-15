@@ -946,6 +946,15 @@ function ReadyPanel({
     if (branch.total > 2 && branch.done / branch.total >= 0.75) {
       return { text: 'almost done', tone: 'ok' };
     }
+    /*
+      Stalled: it was moving and stopped. Quiet on purpose — this is the thing
+      you asked for a nudge about, and a red badge on six rows is a board that
+      shouts, which is a board people stop opening. The number is the nudge.
+    */
+    if (branch.momentum.trend === 'stalled' && branch.momentum.daysQuiet !== null) {
+      return { text: `quiet ${branch.momentum.daysQuiet}d`, tone: '' };
+    }
+    if (branch.momentum.trend === 'fading') return { text: 'slowing', tone: '' };
     if (!branch.begun && branch.total > 0) return { text: 'not started', tone: '' };
     return null;
   };
@@ -1693,6 +1702,11 @@ function ProgressPanel({ empty, id, collapsed, onToggle, cap, onExpand, expanded
                   {row.done}/{row.total}
                 </span>
               )}
+              {/*
+                What it is, and which way it is going. Two facts, not one: a
+                project can be active and slowing at the same time, and the
+                second is the one that gets forgotten.
+              */}
               <span
                 className={
                   row.state === 'complete'
@@ -1706,6 +1720,16 @@ function ProgressPanel({ empty, id, collapsed, onToggle, cap, onExpand, expanded
               >
                 {row.state}
               </span>
+              {row.state !== 'complete' && row.momentum.trend === 'stalled' && row.momentum.daysQuiet !== null && (
+                <span className="chip nowrap" title={`${row.momentum.previous} finished before it went quiet`}>
+                  quiet {row.momentum.daysQuiet}d
+                </span>
+              )}
+              {row.state !== 'complete' && row.momentum.trend === 'fading' && (
+                <span className="chip nowrap" title={`${row.momentum.recent} lately, ${row.momentum.previous} before that`}>
+                  slowing
+                </span>
+              )}
             </div>
           ))}
         <MoreRow id={id} more={more} onExpand={() => onExpand(id)} noun="more projects" />

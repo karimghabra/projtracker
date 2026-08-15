@@ -32,6 +32,8 @@ import type { GraphIndex } from '../core/graph.ts';
 import { blockersOf, completesDirectly, derivedStatus, hasBegun, inProgressLeaves, isAbandoned, isDone, leavesOf, progressOf, projectProgress, readyLeaves, rootProjects, transitiveReduction } from '../core/graph.ts';
 import type { ExperimentDef } from '../core/model.ts';
 import type { ExperimentAction, ScaffoldSupply, Stage } from '../core/experiments.ts';
+import type { Momentum } from '../core/momentum.ts';
+import { momentumOf } from '../core/momentum.ts';
 import {
   describeExperiment,
   endDateOf,
@@ -482,6 +484,12 @@ export interface ReadyBranch {
    * five-week culture should say so rather than "nothing ready".
    */
   culture?: string;
+  /**
+   * Which way it is going: what has been finished lately against what was
+   * finished before that. For the habit of making a burst of progress on
+   * something and then quietly forgetting it.
+   */
+  momentum: Momentum;
   children: ReadyBranch[];
   /** Present when this node is itself one of the ready leaves. */
   row?: ReadyRow;
@@ -536,6 +544,16 @@ export function readyTree(index: GraphIndex, today: DateOnly): ReadyBranch[] {
       one under it, because a goal usually holds exactly one and "day 9 of 35"
       is the answer to what that goal is doing.
     */
+    /*
+      Days things were finished on, at or below this. Only completions that name
+      a day: a task back-filled as "done in Q3" says nothing about which
+      fortnight anybody was working.
+    */
+    const finishedOn = (leaf ? [node] : leavesOf(index, node.id))
+      .map((n) => n.doneAt)
+      .filter((at): at is string => Boolean(at))
+      .map((at) => at.slice(0, 10));
+
     const own = node.experiment && node.kind === 'experiment' ? node : undefined;
     const running =
       own && experimentStatus(own.experiment!, today).state === 'running'
@@ -556,6 +574,7 @@ export function readyTree(index: GraphIndex, today: DateOnly): ReadyBranch[] {
       container: !leaf,
       done: finished,
       culture: running,
+      momentum: momentumOf(finishedOn, today),
       waitingOn: count === 0 && !empty && !running ? waiting : undefined,
       children,
       row,
@@ -591,6 +610,7 @@ export function readyTree(index: GraphIndex, today: DateOnly): ReadyBranch[] {
       count: loose.reduce((sum, branch) => sum + branch.count, 0),
       total: loose.reduce((sum, branch) => sum + branch.total, 0),
       done: loose.reduce((sum, branch) => sum + branch.done, 0),
+      momentum: momentumOf([], today),
       // Loose work has no shared history, so the bucket never claims to be
       // under way — the rows inside it each answer for themselves.
       begun: false,
@@ -1447,6 +1467,8 @@ export interface ProgressRow {
   total: number;
   lastActivity?: string;
   daysQuiet: number | null;
+  /** Which way it is going, on the same rule the pool uses. */
+  momentum: Momentum;
 }
 
 /**
@@ -1496,5 +1518,12 @@ export function progressView(index: GraphIndex, today: DateOnly): ProgressRow[] 
     total: row.total,
     lastActivity: row.lastActivity ? dateOf(row.lastActivity) : undefined,
     daysQuiet: row.daysQuiet,
+    momentum: momentumOf(
+      leavesOf(index, row.project.id)
+        .map((n) => n.doneAt)
+        .filter((at): at is string => Boolean(at))
+        .map((at) => at.slice(0, 10)),
+      today,
+    ),
   }));
 }

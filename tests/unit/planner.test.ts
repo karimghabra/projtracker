@@ -247,6 +247,32 @@ describe('the ready pool shows the whole level', () => {
     void loose;
   });
 
+  it('says a goal went quiet, and how long ago', () => {
+    // The habit this is for: a burst of progress, then silence, then
+    // forgetting. The pool row carries the answer without being asked.
+    const h = harness('2026-08-15T09:00');
+    const project = h.app.addProject('Fibrous composites').id;
+    const milestone = h.app.addNode(project, 'Rabbit meniscus').id;
+    const goal = h.app.addNode(milestone, 'Interstitial matrix').id;
+    for (const name of ['One', 'Two', 'Three']) h.app.addNode(goal, name);
+
+    // Three finished three weeks ago, nothing since.
+    h.clock.set('2026-07-25T09:00');
+    for (const leaf of h.app.readyTree()[0]!.children[0]!.children[0]!.children) {
+      h.app.complete(leaf.id);
+    }
+    h.clock.set('2026-08-15T09:00');
+
+    const branch = h.app
+      .readyTree()[0]!
+      .children[0]!.children.find((b) => b.id === goal)!;
+    expect(branch.momentum.trend).toBe('stalled');
+    expect(branch.momentum.daysQuiet).toBe(21);
+    // Three weeks ago is the window before this one, which is what makes it
+    // a stall rather than a goal nobody has started.
+    expect(branch.momentum.previous).toBe(3);
+  });
+
   it('drops what has been dropped', () => {
     const { h, second } = board();
     h.app.drop(second);
