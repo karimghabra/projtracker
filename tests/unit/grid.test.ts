@@ -77,6 +77,58 @@ describe('cards fall as far as they fit', () => {
   });
 });
 
+/**
+ * The complaint that made the packing dense: "there's lots of empty space if
+ * things don't line up in size, and I kind of don't like that".
+ */
+describe('a card rises into a hole rather than queueing below everything', () => {
+  it('fills the space beside a tall card, under a short one', () => {
+    const { placed, height } = place(
+      [
+        card('tall', 0, 6, 500),
+        card('short', 6, 6, 100),
+        card('wide', 0, 12, 100),
+        // Nothing is in the 400px under 'short'. This belongs there, not at
+        // the bottom of the board.
+        card('late', 6, 6, 100),
+      ],
+      12,
+      16,
+    );
+    expect(placed.find((c) => c.id === 'late')!.y).toBe(116);
+    expect(height).toBe(616);
+  });
+
+  it('will not squeeze a card into a hole it does not fit', () => {
+    const { placed } = place(
+      [card('tall', 0, 6, 500), card('short', 6, 6, 100), card('wide', 0, 12, 100), card('big', 6, 6, 400)],
+      12,
+      16,
+    );
+    // 384px of hole, 400px of card: it goes below the wide one, rather than
+    // overlapping — 616 is that card's bottom, and then a gap.
+    expect(placed.find((c) => c.id === 'big')!.y).toBe(632);
+  });
+
+  it('keeps a card in the column it was put in, whatever hole is going', () => {
+    // Rising is allowed; sliding sideways is not, or dragging would stop
+    // meaning anything.
+    const { placed } = place([card('tall', 0, 6, 500), card('other', 6, 6, 100)], 12, 16);
+    expect(placed.find((c) => c.id === 'other')!.x).toBe(6);
+  });
+
+  it('lets an earlier card take the hole first', () => {
+    // Order is priority: whoever is first in the list gets the space.
+    const { placed } = place(
+      [card('tall', 0, 6, 500), card('first', 6, 6, 100), card('second', 6, 6, 100)],
+      12,
+      16,
+    );
+    expect(placed.find((c) => c.id === 'first')!.y).toBe(0);
+    expect(placed.find((c) => c.id === 'second')!.y).toBe(116);
+  });
+});
+
 describe('where a dragged card would land', () => {
   const placed = place(
     [card('a', 0, 6, 200), card('b', 6, 6, 200), card('c', 0, 12, 200)],
@@ -95,6 +147,17 @@ describe('where a dragged card would land', () => {
 
   it('drops after a row once the pointer is below its middle', () => {
     expect(insertionIndex(placed, { col: 1, y: 190 }, 'c')).toBe(2);
+  });
+
+  it('does not count a card with nothing in it', () => {
+    // Empty panels are all at the top and none of them are drawn. Counting
+    // them sent every drop to the bottom of the order.
+    const withEmpties = place(
+      [card('nothing', 0, 6, 0), card('void', 6, 6, 0), card('real', 0, 6, 200)],
+      12,
+      16,
+    ).placed;
+    expect(insertionIndex(withEmpties, { col: 1, y: 10 }, 'real')).toBe(0);
   });
 
   it('does not count the card being dragged', () => {

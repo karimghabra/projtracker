@@ -34,6 +34,54 @@ const HEALTH_LABEL: Record<Health, string> = {
   off_track: 'Off track',
 };
 
+/**
+ * The name, which is written through on every keystroke and must still let you
+ * type a space.
+ *
+ * A name is stored trimmed — trailing whitespace in a task's name is a bug, not
+ * a preference — and this field is controlled by the stored value, so typing a
+ * space at the end wrote `"Braid "`, stored `"Braid"`, and rendered `"Braid"`
+ * back before the key had finished. The space bar simply did not work, which is
+ * exactly how it was reported.
+ *
+ * So what is typed lives here while it is being typed, and the store gets the
+ * trimmed version as before. Blur puts the two back in step.
+ */
+function NameField({ node }: { node: NodeView }) {
+  const { run } = useApp();
+  const [draft, setDraft] = useState(node.name);
+  const [typing, setTyping] = useState(false);
+
+  // Follow the node while the field is idle: selecting another row, or a
+  // rename made in the tree, should both show here.
+  useEffect(() => {
+    if (!typing) setDraft(node.name);
+  }, [node.id, node.name, typing]);
+
+  return (
+    <div className="field">
+      <label htmlFor="d-name">Name</label>
+      <input
+        id="d-name"
+        className="input"
+        value={typing ? draft : node.name}
+        data-testid="detail-name"
+        onFocus={() => setTyping(true)}
+        onBlur={() => setTyping(false)}
+        onChange={(event) => {
+          setDraft(event.target.value);
+          // An empty name is refused by the command layer, so do not ask: the
+          // field is allowed to be empty on the way to being something else.
+          if (event.target.value.trim()) {
+            run((a) => a.updateNode(node.id, { name: event.target.value }), { silent: true });
+          }
+        }}
+      />
+      <span className="hint">{node.path}</span>
+    </div>
+  );
+}
+
 export function NodeDetail({
   node,
   onClose,
@@ -58,17 +106,7 @@ export function NodeDetail({
       </div>
 
       <div className="detail-body">
-        <div className="field">
-          <label htmlFor="d-name">Name</label>
-          <input
-            id="d-name"
-            className="input"
-            value={node.name}
-            data-testid="detail-name"
-            onChange={(event) => run((a) => a.updateNode(node.id, { name: event.target.value }), { silent: true })}
-          />
-          <span className="hint">{node.path}</span>
-        </div>
+        <NameField node={node} />
 
         {isLeaf && (
           <div className="inline wrap">

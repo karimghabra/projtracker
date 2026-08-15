@@ -1,5 +1,33 @@
 import { createProject, expect, test } from './fixtures.ts';
 
+/**
+ * Renaming from the detail pane, which writes on every keystroke.
+ *
+ * A name is stored trimmed, and this field is controlled by the stored value —
+ * so a trailing space was written, trimmed and rendered back before the key had
+ * finished, and the space bar did not work.
+ */
+test.describe('typing a name in the detail pane', () => {
+  test('takes a space, at the end of a word like any other', async ({ h }) => {
+    const { page } = h;
+    await createProject(page, {
+      name: 'Tendon study',
+      milestones: [{ name: 'Fabrication', goals: [{ name: 'Braid' }] }],
+    });
+    await page.getByTestId('nav-projects').click();
+    await page.getByTestId('show-all').click();
+    await page.locator('.tree-row', { hasText: 'Braid' }).first().click();
+
+    const name = page.getByTestId('detail-name');
+    await name.click();
+    await name.press('End');
+    await page.keyboard.type(' with hydrogel');
+
+    await expect(name).toHaveValue('Braid with hydrogel');
+    await expect(page.locator('.tree-row', { hasText: 'Braid with hydrogel' })).toHaveCount(1);
+  });
+});
+
 test.describe('the project wizard', () => {
   test('walks project → milestones → goals → tasks', async ({ h }) => {
     const { page } = h;

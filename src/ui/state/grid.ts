@@ -42,34 +42,51 @@ export const clamp = (value: number, low: number, high: number) =>
   Math.min(high, Math.max(low, value));
 
 /**
- * Drop every card as far up as it will go.
+ * Drop every card as far up as it will go, into any hole it fits in.
  *
- * Cards are placed in order, each one landing on top of whatever is already in
- * the columns it spans. A card never overlaps another and never floats: gravity
- * is what fills the holes a free layout would otherwise leave.
+ * Cards are placed in order, each one rising to the highest position in its own
+ * columns where nothing is already sitting. Not merely onto the bottom of those
+ * columns: a short card beside a tall one leaves a hole under it, and the next
+ * card that fits belongs in that hole rather than below everything.
+ *
+ * Without the backfill a board is mostly gaps as soon as two cards differ in
+ * height, which is always. With it, the only empty space left is space nothing
+ * could fill.
+ *
+ * The order still decides who gets first choice, and the column is still the
+ * user's: a card rises, it never slides sideways. So dragging remains a thing
+ * you can predict, which a fully automatic layout is not.
  */
 export function place(cards: Card[], columns: number, gap: number): { placed: Placed[]; height: number } {
-  const bottoms = new Array<number>(Math.max(1, columns)).fill(0);
   const placed: Placed[] = [];
 
   for (const card of cards) {
     const w = clamp(Math.round(card.w), 1, columns);
     const x = clamp(Math.round(card.x), 0, columns - w);
-    let y = 0;
-    for (let at = x; at < x + w; at++) y = Math.max(y, bottoms[at]!);
-    placed.push({ ...card, x, w, y });
+
     /*
       A card with nothing in it takes no room. Several panels draw nothing at
       all on a board that has no experiments or no notes yet, and reserving a
       gap for each of them is how a new user's dashboard ends up as a column of
       holes with three real cards in it.
     */
-    if (card.h > 0) for (let at = x; at < x + w; at++) bottoms[at] = y + card.h + gap;
+    if (card.h <= 0) {
+      placed.push({ ...card, x, w, y: 0 });
+      continue;
+    }
+
+    const beside = placed.filter((other) => other.h > 0 && other.x < x + w && x < other.x + other.w);
+    // Every height something could rest on: the top, and the bottom of each
+    // card it might sit under.
+    const ledges = [0, ...beside.map((other) => other.y + other.h + gap)].sort((a, b) => a - b);
+    const clashes = (y: number) =>
+      beside.some((other) => y < other.y + other.h + gap && other.y < y + card.h + gap);
+
+    const y = ledges.find((ledge) => !clashes(ledge)) ?? 0;
+    placed.push({ ...card, x, w, y });
   }
 
-  // The trailing gap is not part of the grid; it is the space before whatever
-  // comes next.
-  const height = Math.max(0, Math.max(0, ...bottoms) - gap);
+  const height = Math.max(0, ...placed.filter((c) => c.h > 0).map((c) => c.y + c.h));
   return { placed, height };
 }
 
@@ -86,6 +103,10 @@ export function insertionIndex(placed: Placed[], point: Point, dragging?: string
   let index = 0;
   for (const card of placed) {
     if (card.id === dragging) continue;
+    // A card with nothing in it is not on the screen, so the pointer cannot be
+    // past it. They all sit at the top, and counting them put every drop five
+    // places further down the order than the pointer said.
+    if (card.h <= 0) continue;
     const middleY = card.y + card.h / 2;
     const middleX = card.x + card.w / 2;
     const beside = point.y >= card.y && point.y <= card.y + card.h;
