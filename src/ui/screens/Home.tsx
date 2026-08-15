@@ -510,6 +510,8 @@ function TodayRow({
             </span>
           )}
           {item.source === 'planned' && <span className="chip accent">planned</span>}
+          {/* Why it is here without anybody putting it here. */}
+          {item.source === 'in-progress' && <span className="chip info">in progress</span>}
           {!item.group && item.origin === 'protocol' && <span className="chip warn">protocol</span>}
           {!item.group && item.origin === 'experiment' && <span className="chip info">experiment</span>}
           {item.reminderTime && <span className="row-sub mono">{item.reminderTime}</span>}

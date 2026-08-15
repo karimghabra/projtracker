@@ -47,6 +47,89 @@ describe('the day list', () => {
   });
 });
 
+/**
+ * Work in flight is today's work.
+ *
+ * Starting something already says it is what you are doing. Having to say it
+ * again — start it, then also put it on the list — is how a started task ends
+ * up in a panel nobody scrolls to while the day's list claims to be empty.
+ */
+describe('anything started is on the day list', () => {
+  it('appears without being put there', () => {
+    const h = harness();
+    const b = sampleBoard(h);
+    expect(h.app.todayList().items).toEqual([]);
+
+    h.app.start(b.draft);
+    expect(todayTitles(h.app)).toEqual(['Draft geometry']);
+    expect(h.app.todayList().items[0]!.source).toBe('in-progress');
+  });
+
+  it('leaves once it is paused, and comes back when it is picked up again', () => {
+    const h = harness();
+    const b = sampleBoard(h);
+    h.app.start(b.draft);
+    h.app.pause(b.draft);
+    expect(todayTitles(h.app)).toEqual([]);
+
+    h.app.start(b.draft);
+    expect(todayTitles(h.app)).toEqual(['Draft geometry']);
+  });
+
+  it('is listed once, not twice, when it was also put on today', () => {
+    const h = harness();
+    const b = sampleBoard(h);
+    h.app.todayAdd(b.draft);
+    h.app.start(b.draft);
+
+    const items = h.app.todayList().items;
+    expect(items).toHaveLength(1);
+    // The list's own answer wins: how it got here is what the row should say.
+    expect(items[0]!.source).toBe('listed');
+  });
+
+  it('keeps saying how late something is, rather than losing that to the start', () => {
+    const h = harness('2026-08-10T09:00');
+    const b = sampleBoard(h);
+    h.app.todayAdd(b.draft);
+    h.clock.set('2026-08-14T09:00');
+    h.app.start(b.draft);
+
+    const item = h.app.todayList().items[0]!;
+    expect(item.source).toBe('rolled-over');
+    expect(item.ageDays).toBe(4);
+  });
+
+  it('respects "not today" for the rest of the day', () => {
+    // Starting something is not a way to make it un-dismissable.
+    const h = harness();
+    const b = sampleBoard(h);
+    h.app.start(b.draft);
+    h.app.todayRemove(`node:${b.draft}`);
+    expect(todayTitles(h.app)).toEqual([]);
+  });
+
+  it('goes when it is finished', () => {
+    const h = harness();
+    const b = sampleBoard(h);
+    h.app.start(b.draft);
+    h.app.complete(b.draft);
+    // Still on the list for the rest of the day, ticked — that is the rule for
+    // everything else, and it is not different here.
+    const items = h.app.todayList().items;
+    expect(items.every((i) => i.done)).toBe(true);
+  });
+
+  it('does not put a whole milestone on the list because something inside it started', () => {
+    const h = harness();
+    const b = sampleBoard(h);
+    h.app.start(b.draft);
+    const titles = todayTitles(h.app);
+    expect(titles).toEqual(['Draft geometry']);
+    expect(titles).not.toContain('Design');
+  });
+});
+
 describe('rollover', () => {
   it('carries an unfinished task forward, and says how long it has been carried', () => {
     const h = harness('2026-07-30T09:00');

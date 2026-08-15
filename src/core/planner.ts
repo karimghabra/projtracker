@@ -1,12 +1,19 @@
 /**
  * The day's list.
  *
- * Composed from four sources, in this order of precedence:
+ * Composed from five sources, in this order of precedence:
  *
  *   1. what you explicitly put on today
  *   2. what you planned for today on some earlier day
  *   3. reminders that came due
  *   4. what you left unfinished yesterday, rolled forward
+ *   5. anything you have started and not finished
+ *
+ * The last one is not dated at all, which is the point: work in flight is
+ * today's work whatever day it was picked up on. Starting something is already
+ * a statement that it is what you are doing, and having to say it twice — once
+ * by starting it, once by putting it on the list — is how a started task ends
+ * up sitting in a panel nobody scrolls to.
  *
  * Rollover is *derived at read*. An open entry from an earlier day simply reads
  * as today's; nothing rewrites history at midnight, so opening the app after a
@@ -23,9 +30,9 @@ import type { DateOnly } from './dates.ts';
 import { dayNumber } from './dates.ts';
 import type { Node, Reminder, State } from './model.ts';
 import type { GraphIndex } from './graph.ts';
-import { derivedStatus, isDone } from './graph.ts';
+import { derivedStatus, inProgressLeaves, isDone } from './graph.ts';
 
-export type TodaySource = 'listed' | 'planned' | 'reminder' | 'rolled-over';
+export type TodaySource = 'listed' | 'planned' | 'reminder' | 'rolled-over' | 'in-progress';
 
 /**
  * Whether this is a culture's schedule rather than a job somebody is taking on.
@@ -190,6 +197,22 @@ export function todayItems(state: State, index: GraphIndex, date: DateOnly): Tod
       ageDays: dayNumber(date) - dayNumber(entry.date),
       done: false,
     });
+  }
+
+  /*
+    And everything in flight, last so that a started task which is also on the
+    list keeps whatever the list said about it — how late it is, which day it
+    was planned for. Containers are excluded: a milestone is "in progress"
+    because something inside it is, and that something is already here.
+
+    `settled` still applies, so "not today" works on one of these exactly as it
+    does on anything else, and holds for the rest of the day.
+  */
+  for (const node of inProgressLeaves(index, date)) {
+    const key = `node:${node.id}`;
+    if (seen.has(key) || settled.has(node.id)) continue;
+    seen.add(key);
+    items.push({ key, kind: 'task', title: node.name, order: order++, source: 'in-progress', node, done: false });
   }
 
   return items;

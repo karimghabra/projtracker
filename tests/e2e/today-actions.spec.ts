@@ -1,4 +1,4 @@
-import { expect, test } from './fixtures.ts';
+import { createProject, expect, test } from './fixtures.ts';
 
 /**
  * What a row on Today can be made to do.
@@ -66,6 +66,58 @@ test.describe('getting something off the day', () => {
 
     await page.getByTestId('undo').click();
     await expect(page.getByTestId('today-panel')).toContainText('Deleted by accident');
+  });
+});
+
+/**
+ * Work in flight is today's work, without having to say so twice.
+ */
+test.describe('what is started is on the day', () => {
+  /** Start something from the tree, which is where work is picked up. */
+  async function startFromTree(page: import('@playwright/test').Page, name: string) {
+    await page.getByTestId('nav-projects').click();
+    await page.getByTestId('show-all').click();
+    await page.locator('.tree-row', { hasText: name }).first()
+      .getByRole('button', { name: `Start ${name}` }).click();
+    await page.getByTestId('nav-home').click();
+  }
+
+  test('a task started elsewhere appears on today by itself', async ({ h }) => {
+    const { page } = h;
+    await createProject(page, {
+      name: 'Fibrous composites',
+      milestones: [{ name: 'Annulus', goals: [{ name: 'Chitogel', tasks: ['Fabricate ELAC thread'] }] }],
+    });
+    await h.goto('home');
+    await expect(page.getByTestId('today-panel')).toContainText('Nothing on today yet');
+
+    await startFromTree(page, 'Fabricate ELAC thread');
+
+    const today = page.getByTestId('today-list');
+    await expect(today).toContainText('Fabricate ELAC thread');
+    await expect(today).toContainText('in progress');
+
+    // Paused, it is not what you are doing, so it goes.
+    await page.getByTestId('in-progress-panel').getByRole('button', { name: 'Pause' }).click();
+    await expect(page.getByTestId('today-panel')).not.toContainText('Fabricate ELAC thread');
+  });
+
+  test('taking it off the day still works, and does not pause it', async ({ h }) => {
+    const { page } = h;
+    await createProject(page, {
+      name: 'Fibrous composites',
+      milestones: [{ name: 'Annulus', goals: [{ name: 'Chitogel', tasks: ['Wrap around needle'] }] }],
+    });
+    await h.goto('home');
+    await startFromTree(page, 'Wrap around needle');
+    await expect(page.getByTestId('today-list')).toContainText('Wrap around needle');
+
+    await page.getByTestId('today-list')
+      .getByRole('button', { name: 'Remove Wrap around needle from today' }).click();
+    await expect(page.getByTestId('today-panel')).not.toContainText('Wrap around needle');
+
+    // Off the day's list, still started: those are different statements.
+    await expect(page.getByTestId('in-progress-panel')).toContainText('Wrap around needle');
   });
 });
 

@@ -263,7 +263,12 @@ export function InlineEdit({
     // this — selecting a row should not drop you into a text field.
     return (
       <button
-        className={className}
+        /*
+          The look lives in a class, not here: an inline style cannot be
+          overridden by a stylesheet, and the ready pool needs these names to
+          wrap rather than end in an ellipsis.
+        */
+        className={className ? `inline-edit ${className}` : 'inline-edit'}
         onDoubleClick={() => setEditing(true)}
         onKeyDown={(event) => {
           if (event.key === 'Enter' || event.key === 'F2') {
@@ -272,21 +277,7 @@ export function InlineEdit({
           }
         }}
         aria-label={ariaLabel ? `${ariaLabel}: ${value}. Press Enter to rename.` : undefined}
-        style={{
-          border: 0,
-          background: 'transparent',
-          padding: '2px 4px',
-          margin: '-2px -4px',
-          borderRadius: 4,
-          textAlign: 'left',
-          cursor: 'text',
-          font: 'inherit',
-          color: value ? 'inherit' : 'var(--text-faint)',
-          width: '100%',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-        }}
+        style={value ? undefined : { color: 'var(--text-faint)' }}
       >
         {value || placeholder || '—'}
       </button>

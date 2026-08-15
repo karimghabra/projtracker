@@ -1102,6 +1102,39 @@ svg text {
   white-space: nowrap;
 }
 
+/*
+ * The pool wraps instead of clipping.
+ *
+ * Everywhere else a row is something you already know, so one line and an
+ * ellipsis is a reasonable trade for a tidy list. The ready pool is the one
+ * place you are choosing between things you have not looked at in a month, and
+ * "Fabricate 2x2 matrix of derm/non derm + reinforced/ non reinf..." is not
+ * something anybody can choose between.
+ */
+[data-testid='ready-panel'] .row-title,
+[data-testid='ready-panel'] .row-title .inline-edit {
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;
+}
+
+/* A name you can rename in place, drawn as the text it is until you do. */
+.inline-edit {
+  border: 0;
+  background: transparent;
+  padding: 2px 4px;
+  margin: -2px -4px;
+  border-radius: 4px;
+  text-align: left;
+  cursor: text;
+  font: inherit;
+  color: inherit;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* One line, clipped. Wrapped, a two-word project name made every row in a
    narrow card two rows tall. */
 .row-sub {
