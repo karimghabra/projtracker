@@ -14,7 +14,7 @@ import { BATCH_STATES, isTerminalState } from '../../core/model.ts';
 import type { ExperimentDef } from '../../core/model.ts';
 import { validateExperiment } from '../../core/experiments.ts';
 import { ExperimentForm } from '../components/ExperimentForm.tsx';
-import type { CalendarSpan, ReadyBranch, TodayItemView } from '../../commands/views.ts';
+import type { CalendarSpan, ReadyBranch, ReadyRow, TodayItemView } from '../../commands/views.ts';
 import { MISC_BRANCH } from '../../commands/views.ts';
 import { useApp } from '../state/store.ts';
 import { Calendar, DayPanel } from '../components/Calendar.tsx';
@@ -843,7 +843,7 @@ function ReadyPanel({
   path: string[];
   onPath: (next: string[]) => void;
 }) {
-  const { app, run } = useApp();
+  const { app } = useApp();
   /** The culture whose seeding form is open, if any. */
   const [seeding, setSeeding] = useState<string | null>(null);
   /** ...and the one whose scaffolds are about to be made. */
@@ -863,11 +863,17 @@ function ReadyPanel({
     level = found.children;
   }
 
-  // Walk through any level that offers a single container and nothing else. A
-  // corridor of one-door rooms is not navigation, and on a board with one
-  // project it would put three clicks between you and your only work. The
-  // crumbs still name every level walked through, so you can come back up into
-  // one.
+  /*
+    Walk through any level that offers a single branch and nothing else. A
+    corridor of one-door rooms is not navigation, and on a board with one
+    project it would put three clicks between you and your only work.
+
+    This is the rule it always had, and it used to fire far more often than it
+    should have: the tree was built upward from the ready rows, so a milestone
+    with four goals and work in one of them looked like a corridor. Now it looks
+    like four goals, which is what it is, and you are only walked past a level
+    that genuinely had one thing on it.
+  */
   while (level.length === 1 && !level[0]!.row) {
     trail.push(level[0]!);
     level = level[0]!.children;
@@ -877,12 +883,35 @@ function ReadyPanel({
 
   if (app.tree().length === 0 && total === 0) return null;
 
-  const here = trail.length ? trail[trail.length - 1]!.children : tree;
-  // Capped as one list: containers first, then the work inside this level. Two
-  // separate caps would show four of each and call it a cap of four.
+  /*
+    Everything at this level, not only what has work in it.
+
+    The pool used to be built upward from the ready rows, so a milestone with
+    four goals showed the one goal that had something available and the other
+    three simply were not there. That is disorienting in the way a map with the
+    streets removed is disorienting: you cannot tell whether you are looking at
+    all of it, and "where did the rest go" is not a question a list should
+    raise. Now every goal is here, and what is ready is what stands out.
+
+    Ready first, then the rest in board order. This panel is called Ready to
+    work on; the shape underneath it is context, and context does not go above
+    the thing it is context for.
+  */
+  const here = [...(trail.length ? trail[trail.length - 1]!.children : tree)].sort(
+    (a, b) => (b.count > 0 ? 1 : 0) - (a.count > 0 ? 1 : 0),
+  );
+  // Capped as one list: containers and the work inside this level together.
+  // Two separate caps would show four of each and call it a cap of four.
   const { shown, more, foldable } = cap(id, here);
-  const leaves = shown.filter((branch) => branch.row);
-  const branches = shown.filter((branch) => !branch.row);
+
+  /** Why this one is not offering anything, in as few words as it takes. */
+  const quiet = (branch: ReadyBranch): string => {
+    if (branch.total === 0) return 'nothing in it yet';
+    if (branch.state === 'done') return 'finished';
+    if (branch.waitingOn) return `waiting on ${branch.waitingOn}`;
+    if (branch.state === 'in_progress') return 'under way';
+    return 'nothing ready';
+  };
 
   return (
     <DashPanel
@@ -924,110 +953,76 @@ function ReadyPanel({
             </Empty>
           ) : (
             <div className="list">
-              {branches.map((branch) => (
-                <button
-                  className={branch.begun ? 'row nav-row' : 'row nav-row not-begun'}
-                  key={branch.id}
-                  data-testid={`ready-into-${branch.id}`}
-                  onClick={() => go([...trail.map((b) => b.id), branch.id])}
-                >
-                  <div className="grow" style={{ minWidth: 0 }}>
-                    <div className="row-title">{branch.name}</div>
-                    {/*
-                      Which of these have I already opened? Finishing one you
-                      are part-way through beats starting a fourth, and without
-                      this the two look identical — same button, different
-                      number.
-                    */}
-                    <div className="row-sub">
-                      {branch.id === MISC_BRANCH ? 'belongs to no project' : branch.kind}
-                      {branch.begun ? ' · under way' : ''}
+              {shown.map((branch) =>
+                branch.row ? (
+                  <ReadyRowView
+                    key={branch.id}
+                    row={branch.row}
+                    today={app.today}
+                    onSeed={() => setSeeding(branch.row!.id)}
+                    onFabricate={() => setFabricating(branch.row!.id)}
+                  />
+                ) : branch.container ? (
+                  <button
+                    /*
+                      Three weights, and they are the whole point of showing
+                      everything: something with work in it reads normally,
+                      something you have opened before but has nothing
+                      available recedes, and something never touched recedes
+                      further.
+                    */
+                    className={[
+                      'row nav-row',
+                      branch.count === 0 ? 'quiet' : '',
+                      !branch.begun && branch.count === 0 ? 'not-begun' : '',
+                    ]
+                      .filter(Boolean)
+                      .join(' ')}
+                    key={branch.id}
+                    data-testid={`ready-into-${branch.id}`}
+                    onClick={() => go([...trail.map((b) => b.id), branch.id])}
+                  >
+                    <div className="grow" style={{ minWidth: 0 }}>
+                      <div className="row-title">{branch.name}</div>
+                      <div className="row-sub">
+                        {branch.id === MISC_BRANCH ? 'belongs to no project' : branch.kind}
+                        {branch.count > 0
+                          ? branch.begun
+                            ? ' · under way'
+                            : ''
+                          : ` · ${quiet(branch)}`}
+                      </div>
+                    </div>
+                    {branch.count > 0 ? (
+                      <span className="chip">{branch.count}</span>
+                    ) : (
+                      <span className="faint mono nowrap">
+                        {branch.total > 0 ? `0/${branch.total}` : ''}
+                      </span>
+                    )}
+                    <IconChevronRight size={13} />
+                  </button>
+                ) : (
+                  /*
+                    A task that is not available yet. Not a button and not a
+                    checkbox: there is nothing to do to it, and offering a tick
+                    would be offering to record work out of the order somebody
+                    put it in. It is here to say what the ready one above it
+                    unlocks.
+                  */
+                  <div
+                    className="row quiet not-begun"
+                    key={branch.id}
+                    data-testid={`ready-waiting-${branch.id}`}
+                  >
+                    <div className="grow" style={{ minWidth: 0 }}>
+                      <div className="row-title">{branch.name}</div>
+                      <div className="row-sub">{quiet(branch)}</div>
                     </div>
                   </div>
-                  <span className="chip">{branch.count}</span>
-                  <IconChevronRight size={13} />
-                </button>
-              ))}
+                ),
+              )}
 
-              {leaves.map(({ row }) => row!).map((row) => (
-                <div className="row" key={row.id} data-testid={`ready-${row.id}`}>
-                {/*
-                  Finishing something you never started is normal: you did it at
-                  the bench and are recording it. It should not need a trip
-                  through the detail pane.
-
-                  A culture is not finished by ticking it. Seeding opens the
-                  form, because "how many scaffolds, which cells, how long" is
-                  the thing you know at that moment and never again as exactly;
-                  collecting is the tick that closes the culture out.
-                */}
-                <input
-                  type="checkbox"
-                  className="check"
-                  checked={false}
-                  aria-label={
-                    row.action === 'seed'
-                      ? `Seed ${row.name}`
-                      : row.action === 'collect'
-                        ? `Collect ${row.name}`
-                        : row.action === 'fabricate'
-                          ? `Make scaffolds for ${row.name}`
-                          : `Complete ${row.name}`
-                  }
-                  data-testid={`ready-complete-${row.id}`}
-                  onChange={() => {
-                    if (row.action === 'seed') setSeeding(row.id);
-                    else if (row.action === 'fabricate') setFabricating(row.id);
-                    else run((a) => a.complete(row.id));
-                  }}
-                />
-                <div className="grow" style={{ minWidth: 0 }}>
-                  <div className="row-title">
-                    {row.action ? (
-                      <span data-testid={`ready-action-${row.id}`}>
-                        <span className="verb">
-                          {row.action === 'seed'
-                            ? 'Seed'
-                            : row.action === 'collect'
-                              ? 'Collect'
-                              : `Make ${row.shortfall} scaffolds for`}
-                        </span>{' '}
-                        {row.name}
-                      </span>
-                    ) : (
-                      <InlineEdit
-                        value={row.name}
-                        ariaLabel={`Name of ${row.name}`}
-                        onCommit={(next) => run((a) => a.updateNode(row.id, { name: next }), { silent: true })}
-                      />
-                    )}
-                  </div>
-                  {/* No breadcrumb on the row: the crumbs above already say
-                      where you are, and repeating the path on every line was
-                      heavier than the task names it sat under. */}
-                </div>
-                {row.stepsTotal > 0 && (
-                  <span className="chip">
-                    {row.stepsDone}/{row.stepsTotal}
-                  </span>
-                )}
-                {/* When it is already spoken for, say so: "not yet" and "nobody
-                    has thought about it" are different answers. */}
-                {row.plannedFor && (
-                  <span className="chip accent" data-testid={`ready-planned-${row.id}`}>
-                    {formatRelativeDay(row.plannedFor, app.today)}
-                  </span>
-                )}
-                <PlanButton nodeId={row.id} name={row.name} plannedFor={row.plannedFor} />
-                <button
-                  className="btn sm"
-                  onClick={() => run((a) => a.todayAdd(row.id))}
-                  aria-label={`Add ${row.name} to today`}
-                >
-                  <IconPlus size={12} /> Today
-                </button>
-                </div>
-              ))}
               <MoreRow id={id} more={more} onExpand={() => onExpand(id)} noun="more here" />
               {expanded && foldable && <LessRow id={id} onCollapse={() => onExpand(id)} />}
             </div>
@@ -1125,6 +1120,106 @@ function FabricateDialog({ nodeId, onClose }: { nodeId: string; onClose: () => v
         />
       </div>
     </Modal>
+  );
+}
+
+/**
+ * A row in the pool that can be picked up.
+ *
+ * Pulled out of the panel when the pool started drawing three kinds of row —
+ * this, a branch to walk into, and a task that is waiting on something — and
+ * the three of them inline were one JSX expression forty lines deep.
+ */
+function ReadyRowView({
+  row,
+  today,
+  onSeed,
+  onFabricate,
+}: {
+  row: ReadyRow;
+  today: string;
+  onSeed: () => void;
+  onFabricate: () => void;
+}) {
+  const { run } = useApp();
+  return (
+                <div className="row" key={row.id} data-testid={`ready-${row.id}`}>
+                {/*
+                  Finishing something you never started is normal: you did it at
+                  the bench and are recording it. It should not need a trip
+                  through the detail pane.
+
+                  A culture is not finished by ticking it. Seeding opens the
+                  form, because "how many scaffolds, which cells, how long" is
+                  the thing you know at that moment and never again as exactly;
+                  collecting is the tick that closes the culture out.
+                */}
+                <input
+                  type="checkbox"
+                  className="check"
+                  checked={false}
+                  aria-label={
+                    row.action === 'seed'
+                      ? `Seed ${row.name}`
+                      : row.action === 'collect'
+                        ? `Collect ${row.name}`
+                        : row.action === 'fabricate'
+                          ? `Make scaffolds for ${row.name}`
+                          : `Complete ${row.name}`
+                  }
+                  data-testid={`ready-complete-${row.id}`}
+                  onChange={() => {
+                    if (row.action === 'seed') onSeed();
+                    else if (row.action === 'fabricate') onFabricate();
+                    else run((a) => a.complete(row.id));
+                  }}
+                />
+                <div className="grow" style={{ minWidth: 0 }}>
+                  <div className="row-title">
+                    {row.action ? (
+                      <span data-testid={`ready-action-${row.id}`}>
+                        <span className="verb">
+                          {row.action === 'seed'
+                            ? 'Seed'
+                            : row.action === 'collect'
+                              ? 'Collect'
+                              : `Make ${row.shortfall} scaffolds for`}
+                        </span>{' '}
+                        {row.name}
+                      </span>
+                    ) : (
+                      <InlineEdit
+                        value={row.name}
+                        ariaLabel={`Name of ${row.name}`}
+                        onCommit={(next) => run((a) => a.updateNode(row.id, { name: next }), { silent: true })}
+                      />
+                    )}
+                  </div>
+                  {/* No breadcrumb on the row: the crumbs above already say
+                      where you are, and repeating the path on every line was
+                      heavier than the task names it sat under. */}
+                </div>
+                {row.stepsTotal > 0 && (
+                  <span className="chip">
+                    {row.stepsDone}/{row.stepsTotal}
+                  </span>
+                )}
+                {/* When it is already spoken for, say so: "not yet" and "nobody
+                    has thought about it" are different answers. */}
+                {row.plannedFor && (
+                  <span className="chip accent" data-testid={`ready-planned-${row.id}`}>
+                    {formatRelativeDay(row.plannedFor, today)}
+                  </span>
+                )}
+                <PlanButton nodeId={row.id} name={row.name} plannedFor={row.plannedFor} />
+                <button
+                  className="btn sm"
+                  onClick={() => run((a) => a.todayAdd(row.id))}
+                  aria-label={`Add ${row.name} to today`}
+                >
+                  <IconPlus size={12} /> Today
+                </button>
+                </div>
   );
 }
 

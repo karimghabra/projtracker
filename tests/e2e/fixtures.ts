@@ -63,6 +63,24 @@ export const test = base.extend<{ h: Harness }>({
 
 export { expect };
 
+/**
+ * Walk the ready pool down to the work.
+ *
+ * The pool shows every branch at a level now, not only the ones with something
+ * available, so how many clicks separate you from a task depends on the shape
+ * of the board rather than on what happens to be ready. A spec about what the
+ * pool *says* should not have to know that shape.
+ */
+export async function intoWork(page: Page) {
+  const pool = page.getByTestId('ready-panel');
+  for (let depth = 0; depth < 5; depth++) {
+    const withWork = pool.locator('.row.nav-row', { has: page.locator('span.chip') });
+    if ((await withWork.count()) === 0) break;
+    await withWork.first().click();
+  }
+  return pool;
+}
+
 /** Create a project through the wizard, with milestones, goals and tasks. */
 export async function createProject(
   page: Page,

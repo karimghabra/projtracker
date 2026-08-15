@@ -29,20 +29,7 @@ import { BATCH_STATES, isContainerKind, isTerminalState, pathNameOf, refOf } fro
 import type { Precision } from '../core/periods.ts';
 import { encodePeriod, formatPeriod } from '../core/periods.ts';
 import type { GraphIndex } from '../core/graph.ts';
-import {
-  blockersOf,
-  completesDirectly,
-  derivedStatus,
-  hasBegun,
-  inProgressLeaves,
-  isAbandoned,
-  isDone,
-  progressOf,
-  rootProjects,
-  projectProgress,
-  readyLeaves,
-  transitiveReduction,
-} from '../core/graph.ts';
+import { blockersOf, completesDirectly, derivedStatus, hasBegun, inProgressLeaves, isAbandoned, isDone, leavesOf, progressOf, projectProgress, readyLeaves, rootProjects, transitiveReduction } from '../core/graph.ts';
 import type { ExperimentDef } from '../core/model.ts';
 import type { ExperimentAction, ScaffoldSupply, Stage } from '../core/experiments.ts';
 import {
@@ -470,8 +457,23 @@ export interface ReadyBranch {
   kind: NodeKind;
   /** Ready leaves at or below this node. */
   count: number;
+  /** Leaves at or below it, ready or not, so "0 of 4" can be said. */
+  total: number;
   /** Whether anything under it has been started or finished already. */
   begun: boolean;
+  /** What this is, when it is not ready: done, blocked, in progress. */
+  state: DerivedStatus;
+  /**
+   * Whether it holds work rather than being work. A goal whose tasks are all
+   * finished holds none of them any more and is still a goal, so this comes
+   * from the kind rather than from how many children survived the filter.
+   */
+  container: boolean;
+  /**
+   * The one thing most worth naming as the reason this is not available —
+   * whatever it is waiting on. Absent when nothing is in the way.
+   */
+  waitingOn?: string;
   children: ReadyBranch[];
   /** Present when this node is itself one of the ready leaves. */
   row?: ReadyRow;
@@ -482,9 +484,62 @@ export function readyTree(index: GraphIndex, today: DateOnly): ReadyBranch[] {
   // puts the same task on the screen twice with two checkboxes, which is how
   // you end up wondering which one you already ticked.
   const onToday = new Set(todayItems(index.state, index, today).map((i) => i.node?.id));
-  const rows = readyView(index, today).filter((row) => !onToday.has(row.id));
-  const byId = new Map<NodeId, ReadyBranch>();
-  const roots: ReadyBranch[] = [];
+  const rows = new Map(
+    readyView(index, today)
+      .filter((row) => !onToday.has(row.id))
+      .map((row) => [row.id, row] as const),
+  );
+
+  const build = (node: Node): ReadyBranch | null => {
+    // Dropped work is not part of the plan any more, and neither is anything
+    // under something dropped. It is on the board and out of the pool.
+    if (node.status === 'dropped' || isAbandoned(index, node.id)) return null;
+
+    const children = (index.children.get(node.id) ?? [])
+      .map(build)
+      .filter((child): child is ReadyBranch => child !== null);
+
+    const row = rows.get(node.id);
+    // What it is, not what is left of it: a goal whose tasks are all finished
+    // is still a goal, and it should say "finished" rather than disappear.
+    const leaf = !isContainerKind(node.kind);
+    /*
+      A container always shows, because the shape of the board is the point.
+      A leaf shows only while it is still owed: the ready ones to be picked up,
+      the blocked ones so you can see what the ready one unlocks. A finished
+      task leaves the pool, which is what finishing it was for.
+    */
+    if (leaf && !row && derivedStatus(index, node.id, today) === 'done') return null;
+    const count = row ? 1 : children.reduce((sum, child) => sum + child.count, 0);
+    /*
+      Everything under it that is a piece of work, finished or not — so the
+      fraction reads "0 of 4" and stays 4 as they are ticked off, rather than
+      counting down towards a goal that appears to contain nothing.
+    */
+    const total = leaf ? 1 : leavesOf(index, node.id).length;
+    // Nothing in it on the board, as opposed to nothing left to do in it.
+    const empty = !leaf && (index.children.get(node.id) ?? []).length === 0;
+    const waiting = blockersOf(index, node.id)[0]?.node.name;
+
+    return {
+      id: node.id,
+      name: node.name,
+      kind: node.kind,
+      count,
+      total,
+      begun: hasBegun(index, node.id),
+      state: derivedStatus(index, node.id, today),
+      container: !leaf,
+      waitingOn: count === 0 && !empty ? waiting : undefined,
+      children,
+      row,
+    };
+  };
+
+  const roots = (index.children.get(null) ?? [])
+    .filter((node) => node.kind === 'project')
+    .map(build)
+    .filter((branch): branch is ReadyBranch => branch !== null);
 
   /**
    * Work that belongs to no project.
@@ -495,66 +550,29 @@ export function readyTree(index: GraphIndex, today: DateOnly): ReadyBranch[] {
    * Created only when something is in it, so a board with no loose work never
    * shows an empty drawer.
    */
-  let misc: ReadyBranch | undefined;
-  const miscBranch = (): ReadyBranch => {
-    if (!misc) {
+  const loose = (index.children.get(null) ?? [])
+    .filter((node) => node.kind !== 'project')
+    .map(build)
+    .filter((branch): branch is ReadyBranch => branch !== null);
+
+  if (loose.length > 0) {
+    roots.push({
+      id: MISC_BRANCH,
+      name: 'Miscellaneous',
+      // Not a project, and it used to say it was. `task` is what is in it.
+      kind: 'task',
+      container: true,
+      count: loose.reduce((sum, branch) => sum + branch.count, 0),
+      total: loose.reduce((sum, branch) => sum + branch.total, 0),
       // Loose work has no shared history, so the bucket never claims to be
       // under way — the rows inside it each answer for themselves.
-      misc = {
-        id: MISC_BRANCH,
-        name: 'Miscellaneous',
-        // Not a project, and it used to say it was. `task` is what is in it.
-        kind: 'task',
-        count: 0,
-        begun: false,
-        children: [],
-      };
-      roots.push(misc);
-    }
-    return misc;
-  };
-
-  /** The branch for a node, creating it and its ancestors on the way up. */
-  const branchFor = (id: NodeId): ReadyBranch => {
-    const existing = byId.get(id);
-    if (existing) return existing;
-
-    const node = index.state.nodes[id]!;
-    const branch: ReadyBranch = {
-      id,
-      name: node.name,
-      kind: node.kind,
-      count: 0,
-      begun: hasBegun(index, id),
-      children: [],
-    };
-    byId.set(id, branch);
-
-    if (node.parent) branchFor(node.parent).children.push(branch);
-    else if (node.kind === 'project') roots.push(branch);
-    else miscBranch().children.push(branch);
-    return branch;
-  };
-
-  for (const row of rows) {
-    const leaf = branchFor(row.id);
-    leaf.row = row;
-    // Count it against itself and everything it sits under.
-    for (let at: NodeId | null = row.id; at; at = index.state.nodes[at]?.parent ?? null) {
-      byId.get(at)!.count += 1;
-    }
-    // The bucket is not an ancestor of anything, so it counts separately.
-    if (index.state.nodes[row.id]?.parent === null) miscBranch().count += 1;
+      begun: false,
+      state: 'ready',
+      children: loose,
+    });
   }
 
-  // Siblings in board order, which is the order the work is meant to happen in.
-  const rank = new Map(index.order.map((id, at) => [id, at]));
-  const sort = (list: ReadyBranch[]): ReadyBranch[] => {
-    list.sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0));
-    for (const child of list) sort(child.children);
-    return list;
-  };
-  return sort(roots);
+  return roots;
 }
 
 /**

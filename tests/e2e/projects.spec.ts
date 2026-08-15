@@ -51,12 +51,26 @@ test.describe('the project wizard', () => {
       dials.getByRole('button', { name: /Tendon scaffold study, \d+ of \d+ done, \d+ ready/ }),
     ).toBeVisible();
 
-    // Only the first task of the first goal is actionable; the rest are ordered
-    // behind it by their sequence numbers.
+    /*
+      The pool shows the shape of the board and emphasises what is available in
+      it, rather than filtering everything else out of existence. So both
+      milestones are here, and walking into one shows every goal in it — with
+      the tasks that are queued behind saying what they are queued behind.
+    */
     const ready = page.getByTestId('ready-panel');
-    await expect(ready.getByText('Draft geometry')).toBeVisible();
-    await expect(ready.getByText('Peer review')).toHaveCount(0);
-    await expect(ready.getByText('Tensile test')).toHaveCount(0);
+    const title = (text: string) => ready.locator('.row-title', { hasText: text });
+
+    // Two milestones is a choice, so the pool shows both — the one with
+    // nothing available says why rather than not being there.
+    await expect(title('Fabrication')).toHaveCount(1);
+    await expect(title('Testing')).toHaveCount(1);
+    await expect(ready.locator('.row-sub', { hasText: 'waiting on Fabrication' })).toHaveCount(1);
+
+    // Inside, one goal is a corridor, so it walks through to the work.
+    await ready.getByRole('button', { name: /^Fabrication/ }).click();
+    await expect(title('Draft geometry')).toHaveCount(1);
+    await expect(title('Peer review')).toHaveCount(1);
+    await expect(ready.locator('.row-sub', { hasText: 'waiting on Draft geometry' }).first()).toBeVisible();
   });
 
   test('creating a project is one undo step, not forty', async ({ h }) => {

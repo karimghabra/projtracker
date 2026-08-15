@@ -1209,6 +1209,17 @@ svg text {
  * Fixed, positioned from the button: a panel clips its own overflow, so a menu
  * drawn inside the row would be cut off by the bottom of its card.
  */
+/*
+ * A row in the pool with nothing available under it.
+ *
+ * Quieter than a row you can act on, louder than nothing: it is there so the
+ * list is the shape of the board rather than a filtered extract of it, and so
+ * "waiting on Crosslink" can be read off it.
+ */
+.row.nav-row.quiet .row-title { color: var(--text-muted); font-weight: 400; }
+.row.nav-row.quiet { opacity: 0.75; }
+.row.nav-row.quiet.not-begun { opacity: 0.55; }
+
 .row-menu {
   position: fixed;
   z-index: 40;

@@ -130,6 +130,93 @@ describe('anything started is on the day list', () => {
   });
 });
 
+/**
+ * The pool is the shape of the board, with what is available standing out.
+ *
+ * It used to be built upward from the ready rows, so a milestone with four
+ * goals showed the one that had something available and the other three simply
+ * were not there — which reads as "where did the rest go", and makes the pool
+ * a different tree from the one in Projects.
+ */
+describe('the ready pool shows the whole level', () => {
+  const board = () => {
+    const h = harness('2026-08-15T09:00');
+    const project = h.app.addProject('Fibrous composites').id;
+    const milestone = h.app.addNode(project, 'Rabbit meniscus').id;
+    const first = h.app.addNode(milestone, 'Interstitial matrix', { seq: 1 }).id;
+    h.app.addNode(first, 'Fabricate threads', { seq: 1 });
+    const second = h.app.addNode(milestone, 'Lyophilised chitogel', { seq: 2 }).id;
+    h.app.addNode(second, 'Soak in chitogel', { seq: 1 });
+    const empty = h.app.addNode(milestone, 'Cylmold', { seq: 3 }).id;
+    return { h, milestone, first, second, empty };
+  };
+
+  const under = (h: ReturnType<typeof board>['h'], id: string) => {
+    const find = (list: ReturnType<typeof h.app.readyTree>): typeof list => {
+      for (const branch of list) {
+        if (branch.id === id) return branch.children;
+        const deeper = find(branch.children);
+        if (deeper.length) return deeper;
+      }
+      return [];
+    };
+    return find(h.app.readyTree());
+  };
+
+  it('lists every goal, not only the one with work in it', () => {
+    const { h, milestone } = board();
+    expect(under(h, milestone).map((b) => b.name)).toEqual([
+      'Interstitial matrix',
+      'Lyophilised chitogel',
+      'Cylmold',
+    ]);
+  });
+
+  it('says which one has work, and how much', () => {
+    const { h, milestone } = board();
+    const goals = under(h, milestone);
+    expect(goals.map((b) => b.count)).toEqual([1, 0, 0]);
+    // The fraction counts everything under it, so it does not shrink as work
+    // is finished.
+    expect(goals.map((b) => b.total)).toEqual([1, 1, 0]);
+  });
+
+  it('says what the quiet one is waiting for', () => {
+    const { h, milestone } = board();
+    // Sequential goals: the second waits on the first, which is the same fact
+    // as "finishing this unlocks that", read from the other end.
+    expect(under(h, milestone)[1]!.waitingOn).toBe('Interstitial matrix');
+  });
+
+  it('says nothing is waiting when there is nothing in it', () => {
+    const { h, milestone } = board();
+    const cylmold = under(h, milestone)[2]!;
+    expect(cylmold.waitingOn).toBeUndefined();
+    expect(cylmold.total).toBe(0);
+    expect(cylmold.container).toBe(true);
+  });
+
+  it('keeps a goal whose tasks are all finished, and calls it done', () => {
+    const { h, first } = board();
+    const task = under(h, first)[0]!;
+    h.app.complete(task.id);
+
+    const goal = h.app
+      .readyTree()[0]!
+      .children[0]!.children.find((b) => b.id === first)!;
+    expect(goal.state).toBe('done');
+    expect(goal.count).toBe(0);
+    // Still a goal, still somewhere you can look inside.
+    expect(goal.container).toBe(true);
+  });
+
+  it('drops what has been dropped', () => {
+    const { h, second } = board();
+    h.app.drop(second);
+    expect(under(h, h.app.readyTree()[0]!.children[0]!.id).map((b) => b.id)).not.toContain(second);
+  });
+});
+
 describe('rollover', () => {
   it('carries an unfinished task forward, and says how long it has been carried', () => {
     const h = harness('2026-07-30T09:00');

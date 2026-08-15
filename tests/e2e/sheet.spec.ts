@@ -1,4 +1,4 @@
-import { createProject, expect, test } from './fixtures.ts';
+import { createProject, expect, intoWork, test } from './fixtures.ts';
 import type { Page } from '@playwright/test';
 
 async function board(page: Page): Promise<void> {
@@ -83,7 +83,8 @@ test.describe('the spreadsheet', () => {
     await expect(page.locator('.sheet-row', { hasText: 'Draft' }).first()).toHaveClass(/is-done/);
 
     await page.getByTestId('nav-home').click();
-    await expect(page.getByTestId('ready-panel').getByText('Review')).toBeVisible();
+    const ready = await intoWork(page);
+    await expect(ready.locator('.row-title', { hasText: 'Review' })).toHaveCount(1);
   });
 
   test('sets a planned date from the grid', async ({ h }) => {
@@ -144,7 +145,7 @@ test.describe('the spreadsheet', () => {
     await page.keyboard.press('Enter');
 
     await page.getByTestId('nav-home').click();
-    const ready = page.getByTestId('ready-panel');
+    const ready = await intoWork(page);
     await expect(ready.getByText('Draft')).toBeVisible();
     await expect(ready.getByText('Review')).toBeVisible();
   });

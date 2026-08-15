@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import ExcelJS from 'exceljs';
-import { expect, test } from './fixtures.ts';
+import { expect, intoWork, test } from './fixtures.ts';
 
 /** A small but awkward workbook, built here so the test states its own shape. */
 async function workbook(): Promise<Uint8Array> {
@@ -87,10 +87,13 @@ test.describe('importing a workbook', () => {
     await page.getByTestId('confirm-import').click();
 
     await page.getByTestId('nav-home').click();
-    const ready = page.getByTestId('ready-panel');
-    // Draft geometry is rank 1 and open, so it is what is actionable.
-    await expect(ready.getByText('Draft geometry')).toBeVisible();
-    await expect(ready.getByText('Export STL')).toHaveCount(0);
+    const ready = await intoWork(page);
+    // Draft geometry is rank 1 and open, so it is what is actionable; what is
+    // ordered behind it is here too, saying so.
+    await expect(ready.locator('.row-title', { hasText: 'Draft geometry' })).toHaveCount(1);
+    await expect(
+      ready.locator('.row-sub', { hasText: 'waiting on Draft geometry' }).first(),
+    ).toBeVisible();
   });
 
   test('the whole import is one undo step', async ({ h }) => {

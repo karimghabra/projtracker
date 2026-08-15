@@ -10,7 +10,7 @@
  * only whether a project ends up existing.
  */
 
-import { createProject, expect, test } from './fixtures.ts';
+import { createProject, expect, intoWork, test } from './fixtures.ts';
 
 test.describe('the shape of the flow', () => {
   test('shows where you are and where you are going', async ({ h }) => {
@@ -306,9 +306,14 @@ test.describe('the sequence numbers do what they say', () => {
       milestones: [{ name: 'M', goals: [{ name: 'G', tasks: ['First', 'Second', 'Third'] }] }],
     });
 
-    const ready = page.getByTestId('ready-panel');
-    await expect(ready.getByText('First')).toBeVisible();
-    await expect(ready.getByText('Second')).toHaveCount(0);
+    const ready = await intoWork(page);
+    // First is what can be picked up; the other two are here saying what they
+    // are waiting for, which is the same fact from the other side.
+    await expect(ready.getByTestId('ready-n4')).toBeVisible();
+    await expect(ready.getByTestId('ready-waiting-n5').locator('.row-sub')).toHaveText(
+      'waiting on First',
+    );
+    await expect(ready.getByTestId('ready-n5')).toHaveCount(0);
   });
 
   test('two things given the same number can run together', async ({ h }) => {
@@ -331,7 +336,7 @@ test.describe('the sequence numbers do what they say', () => {
     await group.getByLabel('Sequence number for task 2 of G').fill('1');
 
     await page.getByTestId('wizard-create').click();
-    const ready = page.getByTestId('ready-panel');
+    const ready = await intoWork(page);
     await expect(ready.getByText('Side A')).toBeVisible();
     await expect(ready.getByText('Side B')).toBeVisible();
   });
@@ -355,7 +360,7 @@ test.describe('the sequence numbers do what they say', () => {
     }
     await page.getByTestId('wizard-create').click();
 
-    const ready = page.getByTestId('ready-panel');
+    const ready = await intoWork(page);
     await expect(ready.getByText('Alpha')).toBeVisible();
     await expect(ready.getByText('Beta')).toBeVisible();
     await expect(ready.getByText('Gamma')).toBeVisible();
