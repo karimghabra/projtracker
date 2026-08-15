@@ -1209,6 +1209,12 @@ svg text {
  * Fixed, positioned from the button: a panel clips its own overflow, so a menu
  * drawn inside the row would be cut off by the bottom of its card.
  */
+/* Finished, and saying so in the way finished things do everywhere else. */
+.row-title.struck {
+  text-decoration: line-through;
+  color: var(--text-faint);
+}
+
 /*
  * A row in the pool with nothing available under it.
  *

@@ -269,7 +269,17 @@ export function AppShell() {
                 : 'screen'
           }
         >
-          {view === 'home' && <HomeScreen onNavigate={go} />}
+          {view === 'home' && (
+            <HomeScreen
+              onNavigate={go}
+              /* The pool can send you to a goal that has nothing in it yet,
+                 which is the one row whose answer lives on another screen. */
+              onReveal={(id) => {
+                setPendingSelection(id);
+                go('projects');
+              }}
+            />
+          )}
           {view === 'projects' && (
             <ProjectsScreen
               selectId={pendingSelection}

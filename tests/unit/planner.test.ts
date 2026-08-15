@@ -210,6 +210,43 @@ describe('the ready pool shows the whole level', () => {
     expect(goal.container).toBe(true);
   });
 
+  it('counts what is finished, not what is available', () => {
+    // "0 of 9" was the count of ready things, which on a goal in the middle of
+    // a five-week culture is nine parts wrong.
+    const { h, first } = board();
+    const task = under(h, first)[0]!;
+    h.app.complete(task.id);
+    const goal = under(h, h.app.readyTree()[0]!.children[0]!.id).find((b) => b.id === first)!;
+    expect([goal.done, goal.total]).toEqual([1, 1]);
+  });
+
+  it('says where a culture is up to rather than calling it stalled', () => {
+    const { h, second } = board();
+    const culture = h.app.addNode(second, 'Chitogel culture', { kind: 'experiment' }).id;
+    h.app.setExperiment(culture, {
+      sampleCount: 9,
+      seedingDate: '2026-08-06',
+      durationDays: 35,
+      mediaPhases: [{ name: 'Proliferation', startDay: 0 }],
+    });
+
+    const goal = under(h, h.app.readyTree()[0]!.children[0]!.id).find((b) => b.id === second)!;
+    expect(goal.culture).toContain('Day 9 of 35');
+    // A culture running is a better answer than whatever it is queued behind.
+    expect(goal.waitingOn).toBeUndefined();
+  });
+
+  it('keeps work that is already on today out of the pool entirely', () => {
+    // Not merely out of the ready rows: it used to come back as a row saying
+    // it was waiting for something, in the Miscellaneous bucket.
+    const h = harness('2026-08-15T09:00');
+    const loose = h.app.todayQuickAdd('Chase the invoice').id;
+    const names = (list: ReturnType<typeof h.app.readyTree>): string[] =>
+      list.flatMap((b) => [b.name, ...names(b.children)]);
+    expect(names(h.app.readyTree())).not.toContain('Chase the invoice');
+    void loose;
+  });
+
   it('drops what has been dropped', () => {
     const { h, second } = board();
     h.app.drop(second);

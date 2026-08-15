@@ -457,8 +457,10 @@ export interface ReadyBranch {
   kind: NodeKind;
   /** Ready leaves at or below this node. */
   count: number;
-  /** Leaves at or below it, ready or not, so "0 of 4" can be said. */
+  /** Leaves at or below it, ready or not, so a fraction can be said. */
   total: number;
+  /** ...and how many of them are finished, which is the half worth showing. */
+  done: number;
   /** Whether anything under it has been started or finished already. */
   begun: boolean;
   /** What this is, when it is not ready: done, blocked, in progress. */
@@ -474,6 +476,12 @@ export interface ReadyBranch {
    * whatever it is waiting on. Absent when nothing is in the way.
    */
   waitingOn?: string;
+  /**
+   * A culture in the incubator at or below this, and where it is up to. Work
+   * that is running is not work that has stalled, and a goal in the middle of a
+   * five-week culture should say so rather than "nothing ready".
+   */
+  culture?: string;
   children: ReadyBranch[];
   /** Present when this node is itself one of the ready leaves. */
   row?: ReadyRow;
@@ -484,16 +492,19 @@ export function readyTree(index: GraphIndex, today: DateOnly): ReadyBranch[] {
   // puts the same task on the screen twice with two checkboxes, which is how
   // you end up wondering which one you already ticked.
   const onToday = new Set(todayItems(index.state, index, today).map((i) => i.node?.id));
-  const rows = new Map(
-    readyView(index, today)
-      .filter((row) => !onToday.has(row.id))
-      .map((row) => [row.id, row] as const),
-  );
+  const rows = new Map(readyView(index, today).map((row) => [row.id, row] as const));
 
   const build = (node: Node): ReadyBranch | null => {
     // Dropped work is not part of the plan any more, and neither is anything
     // under something dropped. It is on the board and out of the pool.
     if (node.status === 'dropped' || isAbandoned(index, node.id)) return null;
+    /*
+      Anything already on the day is spoken for. It used to be filtered out of
+      the ready rows only, which was enough while the pool showed nothing else —
+      now that it shows what is waiting too, a task pulled onto today came back
+      as a row saying it was waiting for something.
+    */
+    if (!isContainerKind(node.kind) && onToday.has(node.id)) return null;
 
     const children = (index.children.get(node.id) ?? [])
       .map(build)
@@ -517,6 +528,19 @@ export function readyTree(index: GraphIndex, today: DateOnly): ReadyBranch[] {
       counting down towards a goal that appears to contain nothing.
     */
     const total = leaf ? 1 : leavesOf(index, node.id).length;
+    const finished = leaf
+      ? (derivedStatus(index, node.id, today) === 'done' ? 1 : 0)
+      : leavesOf(index, node.id).filter((n) => derivedStatus(index, n.id, today) === 'done').length;
+    /*
+      A culture at or below this, still in the incubator. Taken from the nearest
+      one under it, because a goal usually holds exactly one and "day 9 of 35"
+      is the answer to what that goal is doing.
+    */
+    const own = node.experiment && node.kind === 'experiment' ? node : undefined;
+    const running =
+      own && experimentStatus(own.experiment!, today).state === 'running'
+        ? describeExperiment(own.experiment!, today)
+        : children.find((child) => child.culture)?.culture;
     // Nothing in it on the board, as opposed to nothing left to do in it.
     const empty = !leaf && (index.children.get(node.id) ?? []).length === 0;
     const waiting = blockersOf(index, node.id)[0]?.node.name;
@@ -530,7 +554,9 @@ export function readyTree(index: GraphIndex, today: DateOnly): ReadyBranch[] {
       begun: hasBegun(index, node.id),
       state: derivedStatus(index, node.id, today),
       container: !leaf,
-      waitingOn: count === 0 && !empty ? waiting : undefined,
+      done: finished,
+      culture: running,
+      waitingOn: count === 0 && !empty && !running ? waiting : undefined,
       children,
       row,
     };
@@ -564,6 +590,7 @@ export function readyTree(index: GraphIndex, today: DateOnly): ReadyBranch[] {
       container: true,
       count: loose.reduce((sum, branch) => sum + branch.count, 0),
       total: loose.reduce((sum, branch) => sum + branch.total, 0),
+      done: loose.reduce((sum, branch) => sum + branch.done, 0),
       // Loose work has no shared history, so the bucket never claims to be
       // under way — the rows inside it each answer for themselves.
       begun: false,

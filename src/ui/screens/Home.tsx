@@ -67,7 +67,14 @@ export type Capped = Frame & {
   expanded: boolean;
 };
 
-export function HomeScreen({ onNavigate }: { onNavigate: (view: ViewName) => void }) {
+export function HomeScreen({
+  onNavigate,
+  onReveal,
+}: {
+  onNavigate: (view: ViewName) => void;
+  /** Open this node on the projects screen — where work gets written down. */
+  onReveal: (id: string) => void;
+}) {
   const { app } = useApp();
   const [pickedDay, setPickedDay] = useState<string | null>(null);
   // Where the ready pool is browsing. Held here so a project dial can send it
@@ -121,7 +128,15 @@ export function HomeScreen({ onNavigate }: { onNavigate: (view: ViewName) => voi
   const panels: Record<PanelId, ReactNode> = {
     today: <TodayPanel key="today" {...panelProps('today')} />,
     'in-progress': <InProgressPanel key="in-progress" {...capProps('in-progress')} />,
-    ready: <ReadyPanel key="ready" path={readyPath} onPath={goReady} {...capProps('ready')} />,
+    ready: (
+      <ReadyPanel
+        key="ready"
+        path={readyPath}
+        onPath={goReady}
+        onReveal={onReveal}
+        {...capProps('ready')}
+      />
+    ),
     projects: <ProjectsPanel key="projects" onNavigate={onNavigate} onPick={(id) => goReady([id])} {...panelProps('projects')} />,
     calendar: (
       <CalendarPanel
@@ -839,9 +854,11 @@ function ReadyPanel({
   cap,
   onExpand,
   expanded,
+  onReveal,
 }: Capped & {
   path: string[];
   onPath: (next: string[]) => void;
+  onReveal: (id: string) => void;
 }) {
   const { app } = useApp();
   /** The culture whose seeding form is open, if any. */
@@ -908,9 +925,29 @@ function ReadyPanel({
   const quiet = (branch: ReadyBranch): string => {
     if (branch.total === 0) return 'nothing in it yet';
     if (branch.state === 'done') return 'finished';
+    // Running is not stalled. A five-week culture offers nothing for five
+    // weeks, and "nothing ready" is a poor description of that.
+    if (branch.culture) return branch.culture.toLowerCase();
     if (branch.waitingOn) return `waiting on ${branch.waitingOn}`;
     if (branch.state === 'in_progress') return 'under way';
     return 'nothing ready';
+  };
+
+  /**
+   * One word about where this stands, when there is one worth saying.
+   *
+   * At most one: a row with four badges on it is a row nobody reads. In
+   * culture beats nearly done beats never started, because that is the order
+   * in which they change what you would do next.
+   */
+  const flag = (branch: ReadyBranch): { text: string; tone: string } | null => {
+    if (branch.culture) return { text: 'in culture', tone: 'info' };
+    if (branch.total > 0 && branch.done === branch.total) return { text: 'done', tone: 'ok' };
+    if (branch.total > 2 && branch.done / branch.total >= 0.75) {
+      return { text: 'almost done', tone: 'ok' };
+    }
+    if (!branch.begun && branch.total > 0) return { text: 'not started', tone: '' };
+    return null;
   };
 
   return (
@@ -983,7 +1020,9 @@ function ReadyPanel({
                     onClick={() => go([...trail.map((b) => b.id), branch.id])}
                   >
                     <div className="grow" style={{ minWidth: 0 }}>
-                      <div className="row-title">{branch.name}</div>
+                      <div className={branch.state === 'done' ? 'row-title struck' : 'row-title'}>
+                        {branch.name}
+                      </div>
                       <div className="row-sub">
                         {branch.id === MISC_BRANCH ? 'belongs to no project' : branch.kind}
                         {branch.count > 0
@@ -993,11 +1032,39 @@ function ReadyPanel({
                           : ` · ${quiet(branch)}`}
                       </div>
                     </div>
+                    {/*
+                      An empty container is the one row with nothing to say and
+                      something to do: the work has not been written down yet,
+                      and the place to write it is one screen away.
+                    */}
+                    {branch.total === 0 && (
+                      <button
+                        className="btn ghost sm"
+                        data-testid={`ready-fill-${branch.id}`}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onReveal(branch.id);
+                        }}
+                      >
+                        Add work
+                      </button>
+                    )}
+                    {(() => {
+                      const badge = flag(branch);
+                      return badge ? (
+                        <span className={badge.tone ? `chip ${badge.tone}` : 'chip'}>
+                          {badge.text}
+                        </span>
+                      ) : null;
+                    })()}
                     {branch.count > 0 ? (
                       <span className="chip">{branch.count}</span>
                     ) : (
                       <span className="faint mono nowrap">
-                        {branch.total > 0 ? `0/${branch.total}` : ''}
+                        {/* Progress, not availability. "0 of 9" was the count
+                            of ready things, which on a goal in the middle of a
+                            culture is nine parts wrong. */}
+                        {branch.total > 0 ? `${branch.done}/${branch.total}` : ''}
                       </span>
                     )}
                     <IconChevronRight size={13} />
@@ -1016,9 +1083,12 @@ function ReadyPanel({
                     data-testid={`ready-waiting-${branch.id}`}
                   >
                     <div className="grow" style={{ minWidth: 0 }}>
-                      <div className="row-title">{branch.name}</div>
+                      <div className={branch.state === 'done' ? 'row-title struck' : 'row-title'}>
+                        {branch.name}
+                      </div>
                       <div className="row-sub">{quiet(branch)}</div>
                     </div>
+                    {branch.culture && <span className="chip info">in culture</span>}
                   </div>
                 ),
               )}
