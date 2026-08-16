@@ -273,6 +273,18 @@ describe('the ready pool shows the whole level', () => {
     expect(branch.momentum.previous).toBe(3);
   });
 
+  it('does not count an empty container as a piece of work', () => {
+    // A project holding one milestone holding nothing read "nothing ready ·
+    // 0/1", because a childless milestone looks like a leaf.
+    const h = harness('2026-08-15T09:00');
+    const project = h.app.addProject('Cartilage').id;
+    h.app.addNode(project, 'ELAC Netmold');
+
+    const branch = h.app.readyTree().find((b) => b.id === project)!;
+    expect(branch.total).toBe(0);
+    expect(branch.done).toBe(0);
+  });
+
   it('drops what has been dropped', () => {
     const { h, second } = board();
     h.app.drop(second);

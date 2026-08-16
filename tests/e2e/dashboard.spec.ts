@@ -10,6 +10,30 @@
 
 import { createProject, expect, test } from './fixtures.ts';
 
+/**
+ * What the pool does with work that is not there yet.
+ *
+ * A project holding one milestone holding nothing walked you through both and
+ * left you looking at an empty panel, with no row to carry the one thing worth
+ * offering.
+ */
+test.describe('a branch with nothing in it', () => {
+  test('says so and offers to fill it, rather than opening on nothing', async ({ h }) => {
+    const { page } = h;
+    await createProject(page, { name: 'Cartilage', milestones: [{ name: 'ELAC Netmold' }] });
+    await h.goto('home');
+
+    const pool = page.getByTestId('ready-panel');
+    await expect(pool.locator('.row-sub', { hasText: 'nothing in it yet' }).first()).toBeVisible();
+    const fill = pool.getByRole('button', { name: 'Add work' }).first();
+    await expect(fill).toBeVisible();
+
+    // And it goes where the work gets written down.
+    await fill.click();
+    await expect(page.getByTestId('tree')).toBeVisible();
+  });
+});
+
 test.describe('the calendar can be smaller, or absent', () => {
   test('shows six weeks by default and one week on request', async ({ h }) => {
     const { page } = h;

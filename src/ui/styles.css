@@ -1209,6 +1209,20 @@ svg text {
  * Fixed, positioned from the button: a panel clips its own overflow, so a menu
  * drawn inside the row would be cut off by the bottom of its card.
  */
+/*
+ * A row that comes after the one above it.
+ *
+ * The pool lists what can be picked up and what is queued behind it in one
+ * column; at the same indent those read as alternatives rather than as an
+ * order. The step in is the sequence, drawn.
+ */
+.row.queued {
+  margin-left: var(--space-5);
+  border-left: 1px solid var(--border);
+  padding-left: var(--space-3);
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+
 /* Finished, and saying so in the way finished things do everywhere else. */
 .row-title.struck {
   text-decoration: line-through;
@@ -1222,9 +1236,12 @@ svg text {
  * list is the shape of the board rather than a filtered extract of it, and so
  * "waiting on Crosslink" can be read off it.
  */
-.row.nav-row.quiet .row-title { color: var(--text-muted); font-weight: 400; }
-.row.nav-row.quiet { opacity: 0.75; }
-.row.nav-row.quiet.not-begun { opacity: 0.55; }
+.row.quiet .row-title { color: var(--text-muted); font-weight: 400; }
+.row.quiet { opacity: 0.75; }
+.row.quiet.not-begun { opacity: 0.55; }
+/* Never started, whether or not there is something available in it — the
+   question "have I opened this yet" is not the question "can I do it now". */
+.row.nav-row.not-begun { opacity: 0.7; }
 
 .row-menu {
   position: fixed;

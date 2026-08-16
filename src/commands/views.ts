@@ -535,10 +535,17 @@ export function readyTree(index: GraphIndex, today: DateOnly): ReadyBranch[] {
       fraction reads "0 of 4" and stays 4 as they are ticked off, rather than
       counting down towards a goal that appears to contain nothing.
     */
-    const total = leaf ? 1 : leavesOf(index, node.id).length;
+    /*
+      Pieces of work, not childless nodes. `leavesOf` calls anything with no
+      children a leaf, which includes a milestone nobody has put a goal in yet
+      — and counting that as one thing to do made an empty project read
+      "nothing ready · 0/1" instead of "nothing in it yet".
+    */
+    const work = (id: NodeId) => leavesOf(index, id).filter((n) => !isContainerKind(n.kind));
+    const total = leaf ? 1 : work(node.id).length;
     const finished = leaf
       ? (derivedStatus(index, node.id, today) === 'done' ? 1 : 0)
-      : leavesOf(index, node.id).filter((n) => derivedStatus(index, n.id, today) === 'done').length;
+      : work(node.id).filter((n) => derivedStatus(index, n.id, today) === 'done').length;
     /*
       A culture at or below this, still in the incubator. Taken from the nearest
       one under it, because a goal usually holds exactly one and "day 9 of 35"
@@ -549,7 +556,7 @@ export function readyTree(index: GraphIndex, today: DateOnly): ReadyBranch[] {
       a day: a task back-filled as "done in Q3" says nothing about which
       fortnight anybody was working.
     */
-    const finishedOn = (leaf ? [node] : leavesOf(index, node.id))
+    const finishedOn = (leaf ? [node] : work(node.id))
       .map((n) => n.doneAt)
       .filter((at): at is string => Boolean(at))
       .map((at) => at.slice(0, 10));

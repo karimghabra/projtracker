@@ -12,8 +12,12 @@ test.describe('the day list', () => {
 
     const list = page.getByTestId('today-list');
     await expect(list.getByText('First task')).toBeVisible();
-    // And it leaves the ready panel, so nothing is offered twice.
-    await expect(page.getByTestId('ready-panel').getByText('First task')).toHaveCount(0);
+    // And it leaves the ready panel, so nothing is offered twice. By title:
+    // the task queued behind it says "waiting on First task", which is the
+    // same words about a different row.
+    await expect(
+      page.getByTestId('ready-panel').locator('.row-title', { hasText: 'First task' }),
+    ).toHaveCount(0);
   });
 
   test('takes a task that belongs to nothing at all', async ({ h }) => {

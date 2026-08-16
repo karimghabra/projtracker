@@ -890,8 +890,12 @@ function ReadyPanel({
     with four goals and work in one of them looked like a corridor. Now it looks
     like four goals, which is what it is, and you are only walked past a level
     that genuinely had one thing on it.
+
+    And never into something empty. A project holding one milestone holding
+    nothing walked you through both and left you looking at a blank panel —
+    with the row that offers to fill it two levels above your head.
   */
-  while (level.length === 1 && !level[0]!.row) {
+  while (level.length === 1 && !level[0]!.row && level[0]!.children.length > 0) {
     trail.push(level[0]!);
     level = level[0]!.children;
   }
@@ -928,8 +932,16 @@ function ReadyPanel({
     // Running is not stalled. A five-week culture offers nothing for five
     // weeks, and "nothing ready" is a poor description of that.
     if (branch.culture) return branch.culture.toLowerCase();
-    if (branch.waitingOn) return `waiting on ${branch.waitingOn}`;
     if (branch.state === 'in_progress') return 'under way';
+    if (branch.waitingOn) return `waiting on ${branch.waitingOn}`;
+    /*
+      Somebody has been at this: started something under it, or finished
+      something. `derivedStatus` will not say so — it reports a node's own
+      status, and a goal is not in progress because a task inside it is — and
+      without this a goal whose only task you have started reads "nothing
+      ready", which is true of the pool and false of the work.
+    */
+    if (branch.begun) return 'under way';
     return 'nothing ready';
   };
 
@@ -992,8 +1004,15 @@ function ReadyPanel({
         )}
 
         <div className="panel-body tight">
-          {total === 0 ? (
-            <Empty title="Nothing is unblocked right now">
+          {/*
+            The empty state is for a level with nothing on it, not for a board
+            with nothing available. Those were the same test, so a board where
+            everything was waiting or unwritten replaced the whole tree with a
+            sentence — including the rows that say what is waiting, and the one
+            offering to fill a goal nobody has put anything in.
+          */}
+          {shown.length === 0 ? (
+            <Empty title={total === 0 ? 'Nothing is unblocked right now' : 'Nothing here'}>
               Everything is either done, on today already, or waiting on something else. The graph
               shows what.
             </Empty>
@@ -1008,6 +1027,30 @@ function ReadyPanel({
                     onSeed={() => setSeeding(branch.row!.id)}
                     onFabricate={() => setFabricating(branch.row!.id)}
                   />
+                ) : branch.container && branch.total === 0 ? (
+                  /*
+                    Nothing in it, so there is nowhere to go: a row rather than
+                    a way in, with the one thing worth offering on it. It was a
+                    button inside a button until this — invalid, and the browser
+                    said so.
+                  */
+                  <div
+                    className="row quiet not-begun"
+                    key={branch.id}
+                    data-testid={`ready-empty-${branch.id}`}
+                  >
+                    <div className="grow" style={{ minWidth: 0 }}>
+                      <div className="row-title">{branch.name}</div>
+                      <div className="row-sub">{branch.kind} · nothing in it yet</div>
+                    </div>
+                    <button
+                      className="btn ghost sm"
+                      data-testid={`ready-fill-${branch.id}`}
+                      onClick={() => onReveal(branch.id)}
+                    >
+                      Add work
+                    </button>
+                  </div>
                 ) : branch.container ? (
                   <button
                     /*
@@ -1017,10 +1060,19 @@ function ReadyPanel({
                       available recedes, and something never touched recedes
                       further.
                     */
+                    /*
+                      Two dimmings, and they answer two questions. Nothing
+                      available is quiet; nothing begun recedes further — which
+                      is the rule the tree has had since work that had been
+                      opened stopped looking identical to work that had not.
+                      They were tangled together, so a milestone flagged "not
+                      started" read at full weight as long as it had a ready
+                      task in it, which is precisely the case the flag is for.
+                    */
                     className={[
                       'row nav-row',
                       branch.count === 0 ? 'quiet' : '',
-                      !branch.begun && branch.count === 0 ? 'not-begun' : '',
+                      !branch.begun ? 'not-begun' : '',
                     ]
                       .filter(Boolean)
                       .join(' ')}
@@ -1035,29 +1087,14 @@ function ReadyPanel({
                       <div className="row-sub">
                         {branch.id === MISC_BRANCH ? 'belongs to no project' : branch.kind}
                         {branch.count > 0
-                          ? branch.begun
-                            ? ' · under way'
-                            : ''
+                          ? branch.culture
+                            ? ` · ${branch.culture.toLowerCase()}`
+                            : branch.begun
+                              ? ' · under way'
+                              : ''
                           : ` · ${quiet(branch)}`}
                       </div>
                     </div>
-                    {/*
-                      An empty container is the one row with nothing to say and
-                      something to do: the work has not been written down yet,
-                      and the place to write it is one screen away.
-                    */}
-                    {branch.total === 0 && (
-                      <button
-                        className="btn ghost sm"
-                        data-testid={`ready-fill-${branch.id}`}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onReveal(branch.id);
-                        }}
-                      >
-                        Add work
-                      </button>
-                    )}
                     {(() => {
                       const badge = flag(branch);
                       return badge ? (
@@ -1087,7 +1124,13 @@ function ReadyPanel({
                     unlocks.
                   */
                   <div
-                    className="row quiet not-begun"
+                    /*
+                      Indented, because it is subsequent: it comes after the
+                      row above it and cannot be started until that one is
+                      done. Flush with the thing you can act on, it read as a
+                      second option rather than the next step.
+                    */
+                    className="row quiet not-begun queued"
                     key={branch.id}
                     data-testid={`ready-waiting-${branch.id}`}
                   >

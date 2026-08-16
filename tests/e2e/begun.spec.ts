@@ -58,8 +58,12 @@ test.describe('started work stands out', () => {
     // Down to the goals, where the choice between them is actually made.
     const pool = page.getByTestId('ready-panel');
     await expect(pool).toBeVisible();
-    const braid = pool.locator('.nav-row', { hasText: 'Braid' });
-    const weave = pool.locator('.nav-row', { hasText: 'Weave' });
+    // By title: the pool says "waiting on Braid" on other rows now, and a
+    // filter on the whole row matches those too.
+    const named = (text: string) =>
+      pool.locator('.nav-row').filter({ has: page.locator('.row-title', { hasText: text }) });
+    const braid = named('Braid');
+    const weave = named('Weave');
     if (await braid.count()) {
       await expect(braid).toContainText('under way');
       await expect(weave).not.toContainText('under way');
