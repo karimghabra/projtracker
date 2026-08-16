@@ -285,6 +285,51 @@ describe('the ready pool shows the whole level', () => {
     expect(branch.done).toBe(0);
   });
 
+  it('nests a sequence: each one sits under what it follows', () => {
+    const h = harness('2026-08-15T09:00');
+    const project = h.app.addProject('ELAC').id;
+    const milestone = h.app.addNode(project, 'Braids').id;
+    const goal = h.app.addNode(milestone, 'Suture pullout').id;
+    for (const [at, name] of ['Prepare scaffolds', 'Plan sutures', 'Perform pullout'].entries()) {
+      h.app.addNode(goal, name, { seq: at + 1 });
+    }
+
+    const tasks = under(h, goal);
+    expect(tasks.map((t) => [t.name, t.queued])).toEqual([
+      ['Prepare scaffolds', 0],
+      ['Plan sutures', 1],
+      ['Perform pullout', 2],
+    ]);
+  });
+
+  it('gives two things that run together the same depth', () => {
+    // Same rank, same place in the order — the number is the rank, not the row.
+    const h = harness('2026-08-15T09:00');
+    const project = h.app.addProject('ELAC').id;
+    const milestone = h.app.addNode(project, 'Braids').id;
+    const goal = h.app.addNode(milestone, 'Two ways').id;
+    const first = h.app.addNode(goal, 'Fabricate', { seq: 1 }).id;
+    const a = h.app.addNode(goal, 'Route A', { seq: 2 }).id;
+    const b = h.app.addNode(goal, 'Route B', { seq: 2 }).id;
+    h.app.setParallel([a, b]);
+
+    const tasks = under(h, goal);
+    expect(tasks.find((t) => t.id === first)!.queued).toBe(0);
+    expect(tasks.find((t) => t.id === a)!.queued).toBe(1);
+    expect(tasks.find((t) => t.id === b)!.queued).toBe(1);
+  });
+
+  it('does not nest what is not waiting on anything', () => {
+    const h = harness('2026-08-15T09:00');
+    const project = h.app.addProject('ELAC').id;
+    const milestone = h.app.addNode(project, 'Braids').id;
+    const goal = h.app.addNode(milestone, 'All at once').id;
+    const ids = ['One', 'Two', 'Three'].map((n) => h.app.addNode(goal, n).id);
+    h.app.setParallel(ids);
+
+    expect(under(h, goal).map((t) => t.queued)).toEqual([0, 0, 0]);
+  });
+
   it('drops what has been dropped', () => {
     const { h, second } = board();
     h.app.drop(second);

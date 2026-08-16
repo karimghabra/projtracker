@@ -925,6 +925,16 @@ function ReadyPanel({
   // Two separate caps would show four of each and call it a cap of four.
   const { shown, more, foldable } = cap(id, here);
 
+  /**
+   * How far in a row sits: its place in the order, drawn.
+   *
+   * Capped, because a goal with nine sequential tasks would otherwise walk the
+   * last one off the right-hand edge, and by then the nesting has said what it
+   * has to say.
+   */
+  const indent = (branch: ReadyBranch) =>
+    branch.queued > 0 ? { marginLeft: Math.min(branch.queued, 5) * 22 } : undefined;
+
   /** Why this one is not offering anything, in as few words as it takes. */
   const quiet = (branch: ReadyBranch): string => {
     if (branch.total === 0) return 'nothing in it yet';
@@ -1035,7 +1045,8 @@ function ReadyPanel({
                     said so.
                   */
                   <div
-                    className="row quiet not-begun"
+                    className={branch.queued > 0 ? 'row quiet not-begun queued' : 'row quiet not-begun'}
+                    style={indent(branch)}
                     key={branch.id}
                     data-testid={`ready-empty-${branch.id}`}
                   >
@@ -1073,9 +1084,11 @@ function ReadyPanel({
                       'row nav-row',
                       branch.count === 0 ? 'quiet' : '',
                       !branch.begun ? 'not-begun' : '',
+                      branch.queued > 0 ? 'queued' : '',
                     ]
                       .filter(Boolean)
                       .join(' ')}
+                    style={indent(branch)}
                     key={branch.id}
                     data-testid={`ready-into-${branch.id}`}
                     onClick={() => go([...trail.map((b) => b.id), branch.id])}
@@ -1125,12 +1138,13 @@ function ReadyPanel({
                   */
                   <div
                     /*
-                      Indented, because it is subsequent: it comes after the
-                      row above it and cannot be started until that one is
-                      done. Flush with the thing you can act on, it read as a
-                      second option rather than the next step.
+                      Stepped in by its place in the order: what follows the
+                      ready row sits under it, and what follows that sits under
+                      it again. Flush, they read as alternatives rather than as
+                      a sequence.
                     */
                     className="row quiet not-begun queued"
+                    style={indent(branch)}
                     key={branch.id}
                     data-testid={`ready-waiting-${branch.id}`}
                   >

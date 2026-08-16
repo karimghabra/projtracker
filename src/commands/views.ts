@@ -493,6 +493,15 @@ export interface ReadyBranch {
   children: ReadyBranch[];
   /** Present when this node is itself one of the ready leaves. */
   row?: ReadyRow;
+  /**
+   * How far down the queue this sits among its siblings: 0 for anything you
+   * could act on, 1 for what follows it, 2 for what follows that.
+   *
+   * Sequence drawn as nesting. Siblings that run in parallel share a depth,
+   * because they share a place in the order — the number is the rank, not the
+   * row.
+   */
+  queued: number;
 }
 
 export function readyTree(index: GraphIndex, today: DateOnly): ReadyBranch[] {
@@ -570,11 +579,30 @@ export function readyTree(index: GraphIndex, today: DateOnly): ReadyBranch[] {
     const empty = !leaf && (index.children.get(node.id) ?? []).length === 0;
     const waiting = blockersOf(index, node.id)[0]?.node.name;
 
+    /*
+      Where each child sits in the order, for the ones that are waiting. Ranks
+      rather than positions: two tasks given the same sequence number run
+      together and nest at the same depth, which is what the number means.
+    */
+    const ranks = [
+      ...new Set(
+        children
+          .filter((child) => child.state !== 'done')
+          .map((child) => index.state.nodes[child.id]?.seq ?? 0),
+      ),
+    ].sort((a, b) => a - b);
+    for (const child of children) {
+      const blocked = child.waitingOn !== undefined || child.state === 'blocked';
+      const rank = index.state.nodes[child.id]?.seq ?? 0;
+      child.queued = blocked ? Math.max(0, ranks.indexOf(rank)) : 0;
+    }
+
     return {
       id: node.id,
       name: node.name,
       kind: node.kind,
       count,
+      queued: 0,
       total,
       begun: hasBegun(index, node.id),
       state: derivedStatus(index, node.id, today),
@@ -614,6 +642,7 @@ export function readyTree(index: GraphIndex, today: DateOnly): ReadyBranch[] {
       // Not a project, and it used to say it was. `task` is what is in it.
       kind: 'task',
       container: true,
+      queued: 0,
       count: loose.reduce((sum, branch) => sum + branch.count, 0),
       total: loose.reduce((sum, branch) => sum + branch.total, 0),
       done: loose.reduce((sum, branch) => sum + branch.done, 0),
