@@ -10,6 +10,23 @@
  * The counter lives in state, which means id assignment is part of the mutation
  * and therefore part of undo: undoing a create releases nothing, and redoing it
  * produces the same id it had before.
+ *
+ * ...and a counter in the vault is shared by every machine that opens it, which
+ * is the flaw this had. Two laptops that each add a task before syncing both
+ * ask a counter reading 439 and both get `n439` — two different tasks, one
+ * name. The merge keys records by id, finds one id carrying two bodies, and can
+ * only call the whole file a conflict; newest-wins then throws one machine's
+ * work away without a word. It cost a task, and it would have gone on costing.
+ *
+ * So a machine adds a tag of its own to the ids it mints: `n439` becomes
+ * `n439kqp` here and `n439bxm` over there. Distinct ids for distinct things,
+ * which is all the merge ever needed.
+ *
+ * The tag is passed in rather than discovered, the same way the clock is — the
+ * command layer has no business knowing what a hostname is — and it is letters
+ * only, so the counter repair still reads the number out of an id and ignores
+ * the rest. Empty is allowed and means "behave exactly as before", which is
+ * what every existing vault and every test that names an id relies on.
  */
 
 import type { State } from '../core/model.ts';
@@ -36,20 +53,39 @@ function idsInUse(draft: State): Set<string> {
   return used;
 }
 
-export function allocateId(draft: State, prefix: IdPrefix): string {
+export function allocateId(draft: State, prefix: IdPrefix, tag = ''): string {
   const used = idsInUse(draft);
-  let id = `${prefix}${draft.nextId}`;
+  let id = `${prefix}${draft.nextId}${tag}`;
   while (used.has(id)) {
     draft.nextId += 1;
-    id = `${prefix}${draft.nextId}`;
+    id = `${prefix}${draft.nextId}${tag}`;
   }
   draft.nextId += 1;
   return id;
 }
 
 /** Several at once, in order. */
-export function allocateIds(draft: State, prefix: IdPrefix, count: number): string[] {
-  return Array.from({ length: count }, () => allocateId(draft, prefix));
+export function allocateIds(draft: State, prefix: IdPrefix, count: number, tag = ''): string[] {
+  return Array.from({ length: count }, () => allocateId(draft, prefix, tag));
+}
+
+/**
+ * A machine's tag: three letters, from whatever name the machine goes by.
+ *
+ * Derived rather than random so it survives reinstalling, and hashed rather
+ * than taken from the name so it stays three characters whether the machine is
+ * called `Omen` or `MacBook-Pro-2019-Karim`. Two machines drawing the same tag
+ * is possible and merely returns them to the old behaviour, so the cost of a
+ * clash is what we had before rather than something worse.
+ */
+export function deviceTag(name: string): string {
+  let hash = 0;
+  for (const char of name.trim().toLowerCase()) {
+    hash = (hash * 31 + char.charCodeAt(0)) % 17576; // 26^3
+  }
+  if (!name.trim()) return '';
+  const letters = 'abcdefghijklmnopqrstuvwxyz';
+  return [0, 1, 2].map((i) => letters[Math.floor(hash / 26 ** i) % 26]!).join('');
 }
 
 /**
@@ -62,6 +98,7 @@ export function allocateSlugId(
   prefix: IdPrefix,
   name: string,
   taken: Iterable<string>,
+  tag = '',
 ): string {
   const existing = new Set(taken);
   const base = name
@@ -79,5 +116,5 @@ export function allocateSlugId(
       if (!existing.has(candidate)) return candidate;
     }
   }
-  return allocateId(draft, prefix);
+  return allocateId(draft, prefix, tag);
 }

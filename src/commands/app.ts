@@ -211,10 +211,18 @@ export interface NodePatch {
 export class App {
   readonly store: Store;
   private readonly clock: Clock;
+  /**
+   * What this machine adds to the ids it mints, so two machines editing one
+   * vault cannot name two different things the same. Injected, like the clock:
+   * the command layer does not know what a machine is. Empty means the old
+   * behaviour, which is what a single-machine vault and every test wants.
+   */
+  private readonly tag: string;
   private cachedIndex?: { state: State; index: GraphIndex };
 
-  constructor(vault: Vault, clock: Clock = systemClock) {
+  constructor(vault: Vault, clock: Clock = systemClock, device = '') {
     this.clock = clock;
+    this.tag = device.toLowerCase().replace(/[^a-z]/g, '').slice(0, 4);
     const loaded = new Store(vault);
     // A vault with nothing in it is a new one: seed the standard protocols so
     // the inventory page is usable before the user has configured anything.
@@ -451,7 +459,7 @@ export class App {
 
     const now = this.now;
     return this.mutate(`Add ${kind} "${clean}"`, (draft) => {
-      const id = allocateId(draft, 'n');
+      const id = allocateId(draft, 'n', this.tag);
       const seqGiven = options.seq !== undefined;
       const node: Node = {
         id,
@@ -886,7 +894,7 @@ export class App {
 
     const now = this.now;
     return this.mutate(`Link "${from.name}" â†’ "${to.name}"`, (draft) => {
-      const id = allocateId(draft, 'd');
+      const id = allocateId(draft, 'd', this.tag);
       draft.deps.push({ id, from: fromId, to: toId, createdAt: now, note });
       return { ok: true as const, message: `"${to.name}" now waits for "${from.name}".`, id };
     });
@@ -985,7 +993,7 @@ export class App {
 
     const now = this.now;
     return this.mutate(`Quick-add "${name}"`, (draft) => {
-      const id = allocateId(draft, 'n');
+      const id = allocateId(draft, 'n', this.tag);
       draft.nodes[id] = {
         id,
         kind: 'task',
@@ -1046,7 +1054,7 @@ export class App {
 
     const now = this.now;
     return this.mutate(`Add experiment "${clean}"`, (draft) => {
-      const id = allocateId(draft, 'n');
+      const id = allocateId(draft, 'n', this.tag);
       draft.nodes[id] = {
         id,
         kind: 'experiment',
@@ -1205,7 +1213,7 @@ export class App {
     }
 
     return this.mutate(`Remind: ${clean}`, (draft) => {
-      const id = allocateId(draft, 'r');
+      const id = allocateId(draft, 'r', this.tag);
       draft.reminders.push({
         id,
         title: clean,
@@ -1325,7 +1333,7 @@ export class App {
     const now = this.now;
 
     return this.mutate('Note', (draft) => {
-      const id = allocateId(draft, 'j');
+      const id = allocateId(draft, 'j', this.tag);
       draft.notes.push({ id, at: now, text: clean, nodeId });
       return { ok: true as const, message: 'Noted.', id };
     });
@@ -1387,7 +1395,7 @@ export class App {
     if (!text.trim()) throw invalid('A step needs some text.');
     return this.mutate(`Add step to "${node.name}"`, (draft) => {
       const target = draft.nodes[nodeId]!;
-      target.steps.push({ id: `s${target.steps.length + 1}-${allocateId(draft, 's')}`, text: text.trim(), done: false });
+      target.steps.push({ id: `s${target.steps.length + 1}-${allocateId(draft, 's', this.tag)}`, text: text.trim(), done: false });
       return { ok: true as const, message: 'Step added.' };
     });
   }
@@ -1620,7 +1628,7 @@ export class App {
     const now = this.now;
 
     return this.mutate(`Add scaffold type "${clean}"`, (draft) => {
-      const id = allocateSlugId(draft, 't', clean, draft.scaffoldTypes.map((t) => t.id));
+      const id = allocateSlugId(draft, 't', clean, draft.scaffoldTypes.map((t) => t.id), this.tag);
       draft.scaffoldTypes.push({ id, name: clean, ...options, createdAt: now });
       return { ok: true as const, message: `Added scaffold type "${clean}".`, id };
     });
@@ -1729,7 +1737,7 @@ export class App {
         }
 
         batch.count = roundQuantity(batch.count - pick.count);
-        const id = allocateId(draft, 'b');
+        const id = allocateId(draft, 'b', this.tag);
         draft.batches.push({
           id,
           typeId: batch.typeId,
@@ -1787,7 +1795,7 @@ export class App {
     const now = this.now;
 
     return this.mutate(`Add ${describeQuantity(count, type.name, type.unit)}`, (draft) => {
-      const id = allocateId(draft, 'b');
+      const id = allocateId(draft, 'b', this.tag);
       const batch: ScaffoldBatch = {
         id,
         typeId,
@@ -1908,7 +1916,7 @@ export class App {
     const clean = name.trim();
     if (!clean) throw invalid('A protocol needs a name.');
     return this.mutate(`Add protocol "${clean}"`, (draft) => {
-      const id = allocateSlugId(draft, 'p', clean, draft.protocols.map((p) => p.id));
+      const id = allocateSlugId(draft, 'p', clean, draft.protocols.map((p) => p.id), this.tag);
       draft.protocols.push({
         id,
         name: clean,
@@ -2014,7 +2022,7 @@ export class App {
     const now = this.now;
 
     return this.mutate(`Start ${protocol.name}`, (draft) => {
-      const id = allocateId(draft, 'x');
+      const id = allocateId(draft, 'x', this.tag);
       draft.runs.push({
         id,
         protocolId,

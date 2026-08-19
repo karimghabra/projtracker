@@ -307,13 +307,20 @@ test.describe('the sequence numbers do what they say', () => {
     });
 
     const ready = await intoWork(page);
+    /*
+      By name rather than by id. Ids carry a tag for the machine that minted
+      them now — that is what stops two computers naming two different tasks
+      the same — so `n4` is no longer a thing a test can predict, and a spec
+      about ordering should not have been asserting one anyway.
+    */
+    const row = (name: string) =>
+      ready.locator('.row', { has: page.locator('.row-title', { hasText: name }) });
+
     // First is what can be picked up; the other two are here saying what they
     // are waiting for, which is the same fact from the other side.
-    await expect(ready.getByTestId('ready-n4')).toBeVisible();
-    await expect(ready.getByTestId('ready-waiting-n5').locator('.row-sub')).toHaveText(
-      'waiting on First',
-    );
-    await expect(ready.getByTestId('ready-n5')).toHaveCount(0);
+    await expect(row('First').getByRole('checkbox')).toBeVisible();
+    await expect(row('Second').locator('.row-sub')).toHaveText('waiting on First');
+    await expect(row('Second').getByRole('checkbox')).toHaveCount(0);
   });
 
   test('two things given the same number can run together', async ({ h }) => {

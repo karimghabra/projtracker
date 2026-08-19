@@ -18,6 +18,33 @@ import { systemClock } from '../../core/dates.ts';
 import type { Clock } from '../../core/dates.ts';
 import type { Vault } from '../../store/vault.ts';
 
+const DEVICE_KEY = 'protracker:device';
+
+/**
+ * A name for this machine, kept out of the vault on purpose.
+ *
+ * Ids carry it so two computers editing one vault cannot mint the same id for
+ * two different things. It therefore must not be a thing the vault knows —
+ * anything stored in the vault syncs, and a tag both machines share is no tag
+ * at all. Local storage is per install and never leaves it.
+ *
+ * Written once and kept: changing it later would not corrupt anything, since
+ * ids are opaque and never re-derived, but it would make the ids on one
+ * machine stop looking like each other for no reason.
+ */
+function thisMachine(): string {
+  if (typeof window === 'undefined') return '';
+  const stored = window.localStorage.getItem(DEVICE_KEY);
+  if (stored) return stored;
+  const letters = 'abcdefghijklmnopqrstuvwxyz';
+  const tag = Array.from(
+    { length: 3 },
+    () => letters[Math.floor(Math.random() * letters.length)]!,
+  ).join('');
+  window.localStorage.setItem(DEVICE_KEY, tag);
+  return tag;
+}
+
 export interface Toast {
   id: number;
   text: string;
@@ -42,7 +69,7 @@ export class UiStore {
     location: string,
     private readonly clock: Clock = systemClock,
   ) {
-    this.app = new App(vault, clock);
+    this.app = new App(vault, clock, thisMachine());
     this.location = location;
   }
 
@@ -60,7 +87,7 @@ export class UiStore {
    * offering nothing. A sync is a place you cannot step back through.
    */
   reload(): void {
-    this.app = new App(this.vault, this.clock);
+    this.app = new App(this.vault, this.clock, thisMachine());
     this.emit();
   }
 

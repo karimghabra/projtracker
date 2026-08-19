@@ -12,7 +12,9 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { hostname } from 'node:os';
 import { App } from '../commands/app.ts';
+import { deviceTag } from '../commands/ids.ts';
 import type { TreeNode } from '../commands/views.ts';
 import { notFound, toCommandError } from '../commands/errors.ts';
 import { formatDayMonth, systemClock } from '../core/dates.ts';
@@ -165,7 +167,9 @@ async function main(argv: string[]): Promise<number> {
   // being knowable.
   const isNew = !holdsVault(root);
   if (!json) warnAboutNewVault(choice);
-  const app = new App(new NodeVault(root), systemClock);
+  // The machine's own tag, so ids minted here cannot collide with ids minted
+  // by the same vault open on another computer.
+  const app = new App(new NodeVault(root), systemClock, deviceTag(hostname()));
   const out = (value: unknown) => {
     process.stdout.write(`${typeof value === 'string' ? value : JSON.stringify(value, null, 2)}\n`);
   };

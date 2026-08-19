@@ -86,7 +86,7 @@ editable afterwards. Ranks are the implicit dependency mechanism (§2.3).
 
 | Field | Meaning |
 |---|---|
-| `id` | Stable opaque identifier. Never reused, never changes. |
+| `id` | Stable opaque identifier. Never reused, never changes. Carries a tag for the machine that minted it — see 7.4. |
 | `ref` | Human-readable dotted slug path (`tendon-study.fabrication.cad`). Regenerated on move; never used as identity. |
 | `kind` | `project` \| `milestone` \| `goal` \| `task` \| `experiment` |
 | `name`, `notes` | Free text. |
@@ -97,6 +97,7 @@ editable afterwards. Ranks are the implicit dependency mechanism (§2.3).
 | `health` | Independent axis: `not_begun` \| `on_track` \| `at_risk` \| `off_track`. A task can be done *and* off track. |
 | `doneAt`, `donePrecision` | When it was finished, and how precisely that is known — see 2.5. |
 | `plannedFor` | Optional date. The user's intent to do this on that day. |
+| `deadline` | Optional date. The day this has to be *finished* by — see 2.6. |
 | `waitingOn` | Optional `{ reason, until }` for an external hold. |
 | `tags`, `links`, `steps` | Light annotations. Steps are a checklist, not child tasks. |
 
@@ -179,6 +180,44 @@ quarter or month means the most recent one that has *begun*.
 
 ---
 
+### 2.6 Deadlines, and the pathway to one
+
+A deadline is the one date in this system that reaches backwards.
+
+A date on a goal is not only about that goal. If the pullout data is owed on
+the 30th, then the scaffolds have to be fabricated, crosslinked and sterilised
+before then — and those tasks carry no date of their own, so without this they
+are the quietest rows on the board with a wall on the other side of them.
+
+So a node's **effective deadline** is the earliest deadline among:
+
+- its own,
+- everything downstream of it — whatever it gates, and whatever that gates,
+  which is one question because a sequence rank and a dependency are the same
+  edge here,
+- anything it sits inside: finishing the goal by Friday means finishing its
+  tasks by Friday,
+- and, for a container, the soonest date anywhere underneath it.
+
+Two deadlines on one pathway is not a contradiction. **The nearer one binds**,
+in either direction, and the further one is still true — it becomes the answer
+once the nearer one is met. Finished work has no deadline: a date it had to be
+met by has stopped being a question about what to do, so it drops out, and so
+do deadlines belonging to finished work.
+
+A container tracks whether its date came from **below** rather than from its
+own pathway, because the two read differently: a goal's own deadline binds
+every task in it and can be stated once at the top of the level, whereas a
+project is "due" only because one milestone in it is, and hoisting that over
+the level would put a deadline on the four milestones beside it that have none.
+
+**This is not a scheduler** (§1). Nothing here sorts the pool, ranks work or
+decides what to do next — a deadline changes how work *reads*, never which work
+is available or in what order, and there is a test that asserts exactly that.
+What is drawn is emphasis: the whole pathway is marked rather than only the row
+holding the date, and being unstarted on a dated pathway is a reason to say so
+louder rather than to recede.
+
 ## 3. Experiments
 
 A cell culture experiment is a node with a timeline. At definition the user
@@ -242,6 +281,14 @@ deleting one is how you say no.
 
 **Calendar** — a month view of planned tasks, reminders, experiment stages, and
 experiment end dates.
+
+A node's own `notes` field — what a piece of work *is*, as opposed to what
+happened while doing it — is editable from wherever that work appears: the
+day's list, the ready pool (on containers as well as tasks) and the detail
+pane. The note that gets written is the one that can be written without going
+anywhere, and it shows in full under the row rather than behind a click. The
+write happens once, on save, so a paragraph is one undo step and not two
+hundred.
 
 **Journal** — a stream of quick thoughts, browsable by day, searchable,
 optionally attached to a node. Notes are notes; nothing parses them.
@@ -434,6 +481,15 @@ Consequences that fall out of this:
 
 ### 7.3 The same vault on two machines
 
+Checked every 30 seconds by default, and a local edit is pushed about four
+seconds after the typing stops — two machines are meant to feel like one board,
+and a minute of staleness is long enough to make you distrust the screen.
+
+That is affordable because a git blob is named by a hash of its content, so the
+tree listing alone says which files differ: a sync that finds nothing costs
+four requests rather than one per file. At 56 files it was 59.
+
+
 Optional, off until configured: the vault's own files kept in a **private**
 GitHub repository, so a second computer opens the same tracker.
 
@@ -475,6 +531,35 @@ time that mistake is visible the history is already public, and deleting it does
 not un-publish it.
 
 ---
+
+### 7.4 Ids, and the machine that minted them
+
+Ids come from a monotonic counter in `meta.pt`, prefixed by what they name:
+`n42` is a node, `d7` a dependency. They are opaque, never reused and never
+derived from content.
+
+A counter in the vault is shared by every machine that opens it, and that was a
+real fault. Two laptops that each added a task before syncing both asked a
+counter reading 439 and both got `n439` — two different tasks, one name. The
+merge keys records by id, found one id carrying two bodies, and could only call
+the whole file a conflict; newest-wins then discarded one machine's work
+silently. Completions survived it. Additions did not.
+
+So each machine appends **three letters of its own** to the ids it mints:
+`n439kqp` here, `n439bxm` there. Distinct ids for distinct things, which is all
+the merge ever needed.
+
+The tag is injected from outside, exactly as the clock is — the command layer
+has no business knowing what a hostname is. The desktop keeps one per install
+in local storage, deliberately *not* in the vault: anything in the vault syncs,
+and a tag both machines share is no tag at all. The CLI derives one from the
+hostname. Empty is allowed and means the old behaviour, which is what every
+vault written before this and every test that names an id relies on.
+
+Letters only, so the counter repair still reads the number out of an id and
+ignores the rest. Two machines drawing the same three letters is possible and
+merely returns them to the old behaviour, so a clash costs what we had before
+rather than something worse.
 
 ## 8. Architecture
 
