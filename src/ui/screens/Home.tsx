@@ -9,6 +9,9 @@
 import { useState, type ReactNode } from 'react';
 import { useRowDrag } from '../state/rowDrag.ts';
 import { formatDayMonth, formatRelativeDay } from '../../core/dates.ts';
+import type { DateOnly } from '../../core/dates.ts';
+import type { Due } from '../../core/deadlines.ts';
+import { describeDue } from '../../core/deadlines.ts';
 import { formatOffset } from '../../core/protocols.ts';
 import { BATCH_STATES, isTerminalState } from '../../core/model.ts';
 import type { ExperimentDef } from '../../core/model.ts';
@@ -22,6 +25,7 @@ import { UpcomingPanel } from '../components/UpcomingPanel.tsx';
 import { ConfirmDialog, Empty, InlineEdit, Modal, QuickAdd } from '../components/ui.tsx';
 import { PlanButton, PlanDialog } from '../components/PlanDialog.tsx';
 import { RowMenu } from '../components/RowMenu.tsx';
+import { NoteDialog } from '../components/NoteDialog.tsx';
 import { NewProjectWizard } from './NewProject.tsx';
 import {
   IconCalendar,
@@ -36,6 +40,7 @@ import {
   IconPlus,
   IconProjects,
   IconClose,
+  IconEdit,
   IconTrash,
   IconUndo,
 } from '../components/icons.tsx';
@@ -462,6 +467,7 @@ function TodayRow({
   const { app, run } = useApp();
   const [startingProtocol, setStartingProtocol] = useState(false);
   const [moving, setMoving] = useState(false);
+  const [noting, setNoting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const toggle = () => {
@@ -525,6 +531,24 @@ function TodayRow({
             </span>
           )}
           {item.source === 'planned' && <span className="chip accent">planned</span>}
+          {/*
+            A date it is working towards. On today's list this is the answer to
+            "does this have to be today", which is a different question from
+            why it is on the list at all.
+          */}
+          {item.node?.due && (
+            <span
+              className={`chip ${dueChip(item.node.due, app.today).tone}`}
+              data-testid={`today-due-${item.key}`}
+              title={
+                item.node.due.inherited
+                  ? `On the way to ${item.node.due.fromName}, due ${item.node.due.on}`
+                  : `Due ${item.node.due.on}`
+              }
+            >
+              {dueChip(item.node.due, app.today).text}
+            </span>
+          )}
           {/* Why it is here without anybody putting it here. */}
           {item.source === 'in-progress' && <span className="chip info">in progress</span>}
           {!item.group && item.origin === 'protocol' && <span className="chip warn">protocol</span>}
@@ -532,6 +556,16 @@ function TodayRow({
           {item.reminderTime && <span className="row-sub mono">{item.reminderTime}</span>}
           {!item.group && item.reminderNotes && <span className="row-sub">{item.reminderNotes}</span>}
         </div>
+        {/*
+          The note, in full and under the row it belongs to. Not truncated: a
+          note cut off at forty characters is a note you have to open something
+          to read, which is the trip this was meant to save.
+        */}
+        {item.node?.notes && (
+          <div className="row-note" data-testid={`today-note-text-${item.key}`}>
+            {item.node.notes}
+          </div>
+        )}
       </div>
 
       <div className="row-actions">
@@ -604,6 +638,17 @@ function TodayRow({
           label={item.title}
           testId={`more-${item.key}`}
           actions={[
+            ...(item.kind === 'task'
+              ? [
+                  {
+                    label: item.node?.notes ? 'Edit the note' : 'Add a note',
+                    name: `${item.node?.notes ? 'Edit' : 'Add'} a note on ${item.title}`,
+                    icon: <IconEdit size={13} />,
+                    testId: `today-note-${item.key}`,
+                    onSelect: () => setNoting(true),
+                  },
+                ]
+              : []),
             ...(item.kind === 'task' && !item.done
               ? [
                   {
@@ -661,6 +706,15 @@ function TodayRow({
           nodeId={item.id}
           taskName={item.title}
           onClose={() => setStartingProtocol(false)}
+        />
+      )}
+
+      {noting && (
+        <NoteDialog
+          nodeId={item.id}
+          title={item.title}
+          current={item.node?.notes}
+          onClose={() => setNoting(false)}
         />
       )}
     </div>
@@ -845,6 +899,92 @@ export function storedReadyPath(): string[] {
   }
 }
 
+/**
+ * A note written on a branch, under its row.
+ *
+ * The same shape as the note on a task, because it is the same field: a goal
+ * takes a note as readily as the work inside it does, and "what this arm of
+ * the project is actually for" is the note most worth having.
+ */
+function BranchNote({ branch }: { branch: ReadyBranch }) {
+  if (!branch.notes) return null;
+  return (
+    <div className="row-note" data-testid={`ready-note-text-${branch.id}`}>
+      {branch.notes}
+    </div>
+  );
+}
+
+/**
+ * What you can do to a branch without going into it.
+ *
+ * Only the note for now, and one button rather than one per verb — the pool is
+ * a list you read, and every control on a row is something between you and
+ * reading it.
+ *
+ * Nothing for the miscellaneous drawer: it is a bucket this view invents to
+ * hold loose work, not a node, so there is nothing to write a note on.
+ */
+function BranchMenu({ branch }: { branch: ReadyBranch }) {
+  const [noting, setNoting] = useState(false);
+  if (branch.id === MISC_BRANCH) return null;
+
+  return (
+    <>
+      <RowMenu
+        label={branch.name}
+        testId={`ready-more-${branch.id}`}
+        actions={[
+          {
+            label: branch.notes ? 'Edit the note' : 'Add a note',
+            name: `${branch.notes ? 'Edit' : 'Add'} a note on ${branch.name}`,
+            icon: <IconEdit size={13} />,
+            testId: `ready-note-${branch.id}`,
+            onSelect: () => setNoting(true),
+          },
+        ]}
+      />
+      {noting && (
+        <NoteDialog
+          nodeId={branch.id}
+          title={branch.name}
+          current={branch.notes}
+          onClose={() => setNoting(false)}
+        />
+      )}
+    </>
+  );
+}
+
+/**
+ * A deadline as a chip: how long is left, and how loudly to say it.
+ *
+ * Three tones and no more. Overdue is the only one that gets to be red —
+ * everything else is a date somebody can still meet, and a board that goes red
+ * a fortnight out is a board that is red permanently.
+ */
+function dueChip(due: Due, today: DateOnly): { text: string; tone: string } {
+  const text = describeDue(due, today);
+  if (due.daysLeft < 0) return { text, tone: 'danger' };
+  if (due.daysLeft <= 3) return { text, tone: 'warn' };
+  return { text, tone: 'accent' };
+}
+
+/**
+ * The classes a pool row wears, plus the two that come from the graph rather
+ * than from the row: where it sits in the order, and whether it is on the way
+ * to a date.
+ */
+function rowClass(branch: ReadyBranch, classes: (string | false)[]): string {
+  const all = new Set(classes.filter((c): c is string => Boolean(c)));
+  if (branch.queued > 0) all.add('queued');
+  if (branch.due) {
+    all.add('on-path');
+    if (branch.due.daysLeft < 0) all.add('overdue');
+  }
+  return [...all].join(' ');
+}
+
 function ReadyPanel({
   path,
   onPath,
@@ -935,6 +1075,25 @@ function ReadyPanel({
   const indent = (branch: ReadyBranch) =>
     branch.queued > 0 ? { marginLeft: Math.min(branch.queued, 5) * 22 } : undefined;
 
+  /*
+    The date this whole level is working towards, if it has one.
+
+    Said once, in the crumbs, and then left off the rows that merely inherit
+    it: a deadline on a goal is a deadline on all four of its tasks, and four
+    identical chips is four copies of one fact. The rule is the one the rows
+    already follow for the breadcrumb — the header says where you are, so the
+    rows do not have to. A row whose own date is nearer still shows it, which
+    is the case where the chip is telling you something.
+
+    Only when the date is the level's own, though. A project is "due" because
+    one milestone under it is, and hoisting that into the header would put one
+    milestone's deadline over the four beside it that have none.
+  */
+  const levelBranch = trail.length ? trail[trail.length - 1] : undefined;
+  const levelDue = levelBranch && !levelBranch.dueFromBelow ? levelBranch.due : undefined;
+  const chipFor = (branch: ReadyBranch) =>
+    branch.due && branch.due.on !== levelDue?.on ? dueChip(branch.due, app.today) : null;
+
   /** Why this one is not offering anything, in as few words as it takes. */
   const quiet = (branch: ReadyBranch): string => {
     if (branch.total === 0) return 'nothing in it yet';
@@ -963,8 +1122,16 @@ function ReadyPanel({
    * in which they change what you would do next.
    */
   const flag = (branch: ReadyBranch): { text: string; tone: string } | null => {
-    if (branch.culture) return { text: 'in culture', tone: 'info' };
     if (branch.total > 0 && branch.done === branch.total) return { text: 'done', tone: 'ok' };
+    /*
+      A date beats a state. "Not started" and "in culture" describe where
+      something is; a deadline says when it has to be somewhere else, and that
+      is the one that changes what you would pick up. The state it displaces is
+      still on the row — the sub-line says "day 9 of 35" either way.
+    */
+    const due = chipFor(branch);
+    if (due) return due;
+    if (branch.culture) return { text: 'in culture', tone: 'info' };
     if (branch.total > 2 && branch.done / branch.total >= 0.75) {
       return { text: 'almost done', tone: 'ok' };
     }
@@ -1010,6 +1177,19 @@ function ReadyPanel({
                 › {branch.name}
               </button>
             ))}
+            {levelDue && (
+              <span
+                className={`chip ${dueChip(levelDue, app.today).tone}`}
+                data-testid="ready-level-due"
+                title={
+                  levelDue.inherited
+                    ? `On the way to ${levelDue.fromName}, due ${levelDue.on}`
+                    : `Due ${levelDue.on}`
+                }
+              >
+                {dueChip(levelDue, app.today).text}
+              </span>
+            )}
           </div>
         )}
 
@@ -1033,7 +1213,7 @@ function ReadyPanel({
                   <ReadyRowView
                     key={branch.id}
                     row={branch.row}
-                    today={app.today}
+                    due={chipFor(branch)}
                     onSeed={() => setSeeding(branch.row!.id)}
                     onFabricate={() => setFabricating(branch.row!.id)}
                   />
@@ -1045,7 +1225,7 @@ function ReadyPanel({
                     said so.
                   */
                   <div
-                    className={branch.queued > 0 ? 'row quiet not-begun queued' : 'row quiet not-begun'}
+                    className={rowClass(branch, ['row', 'quiet', 'not-begun'])}
                     style={indent(branch)}
                     key={branch.id}
                     data-testid={`ready-empty-${branch.id}`}
@@ -1053,6 +1233,7 @@ function ReadyPanel({
                     <div className="grow" style={{ minWidth: 0 }}>
                       <div className="row-title">{branch.name}</div>
                       <div className="row-sub">{branch.kind} · nothing in it yet</div>
+                      <BranchNote branch={branch} />
                     </div>
                     <button
                       className="btn ghost sm"
@@ -1061,9 +1242,20 @@ function ReadyPanel({
                     >
                       Add work
                     </button>
+                    <BranchMenu branch={branch} />
                   </div>
                 ) : branch.container ? (
-                  <button
+                  /*
+                    A wrapper, and the navigation inside it as a button of its
+                    own.
+
+                    The row used to *be* the button, which left nowhere to put
+                    a menu: a button inside a button is invalid, and the
+                    browser says so. Now the row is a plain row with two things
+                    on it — a large target that opens the branch, and the
+                    verbs. Which is also what the day's list looks like.
+                  */
+                  <div
                     /*
                       Three weights, and they are the whole point of showing
                       everything: something with work in it reads normally,
@@ -1080,54 +1272,58 @@ function ReadyPanel({
                       started" read at full weight as long as it had a ready
                       task in it, which is precisely the case the flag is for.
                     */
-                    className={[
-                      'row nav-row',
+                    className={rowClass(branch, [
+                      'row',
+                      'nav-row',
                       branch.count === 0 ? 'quiet' : '',
                       !branch.begun ? 'not-begun' : '',
-                      branch.queued > 0 ? 'queued' : '',
-                    ]
-                      .filter(Boolean)
-                      .join(' ')}
+                    ])}
                     style={indent(branch)}
                     key={branch.id}
-                    data-testid={`ready-into-${branch.id}`}
-                    onClick={() => go([...trail.map((b) => b.id), branch.id])}
                   >
-                    <div className="grow" style={{ minWidth: 0 }}>
-                      <div className={branch.state === 'done' ? 'row-title struck' : 'row-title'}>
-                        {branch.name}
+                    <button
+                      className="row-open"
+                      data-testid={`ready-into-${branch.id}`}
+                      onClick={() => go([...trail.map((b) => b.id), branch.id])}
+                    >
+                      <div className="grow" style={{ minWidth: 0 }}>
+                        <div className={branch.state === 'done' ? 'row-title struck' : 'row-title'}>
+                          {branch.name}
+                        </div>
+                        <div className="row-sub">
+                          {branch.id === MISC_BRANCH ? 'belongs to no project' : branch.kind}
+                          {branch.count > 0
+                            ? branch.culture
+                              ? ` · ${branch.culture.toLowerCase()}`
+                              : branch.begun
+                                ? ' · under way'
+                                : ''
+                            : ` · ${quiet(branch)}`}
+                        </div>
+                        <BranchNote branch={branch} />
                       </div>
-                      <div className="row-sub">
-                        {branch.id === MISC_BRANCH ? 'belongs to no project' : branch.kind}
-                        {branch.count > 0
-                          ? branch.culture
-                            ? ` · ${branch.culture.toLowerCase()}`
-                            : branch.begun
-                              ? ' · under way'
-                              : ''
-                          : ` · ${quiet(branch)}`}
-                      </div>
-                    </div>
-                    {(() => {
-                      const badge = flag(branch);
-                      return badge ? (
-                        <span className={badge.tone ? `chip ${badge.tone}` : 'chip'}>
-                          {badge.text}
+                      {(() => {
+                        const badge = flag(branch);
+                        return badge ? (
+                          <span className={badge.tone ? `chip ${badge.tone}` : 'chip'}>
+                            {badge.text}
+                          </span>
+                        ) : null;
+                      })()}
+                      {branch.count > 0 ? (
+                        <span className="chip">{branch.count}</span>
+                      ) : (
+                        <span className="faint mono nowrap">
+                          {/* Progress, not availability. "0 of 9" was the count
+                              of ready things, which on a goal in the middle of a
+                              culture is nine parts wrong. */}
+                          {branch.total > 0 ? `${branch.done}/${branch.total}` : ''}
                         </span>
-                      ) : null;
-                    })()}
-                    {branch.count > 0 ? (
-                      <span className="chip">{branch.count}</span>
-                    ) : (
-                      <span className="faint mono nowrap">
-                        {/* Progress, not availability. "0 of 9" was the count
-                            of ready things, which on a goal in the middle of a
-                            culture is nine parts wrong. */}
-                        {branch.total > 0 ? `${branch.done}/${branch.total}` : ''}
-                      </span>
-                    )}
-                    <IconChevronRight size={13} />
-                  </button>
+                      )}
+                      <IconChevronRight size={13} />
+                    </button>
+                    <BranchMenu branch={branch} />
+                  </div>
                 ) : (
                   /*
                     A task that is not available yet. Not a button and not a
@@ -1143,7 +1339,7 @@ function ReadyPanel({
                       it again. Flush, they read as alternatives rather than as
                       a sequence.
                     */
-                    className="row quiet not-begun queued"
+                    className={rowClass(branch, ['row', 'quiet', 'not-begun', 'queued'])}
                     style={indent(branch)}
                     key={branch.id}
                     data-testid={`ready-waiting-${branch.id}`}
@@ -1153,8 +1349,17 @@ function ReadyPanel({
                         {branch.name}
                       </div>
                       <div className="row-sub">{quiet(branch)}</div>
+                      <BranchNote branch={branch} />
                     </div>
-                    {branch.culture && <span className="chip info">in culture</span>}
+                    {(() => {
+                      const badge = flag(branch);
+                      return badge ? (
+                        <span className={badge.tone ? `chip ${badge.tone}` : 'chip'}>
+                          {badge.text}
+                        </span>
+                      ) : null;
+                    })()}
+                    <BranchMenu branch={branch} />
                   </div>
                 ),
               )}
@@ -1268,18 +1473,31 @@ function FabricateDialog({ nodeId, onClose }: { nodeId: string; onClose: () => v
  */
 function ReadyRowView({
   row,
-  today,
+  due,
   onSeed,
   onFabricate,
 }: {
   row: ReadyRow;
-  today: string;
+  /** Its deadline, when the level above has not already said it. */
+  due: { text: string; tone: string } | null;
   onSeed: () => void;
   onFabricate: () => void;
 }) {
-  const { run } = useApp();
+  const { app, run } = useApp();
+  const today = app.today;
+  const [noting, setNoting] = useState(false);
   return (
-                <div className="row" key={row.id} data-testid={`ready-${row.id}`}>
+                <div
+                  className={[
+                    'row',
+                    row.due ? 'on-path' : '',
+                    row.due && row.due.daysLeft < 0 ? 'overdue' : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                  key={row.id}
+                  data-testid={`ready-${row.id}`}
+                >
                 {/*
                   Finishing something you never started is normal: you did it at
                   the bench and are recording it. It should not need a trip
@@ -1334,10 +1552,34 @@ function ReadyRowView({
                   {/* No breadcrumb on the row: the crumbs above already say
                       where you are, and repeating the path on every line was
                       heavier than the task names it sat under. */}
+                  {row.notes && (
+                    <div className="row-note" data-testid={`ready-note-text-${row.id}`}>
+                      {row.notes}
+                    </div>
+                  )}
                 </div>
                 {row.stepsTotal > 0 && (
                   <span className="chip">
                     {row.stepsDone}/{row.stepsTotal}
+                  </span>
+                )}
+                {/*
+                  What it is on the way to, when that is not itself. A task with
+                  no date of its own is the usual case on a pathway — the date
+                  is three steps down it — and without this the row that has to
+                  move first is the only one that says nothing.
+                */}
+                {due && (
+                  <span
+                    className={`chip ${due.tone}`}
+                    data-testid={`ready-due-${row.id}`}
+                    title={
+                      row.due!.inherited
+                        ? `On the way to ${row.due!.fromName}, due ${row.due!.on}`
+                        : `Due ${row.due!.on}`
+                    }
+                  >
+                    {due.text}
                   </span>
                 )}
                 {/* When it is already spoken for, say so: "not yet" and "nobody
@@ -1355,6 +1597,33 @@ function ReadyRowView({
                 >
                   <IconPlus size={12} /> Today
                 </button>
+                {/*
+                  The rest of what you can do to a pool row, behind one button
+                  — the same place the day's list keeps them. A note is the
+                  first thing in it because it is the one you write at the
+                  bench, with the task in front of you.
+                */}
+                <RowMenu
+                  label={row.name}
+                  testId={`ready-more-${row.id}`}
+                  actions={[
+                    {
+                      label: row.notes ? 'Edit the note' : 'Add a note',
+                      name: `${row.notes ? 'Edit' : 'Add'} a note on ${row.name}`,
+                      icon: <IconEdit size={13} />,
+                      testId: `ready-note-${row.id}`,
+                      onSelect: () => setNoting(true),
+                    },
+                  ]}
+                />
+                {noting && (
+                  <NoteDialog
+                    nodeId={row.id}
+                    title={row.name}
+                    current={row.notes}
+                    onClose={() => setNoting(false)}
+                  />
+                )}
                 </div>
   );
 }

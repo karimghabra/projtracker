@@ -1137,6 +1137,27 @@ svg text {
   min-width: 0;
 }
 
+/*
+ * A note written on a piece of work, under the row it belongs to.
+ *
+ * Wrapped and whole, unlike the sub-line above it. A sub-line is a fact about
+ * the row and can be cut short without losing much; a note is a sentence
+ * somebody wrote on purpose, and half of one is worse than none — you have to
+ * go and open it, which is the trip writing it here was meant to save.
+ *
+ * Newlines are kept, because a note taken at the bench is often a short list.
+ */
+.row-note {
+  margin-top: 3px;
+  padding-left: var(--space-2);
+  border-left: 2px solid var(--border);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* Where a row belongs, when its own name is not enough to tell two apart. One
    line, clipped rather than wrapped: it is context, and context that pushes the
    next row down the screen has stopped being context. */
@@ -1241,6 +1262,55 @@ svg text {
 /* Never started, whether or not there is something available in it — the
    question "have I opened this yet" is not the question "can I do it now". */
 .row.nav-row.not-begun { opacity: 0.7; }
+
+/*
+ * On the way to a deadline.
+ *
+ * The whole pathway is marked, not only the row holding the date: the work
+ * that has to happen first is the work the date is actually about, and it is
+ * the part that carries no date of its own. A stripe down the left edge, so a
+ * pathway reads as one thing running through the tree rather than as a scatter
+ * of chips.
+ *
+ * It also cancels the dimming. A task nobody has started is normally quiet;
+ * one that has to be finished by Friday is not, and being unstarted is the
+ * reason to say so louder rather than softer.
+ */
+.row.on-path {
+  border-left: 2px solid var(--accent);
+  padding-left: calc(var(--space-3) - 1px);
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+.row.on-path.quiet,
+.row.on-path.quiet.not-begun,
+.row.nav-row.on-path.not-begun { opacity: 1; }
+.row.on-path.quiet .row-title { color: var(--text); font-weight: 500; }
+/* Past its day. Louder, because it is the one case where the board is behind
+   rather than merely busy. */
+.row.on-path.overdue { border-left-color: var(--danger); }
+
+/*
+ * The part of a branch row that opens it.
+ *
+ * The row used to be the button. It cannot be any more — a row needs to carry
+ * verbs of its own, and a button inside a button is invalid — so the row is a
+ * row and this is the large target inside it. Everything the row looked like
+ * lives here; the wrapper keeps only the padding and the stripe.
+ */
+.row-open {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
 
 .row-menu {
   position: fixed;
