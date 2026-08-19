@@ -11,6 +11,7 @@ import { useEffect, useState } from 'react';
 import { HEALTH_STATES } from '../../core/model.ts';
 import type { Health } from '../../core/model.ts';
 import { addDays, formatDayMonth } from '../../core/dates.ts';
+import { describeDue } from '../../core/deadlines.ts';
 import type { NodeView } from '../../commands/views.ts';
 import { useApp } from '../state/store.ts';
 import { ExperimentForm } from './ExperimentForm.tsx';
@@ -174,6 +175,9 @@ export function NodeDetail({
             </span>
           </div>
         )}
+
+        {/* ------------------------------------------------------- due */}
+        <DueSection node={node} />
 
         {/* --------------------------------------------------- waiting */}
         {isLeaf && <WaitingSection node={node} />}
@@ -414,6 +418,58 @@ function lastQuarter(today: string): string {
   const year = Number(today.slice(0, 4));
   const q = Math.floor((Number(today.slice(5, 7)) - 1) / 3) + 1;
   return q === 1 ? `${year - 1}-Q4` : `${year}-Q${q - 1}`;
+}
+
+/**
+ * The day this has to be finished by.
+ *
+ * Shown on everything, not only on tasks: a deadline usually belongs to a goal
+ * — "the pullout data by the 30th" — and the tasks under it inherit it. When
+ * one is inherited the field stays empty and says whose it is, so setting a
+ * date here is always setting it *here* and never quietly moving somebody
+ * else's.
+ */
+function DueSection({ node }: { node: NodeView }) {
+  const { app, run } = useApp();
+  const inherited = node.due && node.due.inherited ? node.due : undefined;
+
+  return (
+    <div className="field">
+      <label htmlFor="d-due">Due by</label>
+      <div className="inline">
+        <input
+          id="d-due"
+          className="input"
+          type="date"
+          value={node.deadline ?? ''}
+          data-testid="detail-deadline"
+          onChange={(event) =>
+            run((a) => a.updateNode(node.id, { deadline: event.target.value || null }), {
+              silent: true,
+            })
+          }
+        />
+        {node.deadline && (
+          <button
+            className="btn sm ghost"
+            onClick={() => run((a) => a.updateNode(node.id, { deadline: null }))}
+          >
+            Clear
+          </button>
+        )}
+      </div>
+      {inherited ? (
+        <span className="hint">
+          On the way to <strong>{inherited.fromName}</strong> —{' '}
+          {describeDue(inherited, app.today).toLowerCase()}. A date here would have to come first.
+        </span>
+      ) : (
+        <span className="hint">
+          Everything that has to happen first is marked as being on the way to it.
+        </span>
+      )}
+    </div>
+  );
 }
 
 function WaitingSection({ node }: { node: NodeView }) {

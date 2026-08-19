@@ -8,6 +8,7 @@
 
 import { useEffect, useState } from 'react';
 import { childKindOf } from '../../core/model.ts';
+import { describeDue } from '../../core/deadlines.ts';
 import type { NodeView, TreeNode } from '../../commands/views.ts';
 import { useApp } from '../state/store.ts';
 import { ConfirmDialog, Empty, HealthChip, InlineEdit, ProgressBar, StatusChip } from '../components/ui.tsx';
@@ -241,7 +242,7 @@ function TreeRow({
   onSelect: (id: string) => void;
   bulk: Bulk;
 }) {
-  const { run } = useApp();
+  const { app, run } = useApp();
   // Open down to tasks by default. This is the editor for the work; hiding the
   // work behind two clicks makes it a viewer.
   //
@@ -336,6 +337,22 @@ function TreeRow({
         {node.progress && (
           <span style={{ width: 96 }}>
             <ProgressBar done={node.progress.done} total={node.progress.total} />
+          </span>
+        )}
+        {/*
+          A date this row itself carries — not one it inherits. The tree is
+          where dates are set, so the question it has to answer is "which of
+          these did I put a deadline on", and marking every row on the pathway
+          would answer a different one at three hundred rows' expense. Where
+          the pathway matters is the pool, and the pool draws it.
+        */}
+        {node.deadline && node.derived !== 'done' && node.due && (
+          <span
+            className={`chip ${node.due.daysLeft < 0 ? 'danger' : node.due.daysLeft <= 3 ? 'warn' : 'accent'}`}
+            data-testid={`tree-due-${node.id}`}
+            title={`Due ${node.deadline}`}
+          >
+            {describeDue(node.due, app.today)}
           </span>
         )}
         {/* Health describes work in flight. On something already finished it is

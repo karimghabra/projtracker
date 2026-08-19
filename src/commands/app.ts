@@ -132,6 +132,9 @@ function nodeChanges(node: Node, patch: NodePatch): string[] {
   if (patch.plannedFor !== undefined && (patch.plannedFor ?? undefined) !== node.plannedFor) {
     changed.push(patch.plannedFor ? 'planned date' : 'planned date cleared');
   }
+  if (patch.deadline !== undefined && (patch.deadline ?? undefined) !== node.deadline) {
+    changed.push(patch.deadline ? 'deadline' : 'deadline cleared');
+  }
   if (patch.tags !== undefined) {
     const next = patch.tags.map((t) => t.trim()).filter(Boolean);
     if (!same(next, node.tags)) changed.push('tags');
@@ -199,6 +202,8 @@ export interface NodePatch {
   ordering?: Ordering;
   health?: Health;
   plannedFor?: DateOnly | null;
+  /** The day it has to be finished by. Null clears it. */
+  deadline?: DateOnly | null;
   tags?: string[];
   waitingOn?: { reason: string; until?: DateOnly } | null;
 }
@@ -480,6 +485,9 @@ export class App {
     const existing = this.state.nodes[id];
     if (!existing) throw notFound('node', id);
     if (patch.name !== undefined && !patch.name.trim()) throw invalid('A name is required.');
+    if (patch.deadline != null && !isDateOnly(patch.deadline)) {
+      throw invalid(`"${patch.deadline}" is not a date. Use YYYY-MM-DD.`);
+    }
     if (patch.health && !HEALTH_STATES.includes(patch.health)) {
       throw invalid(`Unknown health state "${patch.health}".`);
     }
@@ -513,6 +521,7 @@ export class App {
       if (patch.ordering !== undefined && isContainerKind(node.kind)) node.ordering = patch.ordering;
       if (patch.health !== undefined) node.health = patch.health;
       if (patch.plannedFor !== undefined) node.plannedFor = patch.plannedFor ?? undefined;
+      if (patch.deadline !== undefined) node.deadline = patch.deadline ?? undefined;
       if (patch.tags !== undefined) node.tags = patch.tags.map((t) => t.trim()).filter(Boolean);
       if (patch.waitingOn !== undefined) node.waitingOn = patch.waitingOn ?? undefined;
 

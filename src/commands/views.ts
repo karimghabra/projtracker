@@ -34,6 +34,8 @@ import type { ExperimentDef } from '../core/model.ts';
 import type { ExperimentAction, ScaffoldSupply, Stage } from '../core/experiments.ts';
 import type { Momentum } from '../core/momentum.ts';
 import { momentumOf } from '../core/momentum.ts';
+import type { Due } from '../core/deadlines.ts';
+import { dueFor } from '../core/deadlines.ts';
 import {
   describeExperiment,
   endDateOf,
@@ -105,6 +107,15 @@ export interface NodeView {
   derived: DerivedStatus;
   health: Health;
   plannedFor?: DateOnly;
+  /** A day this itself has to be finished by, if the user set one here. */
+  deadline?: DateOnly;
+  /**
+   * The deadline this is working towards — its own, or one belonging to
+   * something it has to be finished before. Worked out here because whether a
+   * task is on the pathway to a date is a question about the graph, and a row
+   * has no business walking one.
+   */
+  due?: Due;
   waitingOn?: WaitingOn;
   tags: string[];
   links: Link[];
@@ -159,6 +170,8 @@ export function nodeView(index: GraphIndex, id: NodeId, today: DateOnly): NodeVi
     derived: derivedStatus(index, node.id, today),
     health: node.health,
     plannedFor: node.plannedFor,
+    deadline: node.deadline,
+    due: dueFor(index, node.id, today),
     waitingOn: node.waitingOn,
     tags: node.tags,
     links: node.links,
@@ -490,6 +503,24 @@ export interface ReadyBranch {
    * something and then quietly forgetting it.
    */
   momentum: Momentum;
+  /**
+   * The deadline this branch is working towards, its own or one it is on the
+   * way to. Present on the containers too, so a pathway to a date is a lit
+   * stripe through the tree rather than a chip on the last row of it.
+   */
+  due?: Due;
+  /**
+   * True when that date was found underneath rather than on the pathway this
+   * node is on — a project is "due" because one milestone in it is.
+   *
+   * The difference matters to whoever draws it: a goal's own deadline binds
+   * every task in it, so it can be stated once at the top of the level; a date
+   * borrowed from one child binds only that child, and saying it over the
+   * level would put a deadline on three things that do not have one.
+   */
+  dueFromBelow: boolean;
+  /** A note written on it, so the row can show it without fetching anything. */
+  notes?: string;
   children: ReadyBranch[];
   /** Present when this node is itself one of the ready leaves. */
   row?: ReadyRow;
@@ -502,6 +533,11 @@ export interface ReadyBranch {
    * row.
    */
   queued: number;
+}
+
+/** The soonest of some dates, for a branch reading its children. */
+function nearest(dues: (Due | undefined)[]): Due | undefined {
+  return dues.filter((d): d is Due => d !== undefined).sort((a, b) => a.daysLeft - b.daysLeft)[0];
 }
 
 export function readyTree(index: GraphIndex, today: DateOnly): ReadyBranch[] {
@@ -570,6 +606,20 @@ export function readyTree(index: GraphIndex, today: DateOnly): ReadyBranch[] {
       .filter((at): at is string => Boolean(at))
       .map((at) => at.slice(0, 10));
 
+    /*
+      Its own deadline, or one it is on the way to — and separately, the
+      soonest date anywhere underneath it. A container inherits from both
+      directions, and which direction it came from changes how it reads.
+    */
+    const ownDue = dueFor(index, node.id, today);
+    /*
+      The nearer of the two binds, in either direction. A goal owed at the end
+      of the month holding one task owed on Tuesday is a goal about Tuesday —
+      the month-end date is still true and will be the answer once Tuesday is
+      met, which is the same rule two dates on one pathway follow.
+    */
+    const due = nearest([ownDue, nearest(children.map((child) => child.due))]);
+
     const own = node.experiment && node.kind === 'experiment' ? node : undefined;
     const running =
       own && experimentStatus(own.experiment!, today).state === 'running'
@@ -610,6 +660,15 @@ export function readyTree(index: GraphIndex, today: DateOnly): ReadyBranch[] {
       done: finished,
       culture: running,
       momentum: momentumOf(finishedOn, today),
+      /*
+        A container inherits from what is under it as well as from what is
+        above: a goal is due when the last of its tasks is, and that is how a
+        project says "something in here is due Friday" without the row itself
+        carrying a date.
+      */
+      due,
+      dueFromBelow: due !== undefined && due.on !== ownDue?.on,
+      notes: node.notes,
       waitingOn: count === 0 && !empty && !running ? waiting : undefined,
       children,
       row,
@@ -647,6 +706,10 @@ export function readyTree(index: GraphIndex, today: DateOnly): ReadyBranch[] {
       total: loose.reduce((sum, branch) => sum + branch.total, 0),
       done: loose.reduce((sum, branch) => sum + branch.done, 0),
       momentum: momentumOf([], today),
+      // Whatever the soonest thing in the drawer is owed by. The bucket has no
+      // pathway of its own, so anything it shows came from inside it.
+      due: nearest(loose.map((branch) => branch.due)),
+      dueFromBelow: true,
       // Loose work has no shared history, so the bucket never claims to be
       // under way — the rows inside it each answer for themselves.
       begun: false,

@@ -109,7 +109,7 @@ export function journalFile(month: string): string {
 
 const NODE_KNOWN = [
   'id', 'name', 'seq', 'seqSource', 'ordering', 'status', 'health',
-  'createdAt', 'startedAt', 'doneAt', 'donePrecision', 'plannedFor',
+  'createdAt', 'startedAt', 'doneAt', 'donePrecision', 'plannedFor', 'deadline',
   'waitingReason', 'waitingUntil', 'tags', 'notes', 'troubleshooting',
 ] as const;
 
@@ -153,6 +153,8 @@ function nodeToBlock(state: State, node: Node): Block {
     f.set('donePrecision', node.donePrecision);
   }
   if (node.plannedFor) f.set('plannedFor', node.plannedFor);
+  // Written only when there is one, so no existing vault gains a line.
+  if (node.deadline) f.set('deadline', node.deadline);
   if (node.waitingOn) {
     f.set('waitingReason', node.waitingOn.reason);
     if (node.waitingOn.until) f.set('waitingUntil', node.waitingOn.until);
@@ -263,6 +265,7 @@ function blockToNode(b: Block, parent: string | null, into: State): void {
     // materialising it here would make memory differ from disk on every node.
     donePrecision: readPrecision(field(b, 'donePrecision')),
     plannedFor: field(b, 'plannedFor'),
+    deadline: field(b, 'deadline'),
     waitingOn: waitingReason ? { reason: waitingReason, until: field(b, 'waitingUntil') } : undefined,
     tags: listField(b, 'tags'),
     links: childrenOfKind(b, 'link').map((l) => ({

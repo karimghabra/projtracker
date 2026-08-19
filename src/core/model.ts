@@ -156,6 +156,16 @@ export interface Node {
 
   /** The user's intent to work on this on a given day. */
   plannedFor?: DateOnly;
+  /**
+   * The day this has to be finished by.
+   *
+   * Not `plannedFor`, which is when you mean to sit down to it. A deadline is
+   * a fact about the work's consequences — a conference, a shipment, somebody
+   * waiting — and it is the one date in this system that is allowed to reach
+   * backwards: everything that must be finished before this can be is on the
+   * way to it, and inherits it.
+   */
+  deadline?: DateOnly;
   waitingOn?: WaitingOn;
 
   tags: string[];
