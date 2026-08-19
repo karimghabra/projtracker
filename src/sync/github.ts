@@ -13,7 +13,9 @@
  * The one clever part is that a git blob's name is a hash of its content, and
  * `node:crypto` can compute it here. So the tree listing alone says which files
  * differ, without downloading any of them, and a push uploads only what GitHub
- * does not already have. A sync where nothing changed costs three requests.
+ * does not already have — and a pull downloads only what this machine does not
+ * already have. A sync where nothing changed costs four requests rather than
+ * one per file, which is what makes syncing every half minute affordable.
  */
 
 import { createHash } from 'node:crypto';
@@ -135,7 +137,7 @@ export class GitHubVault implements GitTransport {
     return ref?.object.sha ?? null;
   }
 
-  async read(commit: string): Promise<{ files: Files; at: string }> {
+  async read(commit: string, have?: ReadonlyMap<string, string>): Promise<{ files: Files; at: string }> {
     const meta = await this.call<{ tree: { sha: string }; committer: { date: string } }>(
       `/git/commits/${commit}`,
     );
@@ -149,6 +151,21 @@ export class GitHubVault implements GitTransport {
     const files: Files = new Map();
     for (const entry of tree!.tree) {
       if (entry.type !== 'blob' || !isBackedUp(entry.path)) continue;
+      /*
+        A blob's name is a hash of its content, so a file we already hold with
+        the same name is the same bytes and there is nothing to fetch. On a
+        vault of any size this is nearly all of them: the tree listing is one
+        request, and only what actually differs is downloaded.
+
+        This was always the intent of computing blob names here — it was doing
+        it on the way out, to skip uploads, and not on the way in. A sync that
+        changed nothing was fetching the whole vault every time.
+      */
+      const held = have?.get(entry.path);
+      if (held !== undefined && blobSha(held) === entry.sha) {
+        files.set(entry.path, held);
+        continue;
+      }
       const blob = await this.call<{ content: string; encoding: string }>(`/git/blobs/${entry.sha}`);
       files.set(
         entry.path,

@@ -26,8 +26,14 @@ export interface GitTransport {
   info(): Promise<{ defaultBranch: string; private: boolean }>;
   /** The commit a branch points at, or null when the branch does not exist. */
   head(branch: string): Promise<string | null>;
-  /** Every `.pt` file in a commit, and when that commit was made. */
-  read(commit: string): Promise<{ files: Files; at: string }>;
+  /**
+   * Every `.pt` file in a commit, and when that commit was made.
+   *
+   * `have` is what the caller already holds, by path. A git blob is named by a
+   * hash of its content, so anything whose name matches is the same bytes and
+   * does not need fetching — which is most of the vault, most of the time.
+   */
+  read(commit: string, have?: ReadonlyMap<string, string>): Promise<{ files: Files; at: string }>;
   /**
    * One commit containing exactly `files`. `branch` is left alone when null —
    * that is how the superseded side gets written down without becoming the
@@ -232,7 +238,7 @@ export async function syncVault(
     return { ...nothing, message: `Published ${mine.size} files.`, commit, pushed: mine.size };
   }
 
-  const theirs = await transport.read(remote);
+  const theirs = await transport.read(remote, mine);
 
   // The remote has not moved since we last agreed with it, so there is nothing
   // to merge — only, perhaps, something to send.
@@ -257,7 +263,15 @@ export async function syncVault(
   // The remote moved. Without a base every absence is ambiguous, so a machine
   // that has never synced is treated as having agreed with nothing: it can add
   // and it can win a collision, but it cannot delete what it never saw.
-  const base = lastCommit ? (await transport.read(lastCommit)).files : new Map<string, string>();
+  /*
+    Anything just fetched from the remote counts as held too. Base and remote
+    are usually one edit apart, so almost every blob the base needs is one we
+    have this second — and the sha check means reuse can only ever be exact.
+  */
+  const held = new Map([...mine, ...theirs.files]);
+  const base = lastCommit
+    ? (await transport.read(lastCommit, held)).files
+    : new Map<string, string>();
   const plan = planSync({ base, mine, theirs: theirs.files, mineAt, theirsAt: theirs.at });
 
   if (!plan.localMoved) {

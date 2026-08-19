@@ -31,7 +31,8 @@ export interface GitStatus {
   lastSyncAt?: string;
   lastCommit?: string;
   auto: boolean;
-  everyMinutes: number;
+  /** Seconds between checks. The Sheets backup still counts in minutes. */
+  everySeconds: number;
   /** False when this machine had no keychain and the token sits in plain text. */
   encrypted: boolean;
 }
@@ -84,8 +85,8 @@ contextBridge.exposeInMainWorld('protracker', {
     connect: (repo: string, token: string): Promise<GitStatus> =>
       ipcRenderer.invoke('pt:git:connect', repo, token),
     forget: (): Promise<GitStatus> => ipcRenderer.invoke('pt:git:forget'),
-    setAuto: (auto: boolean, everyMinutes?: number): Promise<GitStatus> =>
-      ipcRenderer.invoke('pt:git:setAuto', auto, everyMinutes),
+    setAuto: (auto: boolean, everySeconds?: number): Promise<GitStatus> =>
+      ipcRenderer.invoke('pt:git:setAuto', auto, everySeconds),
     sync: (): Promise<SyncOutcome> => ipcRenderer.invoke('pt:git:sync'),
   },
 

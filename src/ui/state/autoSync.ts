@@ -20,10 +20,30 @@ import { useApp } from './store.ts';
 /** How often to look. Whether to *push* is a separate, longer interval. */
 const TICK_MS = 60_000;
 
+/*
+  The vault loop runs on its own, much shorter clock. Two machines are meant to
+  feel like one board, and a minute of staleness is long enough to make you
+  distrust what is on the screen.
+
+  Affordable because a sync that finds nothing now costs four requests rather
+  than one per file: at fifteen seconds that is under a thousand an hour
+  against a limit of five thousand.
+*/
+const VAULT_TICK_MS = 15_000;
+
+/** How long the typing has to stop before a local edit is pushed. */
+const SETTLE_MS = 4_000;
+
 function minutesSince(stamp: string | undefined): number {
   if (!stamp) return Number.POSITIVE_INFINITY;
   const then = new Date(stamp).getTime();
   return Number.isFinite(then) ? (Date.now() - then) / 60_000 : Number.POSITIVE_INFINITY;
+}
+
+function secondsSince(stamp: string | undefined): number {
+  if (!stamp) return Number.POSITIVE_INFINITY;
+  const then = new Date(stamp).getTime();
+  return Number.isFinite(then) ? (Date.now() - then) / 1_000 : Number.POSITIVE_INFINITY;
 }
 
 export function useAutoSync(): void {
@@ -121,14 +141,22 @@ export function useVaultSync(): void {
 
     let stopped = false;
     let running = false;
+    /*
+      Set when something was edited here since the last sync. An edit should
+      leave within seconds rather than waiting out the interval — the interval
+      exists to bound how often we ask *GitHub* whether anything arrived, and
+      that is a different question from how quickly our own work goes out.
+    */
+    let dirty = false;
 
-    const tick = async () => {
+    const tick = async (force = false) => {
       if (stopped || running) return;
       running = true;
       try {
         const status = await bridge.status();
         if (!status.configured || !status.auto) return;
-        if (minutesSince(status.lastSyncAt) < status.everyMinutes) return;
+        if (!force && secondsSince(status.lastSyncAt) < status.everySeconds) return;
+        dirty = false;
 
         const outcome = await bridge.sync();
         if (outcome.changed) {
@@ -149,10 +177,27 @@ export function useVaultSync(): void {
     };
 
     void tick();
-    const timer = setInterval(() => void tick(), TICK_MS);
+    const timer = setInterval(() => void tick(), VAULT_TICK_MS);
+
+    /*
+      A local edit schedules a push of its own, once the typing stops. Without
+      this, finishing a task on one machine and turning to the other means
+      waiting out the interval staring at a board that is already wrong.
+    */
+    let settle: ReturnType<typeof setTimeout> | undefined;
+    const unsubscribe = store.subscribe(() => {
+      dirty = true;
+      clearTimeout(settle);
+      settle = setTimeout(() => {
+        if (dirty) void tick(true);
+      }, SETTLE_MS);
+    });
+
     return () => {
       stopped = true;
       clearInterval(timer);
+      clearTimeout(settle);
+      unsubscribe();
     };
   }, [store]);
 }

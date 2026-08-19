@@ -288,6 +288,15 @@ interface GitSettings {
   lastCommit?: string;
   lastSyncAt?: string;
   auto?: boolean;
+  /**
+   * Seconds between checks for work arriving from the other machine.
+   *
+   * Seconds rather than minutes because two machines are supposed to feel like
+   * one board, and it is affordable: a sync that finds nothing costs four
+   * requests, so thirty seconds is under five hundred an hour.
+   */
+  everySeconds?: number;
+  /** What this used to be called, in minutes. Read once, to migrate. */
   everyMinutes?: number;
 }
 
@@ -356,7 +365,7 @@ function gitStatus(settings: GitSettings): {
   lastSyncAt?: string;
   lastCommit?: string;
   auto: boolean;
-  everyMinutes: number;
+  everySeconds: number;
   /** False when the OS gave us nowhere safe to keep the token. */
   encrypted: boolean;
 } {
@@ -367,7 +376,9 @@ function gitStatus(settings: GitSettings): {
     lastSyncAt: settings.lastSyncAt,
     lastCommit: settings.lastCommit,
     auto: settings.auto === true,
-    everyMinutes: settings.everyMinutes ?? 10,
+    // A setting written by an older build is in minutes; honour it once and it
+    // is rewritten in seconds the next time the interval is changed.
+    everySeconds: settings.everySeconds ?? (settings.everyMinutes ?? 0.5) * 60,
     encrypted: Boolean(settings.token),
   };
 }
@@ -405,14 +416,19 @@ function registerGitHandlers(): void {
 
   ipcMain.handle('pt:git:forget', () => {
     const settings = readGitSettings();
-    writeGitSettings({ everyMinutes: settings.everyMinutes });
+    writeGitSettings({ everySeconds: settings.everySeconds });
     return gitStatus(readGitSettings());
   });
 
-  ipcMain.handle('pt:git:setAuto', (_event, auto: boolean, everyMinutes?: number) => {
+  ipcMain.handle('pt:git:setAuto', (_event, auto: boolean, everySeconds?: number) => {
     const settings = readGitSettings();
     settings.auto = auto;
-    if (everyMinutes) settings.everyMinutes = everyMinutes;
+    if (everySeconds) {
+      // Floored, because the renderer only looks every fifteen seconds and a
+      // smaller number would promise something it cannot keep.
+      settings.everySeconds = Math.max(15, Number(everySeconds));
+      delete settings.everyMinutes;
+    }
     writeGitSettings(settings);
     return gitStatus(settings);
   });

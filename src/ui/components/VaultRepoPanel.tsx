@@ -17,7 +17,19 @@ import type { GitBridge, GitStatus, SyncOutcome } from '../state/vault.ts';
 import { useApp } from '../state/store.ts';
 import { IconWarning } from './icons.tsx';
 
-const INTERVALS = [5, 10, 30, 60] as const;
+/**
+ * How often to look for work from the other machine.
+ *
+ * Seconds, and short ones, because the point of the whole feature is that the
+ * two machines are one board. A check that finds nothing costs four requests,
+ * so even the shortest of these is a few hundred an hour.
+ */
+const INTERVALS = [
+  [15, 'seconds'],
+  [30, 'seconds'],
+  [60, 'minute'],
+  [300, 'minutes'],
+] as const;
 
 function when(stamp: string | undefined): string {
   if (!stamp) return 'never';
@@ -43,7 +55,7 @@ export function VaultRepoPanel({ bridge }: { bridge: GitBridge }) {
     try {
       setStatus(await bridge.status());
     } catch {
-      setStatus({ configured: false, auto: false, everyMinutes: 10, encrypted: false });
+      setStatus({ configured: false, auto: false, everySeconds: 30, encrypted: false });
     }
   }, [bridge]);
 
@@ -168,17 +180,17 @@ export function VaultRepoPanel({ bridge }: { bridge: GitBridge }) {
             <select
               className="input"
               style={{ width: 90 }}
-              value={status.everyMinutes}
-              aria-label="Minutes between syncs"
+              value={status.everySeconds}
+              aria-label="Seconds between syncs"
               onChange={(event) =>
                 void guard('auto', async () => {
                   setStatus(await bridge.setAuto(status.auto, Number(event.target.value)));
                 })
               }
             >
-              {INTERVALS.map((minutes) => (
-                <option key={minutes} value={minutes}>
-                  {minutes} min
+              {INTERVALS.map(([seconds, unit]) => (
+                <option key={seconds} value={seconds}>
+                  {seconds < 60 ? `${seconds} sec` : `${seconds / 60} ${unit}`}
                 </option>
               ))}
             </select>
