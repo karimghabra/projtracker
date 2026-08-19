@@ -10,9 +10,18 @@
  * Fixed rather than absolute, positioned from the button's own rectangle: a
  * panel clips its overflow, so a menu drawn inside the row would be cut off by
  * the bottom of the card it is in.
+ *
+ * ...and rendered into the body rather than into the row, which fixed being
+ * unclickable on any dimmed row. A row with nothing started is drawn at
+ * `opacity: 0.7`, and an opacity below 1 creates a stacking context: the menu
+ * was `position: fixed` with `z-index: 40` *inside* that context, so the rows
+ * below it painted over the top of it. It looked completely normal and
+ * swallowed every click. Out here it belongs to nobody's context but the
+ * document's, which is what a popup wants regardless.
  */
 
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { IconMore } from './icons.tsx';
 
 export interface RowAction {
@@ -107,7 +116,9 @@ export function RowMenu({
       >
         <IconMore size={13} />
       </button>
-      {open && at && (
+      {open &&
+        at &&
+        createPortal(
         <div
           ref={menu}
           className="row-menu"
@@ -136,8 +147,9 @@ export function RowMenu({
               <span>{action.label}</span>
             </button>
           ))}
-        </div>
-      )}
+        </div>,
+          document.body,
+        )}
     </>
   );
 }

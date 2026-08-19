@@ -75,10 +75,12 @@ test.describe('changing your mind', () => {
 
     // Delete is one of the verbs that live behind the row's More button now,
     // so that the name of the task has room on a third-width card.
+    // The menu is a popup rendered into the document, not into the panel — so
+    // the item is asked for at the page level while the button that opens it
+    // still belongs to the row.
     await page.getByTestId('today-panel')
       .getByRole('button', { name: 'More for Typed by mistake' }).click();
-    await page.getByTestId('today-panel')
-      .getByRole('button', { name: 'Delete Typed by mistake' }).click();
+    await page.getByRole('button', { name: 'Delete Typed by mistake' }).click();
     await page.screenshot({ path: 'screenshots/awk-4-confirm.png' });
     await expect(page.getByRole('dialog')).toContainText('Delete "Typed by mistake"?');
     await page.getByRole('button', { name: 'Delete', exact: true }).click();
@@ -97,8 +99,7 @@ test.describe('changing your mind', () => {
 
     await page.getByTestId('today-panel')
       .getByRole('button', { name: 'More for Chase the PO' }).click();
-    await page.getByTestId('today-panel')
-      .getByRole('button', { name: /back in the ready pool/ }).click();
+    await page.getByRole('button', { name: /back in the ready pool/ }).click();
     await expect(page.getByTestId('today-panel')).not.toContainText('Chase the PO');
 
     const pool = page.getByTestId('ready-panel');

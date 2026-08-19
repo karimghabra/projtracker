@@ -22,8 +22,11 @@ test.describe('getting something off the day', () => {
     const today = page.getByTestId('today-list');
     await expect(today).toContainText('Pick up badge from Scripps');
 
+    // The menu is a popup rendered into the document, not into the panel — so
+    // the item is asked for at the page level while the button that opens it
+    // still belongs to the row.
     await today.getByRole('button', { name: /^More for/ }).click();
-    await today.getByRole('button', { name: /back in the ready pool/ }).click();
+    await page.getByRole('button', { name: /back in the ready pool/ }).click();
 
     // The list unmounts when the day empties, so this asks the panel.
     await expect(page.getByTestId('today-panel')).not.toContainText('Pick up badge from Scripps');
@@ -41,7 +44,7 @@ test.describe('getting something off the day', () => {
 
     const row = page.getByTestId('today-list');
     await row.getByRole('button', { name: 'More for Typo I never meant to add' }).click();
-    await row.getByRole('button', { name: 'Delete Typo I never meant to add' }).click();
+    await page.getByRole('button', { name: 'Delete Typo I never meant to add' }).click();
     await expect(page.getByRole('dialog')).toContainText('Delete "Typo I never meant to add"?');
     await page.getByRole('button', { name: 'Delete', exact: true }).click();
 
@@ -60,7 +63,7 @@ test.describe('getting something off the day', () => {
 
     const row = page.getByTestId('today-list');
     await row.getByRole('button', { name: 'More for Deleted by accident' }).click();
-    await row.getByRole('button', { name: 'Delete Deleted by accident' }).click();
+    await page.getByRole('button', { name: 'Delete Deleted by accident' }).click();
     await page.getByRole('button', { name: 'Delete', exact: true }).click();
     await expect(page.getByTestId('today-panel')).not.toContainText('Deleted by accident');
 

@@ -43,7 +43,7 @@ test.describe('a protocol run against a task', () => {
 
     const row = page.getByTestId('today-list').locator('.row', { hasText: 'Prepare threads' });
     await row.getByRole('button', { name: /^More for/ }).click();
-    await row.getByRole('button', { name: /Run a protocol/ }).click();
+    await page.getByRole('button', { name: /Run a protocol/ }).click();
 
     // The start time is a field, not "now": a run written up after the fact
     // still has the right timings, and a test does not depend on the clock.
@@ -64,7 +64,7 @@ test.describe('a protocol run against a task', () => {
 
     const row = page.getByTestId('today-list').locator('.row', { hasText: 'Prepare threads' });
     await row.getByRole('button', { name: /^More for/ }).click();
-    await row.getByRole('button', { name: /Run a protocol/ }).click();
+    await page.getByRole('button', { name: /Run a protocol/ }).click();
     await page.locator('#tp-start').fill(`${today}T06:00`);
     await page.getByTestId('confirm-run-protocol').click();
 
@@ -80,7 +80,7 @@ test.describe('a protocol run against a task', () => {
 
     const row = page.getByTestId('today-list').locator('.row', { hasText: 'Prepare threads' });
     await row.getByRole('button', { name: /^More for/ }).click();
-    await row.getByRole('button', { name: /Run a protocol/ }).click();
+    await page.getByRole('button', { name: /Run a protocol/ }).click();
     await page.locator('#tp-start').fill(`${today}T06:00`);
     await page.getByTestId('confirm-run-protocol').click();
     await expect(page.getByTestId('today-list').getByText('Load tubing')).toBeVisible();
@@ -96,7 +96,7 @@ test.describe('a protocol run against a task', () => {
 
     const row = page.getByTestId('today-list').locator('.row', { hasText: 'Prepare threads' });
     await row.getByRole('button', { name: /^More for/ }).click();
-    await row.getByRole('button', { name: /Run a protocol/ }).click();
+    await page.getByRole('button', { name: /Run a protocol/ }).click();
     await page.locator('#tp-start').fill(`${today}T06:00`);
     await page.getByTestId('confirm-run-protocol').click();
     await expect(page.getByTestId('today-list').getByText('Load tubing')).toBeVisible();
