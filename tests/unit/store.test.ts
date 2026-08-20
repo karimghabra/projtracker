@@ -244,7 +244,18 @@ describe('a vault two things are writing to', () => {
     return app;
   };
 
-  it('refuses to write over work that arrived while it was open', () => {
+  /*
+    These used to assert that a stale window was refused and had to be told to
+    look again. Refusing was right when the only other option was writing over
+    what arrived — but it was not the only other option, and the refusal cost
+    real work: the change had already been applied in memory, so the app went
+    on showing something it had not kept.
+
+    The guarantee they existed to protect is unchanged and still asserted here:
+    a window that has not re-read the vault must never destroy what arrived.
+    It just no longer has to lose your edit to manage it.
+  */
+  it('never writes over work that arrived while it was open', () => {
     const vault = new MemoryVault();
     const first = boardWith(vault);
     first.addProject('Tendon study');
@@ -253,42 +264,49 @@ describe('a vault two things are writing to', () => {
     const second = boardWith(vault);
     const added = second.addProject('Something else entirely');
 
-    // The first one has never re-read the vault. It must not simply win.
-    expect(() => first.addProject('A third thing')).toThrow(/changed on disk/i);
-    expect(loadState(vault).nodes[added.id]).toBeDefined();
+    // The first one has never re-read the vault, and does not need to.
+    const third = first.addProject('A third thing');
+
+    const onDisk = loadState(vault);
+    expect(onDisk.nodes[added.id]).toBeDefined();
+    expect(onDisk.nodes[third.id]).toBeDefined();
+    expect(onDisk.nodes[Object.values(onDisk.nodes).find((n) => n.name === 'Tendon study')!.id])
+      .toBeDefined();
   });
 
-  it('names the file that moved', () => {
+  it('takes in what arrived, rather than making you go and look', () => {
     const vault = new MemoryVault();
     const first = boardWith(vault);
     first.addProject('Tendon study');
     boardWith(vault).addProject('Elsewhere');
 
-    let thrown: unknown;
-    try {
-      first.capture('a passing thought');
-    } catch (error) {
-      thrown = error;
-    }
-    expect((thrown as { code?: string }).code).toBe('conflict');
-    expect((thrown as { path?: string }).path).toBeTruthy();
-  });
+    first.capture('a passing thought');
 
-  it('carries on once it has looked again', () => {
-    const vault = new MemoryVault();
-    const first = boardWith(vault);
-    first.addProject('Tendon study');
-    boardWith(vault).addProject('Elsewhere');
-
-    expect(() => first.capture('blocked')).toThrow();
-    first.store.reload();
-
-    // Both are there, and the window that was stale can work again.
+    // Both windows' work, without the stale one being told to reload.
     expect(Object.values(first.state.nodes).map((n) => n.name)).toEqual(
       expect.arrayContaining(['Tendon study', 'Elsewhere']),
     );
-    expect(() => first.capture('fine now')).not.toThrow();
     expect(loadState(vault).notes).toHaveLength(1);
+  });
+
+  it('still refuses, and names the file, when the change cannot be kept', () => {
+    const vault = new MemoryVault();
+    const first = boardWith(vault);
+    const project = first.addProject('Tendon study').id;
+
+    // The thing this window is about to edit is gone from the vault.
+    const second = boardWith(vault);
+    second.deleteNode(project);
+
+    let thrown: unknown;
+    try {
+      first.updateNode(project, { name: 'Renamed too late' });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeDefined();
+    // ...and nothing was resurrected to make the edit possible.
+    expect(loadState(vault).nodes[project]).toBeUndefined();
   });
 
   it('says nothing about a vault only it is writing to', () => {

@@ -66,8 +66,24 @@ export function saveState(
   const written: string[] = [];
   const removed: string[] = [];
 
+  /*
+    Everything we are about to write, everything the vault has, and everything
+    we believed it had.
+
+    That last one is not redundant, and leaving it out was a hole: a file this
+    window renames leaves `target` under its new path, so a deletion of the old
+    path was checked by neither list — and the write went ahead and put the
+    project back. A machine that deleted a task watched it return, which is
+    exactly the complaint this guard exists to prevent.
+  */
   const existing = new Map<string, string>();
-  for (const path of new Set([...target.keys(), ...vault.list('projects/'), ...vault.list('journal/')])) {
+  const watched = new Set([
+    ...target.keys(),
+    ...vault.list('projects/'),
+    ...vault.list('journal/'),
+    ...(known?.keys() ?? []),
+  ]);
+  for (const path of watched) {
     const text = vault.read(path);
     if (text !== null) existing.set(path, text);
     if (known && (text ?? undefined) !== known.get(path)) throw new VaultChangedError(path);
@@ -132,6 +148,20 @@ function emptyIndex(): HistoryIndex {
  *
  * `mutate` is the only way state changes. It snapshots first, runs the change,
  * and persists — so a throwing mutation leaves both memory and disk untouched.
+ *
+ * That was true of a mutation that threw and false of a *write* that threw,
+ * which is the more common of the two and cost real work. The vault moving
+ * under an open window — a sync bringing in the other machine's files — made
+ * `persist` refuse, correctly, because saving would have clobbered what had
+ * just arrived. But the change had already been applied in memory by then, so
+ * the app went on showing a note or a completed task that was never written,
+ * and it was gone the moment anything reloaded.
+ *
+ * So a refused write now does one of two things, and never the third. It takes
+ * in what arrived and applies the change to *that* — which is almost always
+ * possible, since the two edits are usually nowhere near each other — and only
+ * if the change cannot survive the new state does it fail, with memory put
+ * back exactly as it was. What the screen shows is on disk, always.
  */
 export class Store {
   private current: State;
@@ -265,13 +295,51 @@ export class Store {
     // The transaction does all three once, at the end.
     if (this.batch) return fn(this.batch);
 
-    const draft = cloneState(this.current);
-    const result = fn(draft);
-
-    this.pushHistory(label, this.current);
-    this.current = draft;
-    this.persist();
+    const { previous, result } = this.write(fn);
+    this.pushHistory(label, previous);
     return result;
+  }
+
+  /**
+   * Apply a change and get it on disk, or leave everything as it was.
+   *
+   * History is deliberately not touched here: it is recorded by the caller
+   * afterwards, once the write has actually happened, so a refused write has
+   * no entry to unwind and an undo stack can never describe a state the vault
+   * never held.
+   */
+  private write<T>(fn: (draft: State) => T): { previous: State; result: T } {
+    const attempt = () => {
+      const previous = this.current;
+      const draft = cloneState(previous);
+      const result = fn(draft);
+      this.current = draft;
+      try {
+        this.persist();
+      } catch (error) {
+        // Memory goes back before anything else looks at it.
+        this.current = previous;
+        throw error;
+      }
+      return { previous, result };
+    };
+
+    try {
+      return attempt();
+    } catch (error) {
+      if (!(error instanceof VaultChangedError)) throw error;
+      /*
+        Somebody else wrote to the vault — in practice a sync, bringing in the
+        other machine's work. Take it, and put this change on top of it.
+
+        The change is re-run rather than replayed from a diff because it is a
+        function of the state it is given: an id allocated here is allocated
+        against what is on disk now, and a command whose target has been
+        deleted elsewhere fails honestly instead of resurrecting it.
+      */
+      this.reload();
+      return attempt();
+    }
   }
 
   /**
@@ -293,9 +361,21 @@ export class Store {
       this.batch = null;
     }
 
-    this.pushHistory(label, this.current);
+    /*
+      Rolled back but not retried, unlike a single mutation. A transaction's
+      body has already run by now and may hold ids it allocated on the way
+      through, so running it a second time is not the same act. Failing with
+      everything as it was is the honest outcome; the caller can try again.
+    */
+    const previous = this.current;
     this.current = draft;
-    this.persist();
+    try {
+      this.persist();
+    } catch (error) {
+      this.current = previous;
+      throw error;
+    }
+    this.pushHistory(label, previous);
     return result;
   }
 

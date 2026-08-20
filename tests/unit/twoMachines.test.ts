@@ -297,7 +297,7 @@ describe('the ways it actually goes wrong', () => {
     expect(a.board()).toEqual(b.board());
   });
 
-  it('loses a completion when the board went stale under the open app', async () => {
+  it('keeps a completion made while the board was going stale underneath', async () => {
     const { a, b, repo, clock } = await pair();
 
     // The desktop pushes something.
@@ -319,23 +319,21 @@ describe('the ways it actually goes wrong', () => {
     // ...deliberately no b.app.store.reload()
 
     clock.set('2026-08-19T11:00');
-    let refused = '';
-    try {
-      b.app.complete(b.id('Draft methods'));
-    } catch (error) {
-      refused = (error as Error).message.slice(0, 60);
-    }
+    // The write is refused underneath, because saving over what just arrived
+    // would lose it. That is invisible from here: the change is applied to
+    // what arrived instead.
+    b.app.complete(b.id('Draft methods'));
 
-    // It is refused — correctly, since saving would clobber what just arrived.
-    expect(refused).not.toBe('');
-    // ...but the app went on showing it as finished, which is the bug.
+    // On screen and on disk, which used to be two different answers.
     expect(b.done('Draft methods')).toBe(true);
-    // And it never reached the disk, so it is gone the moment anything reloads.
     b.app.store.reload();
-    expect(b.done('Draft methods')).toBe(false);
-    // Nor does syncing rescue it: there is nothing on disk to send.
+    expect(b.done('Draft methods')).toBe(true);
+    // ...and the work that arrived while it happened is still here.
+    expect(b.done('Prepare scaffolds')).toBe(true);
+
+    // So it syncs, like anything else that was actually saved.
     await b.sync(repo);
     await a.sync(repo);
-    expect(a.done('Draft methods')).toBe(false);
+    expect(a.done('Draft methods')).toBe(true);
   });
 });
