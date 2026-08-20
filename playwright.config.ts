@@ -7,6 +7,10 @@ import { defineConfig, devices } from '@playwright/test';
  */
 export default defineConfig({
   testDir: './tests/e2e',
+  // The visual audit photographs, it does not assert — run it with
+  // npm run audit:visual. Kept out of the suite so CI stays about behaviour;
+  // npm names the running script in npm_lifecycle_event, which is the gate.
+  testIgnore: process.env['npm_lifecycle_event'] === 'audit:visual' ? [] : ['**/visual-audit.spec.ts'],
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
