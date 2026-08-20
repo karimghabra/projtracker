@@ -14,6 +14,7 @@ import { Toasts } from './components/ui.tsx';
 import {
   IconChevronLeft,
   IconChevronRight,
+  IconClock,
   IconFlask,
   IconGraph,
   IconHome,
@@ -32,19 +33,21 @@ import { ProjectsScreen } from './screens/Projects.tsx';
 import { GraphScreen } from './screens/Graph.tsx';
 import { SheetScreen } from './screens/Sheet.tsx';
 import { InventoryScreen } from './screens/Inventory.tsx';
+import { ProtocolsScreen } from './screens/Protocols.tsx';
 import { JournalScreen } from './screens/Journal.tsx';
 import { SettingsDialog } from './screens/Settings.tsx';
 import { BackupDialog } from './components/BackupDialog.tsx';
 import { useAutoSync, useVaultSync } from './state/autoSync.ts';
 import { SearchModal } from './components/SearchModal.tsx';
 
-export type ViewName = 'home' | 'projects' | 'graph' | 'sheet' | 'inventory' | 'journal';
+export type ViewName = 'home' | 'projects' | 'graph' | 'sheet' | 'protocols' | 'inventory' | 'journal';
 
 const VIEWS: { id: ViewName; label: string; Icon: (p: { size?: number }) => React.ReactElement }[] = [
   { id: 'home', label: 'Today', Icon: IconHome },
   { id: 'projects', label: 'Projects', Icon: IconProjects },
   { id: 'graph', label: 'Graph', Icon: IconGraph },
   { id: 'sheet', label: 'Spreadsheet', Icon: IconSheet },
+  { id: 'protocols', label: 'Protocols', Icon: IconClock },
   { id: 'inventory', label: 'Scaffolds', Icon: IconFlask },
   { id: 'journal', label: 'Journal', Icon: IconJournal },
 ];
@@ -54,6 +57,7 @@ const TITLES: Record<ViewName, string> = {
   projects: 'Projects',
   graph: 'Dependency graph',
   sheet: 'Spreadsheet',
+  protocols: 'Protocols',
   inventory: 'Scaffold inventory',
   journal: 'Journal',
 };
@@ -288,6 +292,7 @@ export function AppShell() {
           )}
           {view === 'graph' && <GraphScreen />}
           {view === 'sheet' && <SheetScreen />}
+          {view === 'protocols' && <ProtocolsScreen />}
           {view === 'inventory' && <InventoryScreen />}
           {view === 'journal' && <JournalScreen />}
         </main>

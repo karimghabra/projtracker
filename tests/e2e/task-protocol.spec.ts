@@ -18,20 +18,24 @@ test.describe('a protocol run against a task', () => {
       milestones: [{ name: 'Prep', goals: [{ name: 'ELAC', tasks: ['Prepare threads'] }] }],
     });
 
-    // A protocol with no reagent and no scaffolds — the case that could not be
-    // started before.
-    await h.goto('inventory');
+    /*
+      A protocol with no reagent and no scaffolds — the case that could not be
+      started before. Built on the Protocols page, which is where protocols
+      are defined now; the Scaffolds page only points at them.
+    */
+    await h.goto('protocols');
     await h.page.getByTestId('add-protocol').click();
-    await h.page.getByTestId('protocol-name').fill('Dialysis');
-    await h.page.getByTestId('save-new-protocol').click();
-    const editor = h.page.locator('.modal');
-    await editor.getByRole('button', { name: 'Add step' }).click();
-    await editor.getByLabel('Step 1 name').fill('Load tubing');
-    await editor.getByRole('button', { name: 'Add step' }).click();
-    await editor.getByLabel('Step 2 name').fill('First buffer change');
-    await editor.getByLabel('Step 2 offset in hours').fill('4');
-    await editor.getByRole('button', { name: 'Save' }).click();
-    await expect(h.page.locator('.modal')).toHaveCount(0);
+    await h.page.getByTestId('new-protocol-name').fill('Dialysis');
+    await h.page.getByTestId('new-protocol-save').click();
+
+    const card = h.page.locator('[data-testid^="protocol-"]', { hasText: 'Dialysis' }).first();
+    const id = (await card.getAttribute('data-testid'))!.replace('protocol-', '');
+    for (const [name, at] of [['Load tubing', '0'], ['First buffer change', '4']] as const) {
+      await h.page.getByTestId(`step-name-${id}`).fill(name);
+      await h.page.getByTestId(`step-at-${id}`).fill(at);
+      await h.page.getByTestId(`step-add-${id}`).click();
+      await expect(card).toContainText(name);
+    }
 
     await h.goto('home');
     await h.page.getByTestId('ready-panel').getByRole('button', { name: /Add Prepare threads/ }).click();

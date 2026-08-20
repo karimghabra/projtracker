@@ -26,12 +26,19 @@ test.describe('scaffold types and batches', () => {
     await expect(protocols.getByText('EDC/NHS crosslinking')).toBeVisible();
     await expect(protocols.getByText('Genipin crosslinking')).toBeVisible();
 
-    // "builtin" records where a protocol came from, not that it is locked.
-    await page.getByTestId('protocol-genipin').click();
-    await expect(page.getByRole('dialog')).toBeVisible();
-    await page.getByLabel('Name', { exact: true }).fill('Our genipin protocol');
-    await page.getByTestId('save-protocol').click();
-    await expect(protocols.getByText('Our genipin protocol')).toBeVisible();
+    /*
+      "builtin" records where a protocol came from, not that it is locked.
+      Editing lives on the Protocols page now; this panel only points there.
+    */
+    await protocols.getByTestId('go-protocols').click();
+    // InlineEdit is a button until you open it, then an input under the plain
+    // label — which is how every other rename in the app behaves.
+    const card = page.getByTestId('protocol-genipin');
+    await card.getByRole('button', { name: /^Name of Genipin crosslinking:/ }).dblclick();
+    const field = card.getByLabel('Name of Genipin crosslinking', { exact: true });
+    await field.fill('Our genipin protocol');
+    await field.press('Enter');
+    await expect(page.getByTestId('protocol-genipin')).toContainText('Our genipin protocol');
   });
 
   test('cannot add scaffolds before there is a type to add', async ({ h }) => {
@@ -166,10 +173,14 @@ test.describe('crosslinking', () => {
     await page.getByTestId('confirm-start-run').click();
     await expect(page.getByTestId('runs-panel')).toContainText('0/8');
 
-    await page.getByTestId('protocol-edc-nhs').click();
-    await page.getByRole('button', { name: 'Remove step 8' }).click();
-    await page.getByTestId('save-protocol').click();
+    // Editing the protocol is on its own page now; the run is still here.
+    await page.getByTestId('nav-protocols').click();
+    const card = page.getByTestId('protocol-edc-nhs');
+    const steps = card.locator('ol.steps li');
+    await steps.last().getByRole('button', { name: /^Remove / }).click();
+    await expect(steps).toHaveCount(7);
 
+    await page.getByTestId('nav-inventory').click();
     await expect(page.getByTestId('runs-panel')).toContainText('0/7');
   });
 

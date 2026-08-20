@@ -10,7 +10,6 @@
 import { useState } from 'react';
 import { formatDayMonth } from '../../core/dates.ts';
 import { formatOffset } from '../../core/protocols.ts';
-import type { ProtocolStepPatch } from '../../commands/app.ts';
 import { useApp } from '../state/store.ts';
 import { ConfirmDialog, Empty, InlineEdit, Modal, ProgressBar } from '../components/ui.tsx';
 import { IconBox, IconFlask, IconPlus, IconTrash } from '../components/icons.tsx';
@@ -507,249 +506,52 @@ function TypesPanel({ inventory }: { inventory: Inventory }) {
 
 // -------------------------------------------------------------- protocols
 
+/**
+ * Protocols, pointed at rather than owned.
+ *
+ * They were defined here while crosslinking was all they did. They are not only
+ * crosslinking — a dialysis or an electrocompaction is the same thing — so the
+ * definitions moved to a page of their own and this keeps only what is genuinely
+ * about the shelf: which recipes exist, and how to get to them.
+ */
 function ProtocolsPanel({ inventory }: { inventory: Inventory }) {
-  const { run } = useApp();
-  const [editing, setEditing] = useState<string | null>(null);
-  const [adding, setAdding] = useState(false);
-  const [name, setName] = useState('');
-  const [agent, setAgent] = useState('');
-
   return (
     <section className="panel" data-testid="protocols-panel">
       <div className="panel-head">
         <h2>Protocols</h2>
         <span className="spacer" />
-        <button className="btn sm" onClick={() => setAdding(!adding)} data-testid="add-protocol">
-          <IconPlus size={13} /> Protocol
+        <button
+          className="btn sm"
+          data-testid="go-protocols"
+          onClick={() => {
+            window.location.hash = '#/protocols';
+          }}
+        >
+          Open Protocols
         </button>
       </div>
       <div className="panel-body tight">
-        {adding && (
-          <form
-            className="stack tight"
-            style={{ padding: 8 }}
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (!name.trim()) return;
-              const made = run((a) => a.addProtocol(name, agent));
-              if (made) {
-                setName('');
-                setAgent('');
-                setAdding(false);
-                // Straight into the editor: a protocol with no steps is not yet
-                // a protocol, and this is where the steps get typed.
-                setEditing(made.id);
-              }
-            }}
-          >
-            <input
-              className="input"
-              autoFocus
-              value={name}
-              placeholder="Dialysis for ELAC thread prep"
-              aria-label="Protocol name"
-              data-testid="protocol-name"
-              onChange={(event) => setName(event.target.value)}
-            />
-            <input
-              className="input"
-              value={agent}
-              placeholder="Reagent (optional)"
-              aria-label="Reagent"
-              onChange={(event) => setAgent(event.target.value)}
-            />
-            <div className="inline">
-              <button className="btn primary sm" type="submit" data-testid="save-new-protocol">
-                Add
-              </button>
-              <button className="btn sm ghost" type="button" onClick={() => setAdding(false)}>
-                Cancel
-              </button>
-            </div>
-          </form>
+        {inventory.protocols.length === 0 ? (
+          <div className="hint" style={{ padding: 8 }}>
+            None yet. They live on the Protocols page.
+          </div>
+        ) : (
+          <div className="list">
+            {inventory.protocols.map((protocol) => (
+              <div className="row" key={protocol.id} data-testid={`protocol-row-${protocol.id}`}>
+                <span className="grow row-title">{protocol.name}</span>
+                {protocol.agent && <span className="chip">{protocol.agent}</span>}
+                <span className="faint mono nowrap">
+                  {protocol.steps
+                    ? `${protocol.steps} step${protocol.steps === 1 ? '' : 's'}`
+                    : 'no steps yet'}
+                </span>
+              </div>
+            ))}
+          </div>
         )}
-
-        <div className="list">
-          {inventory.protocols.map((protocol) => (
-            <div className="row" key={protocol.id}>
-              <button
-                className="grow"
-                style={{
-                  border: 0,
-                  background: 'transparent',
-                  textAlign: 'left',
-                  cursor: 'pointer',
-                  minWidth: 0,
-                }}
-                onClick={() => setEditing(protocol.id)}
-                data-testid={`protocol-${protocol.id}`}
-              >
-                <div className="row-title">{protocol.name}</div>
-                <div className="row-sub">
-                  {protocol.steps === 0
-                    ? 'No steps yet'
-                    : `${protocol.steps} steps over ${formatOffset(protocol.hours).replace('+', '')}`}
-                </div>
-              </button>
-              {protocol.agent && <span className="chip">{protocol.agent}</span>}
-              <button
-                className="btn ghost icon sm"
-                aria-label={`Delete protocol ${protocol.name}`}
-                data-testid={`delete-protocol-${protocol.id}`}
-                onClick={() => run((a) => a.deleteProtocol(protocol.id))}
-              >
-                <IconTrash size={12} />
-              </button>
-            </div>
-          ))}
-        </div>
-        <p className="faint" style={{ padding: '4px 8px', margin: 0 }}>
-          Anything stepwise and timed belongs here, not just crosslinking. Shipped timings are a
-          starting point — edit them to match your own.
-        </p>
       </div>
-
-      {editing && <ProtocolEditor id={editing} onClose={() => setEditing(null)} />}
     </section>
-  );
-}
-
-function ProtocolEditor({ id, onClose }: { id: string; onClose: () => void }) {
-  const { app, run } = useApp();
-  const protocol = app.state.protocols.find((p) => p.id === id)!;
-  const [name, setName] = useState(protocol.name);
-  const [agent, setAgent] = useState(protocol.agent);
-  const [notes, setNotes] = useState(protocol.notes ?? '');
-  // Ids are carried through the form untouched. A run records which steps it has
-  // finished by id, so dropping them here would re-key every step on save.
-  const [steps, setSteps] = useState<ProtocolStepPatch[]>(
-    protocol.steps.map(({ id: stepId, name: n, offsetHours, durationHours, notes }) => ({
-      id: stepId,
-      name: n,
-      offsetHours,
-      durationHours,
-      notes,
-    })),
-  );
-
-  return (
-    <Modal
-      title={`Edit ${protocol.name}`}
-      wide
-      onClose={onClose}
-      footer={
-        <>
-          <span className="spacer" />
-          <button className="btn" onClick={onClose}>
-            Cancel
-          </button>
-          <button
-            className="btn primary"
-            data-testid="save-protocol"
-            onClick={() => {
-              if (run((a) => a.updateProtocol(id, { name, agent, notes, steps }))) onClose();
-            }}
-          >
-            Save
-          </button>
-        </>
-      }
-    >
-      <div className="field-row">
-        <div className="field">
-          <label htmlFor="p-name">Name</label>
-          <input id="p-name" className="input" value={name} onChange={(e) => setName(e.target.value)} />
-        </div>
-        <div className="field">
-          <label htmlFor="p-agent">Reagent</label>
-          <input
-            id="p-agent"
-            className="input"
-            value={agent}
-            placeholder="optional"
-            onChange={(e) => setAgent(e.target.value)}
-          />
-        </div>
-      </div>
-
-      <div className="field">
-        <label htmlFor="p-notes">Notes</label>
-        <textarea
-          id="p-notes"
-          className="input"
-          rows={2}
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-        />
-      </div>
-
-      <div className="field">
-        <label>Steps</label>
-        <div className="stack tight">
-          {steps.map((step, index) => (
-            <div className="inline" key={index}>
-              <input
-                className="input"
-                value={step.name}
-                aria-label={`Step ${index + 1} name`}
-                onChange={(e) =>
-                  setSteps(steps.map((s, i) => (i === index ? { ...s, name: e.target.value } : s)))
-                }
-              />
-              <span className="faint nowrap">at +</span>
-              <input
-                className="input"
-                style={{ width: 78, flex: 'none' }}
-                type="number"
-                step={0.5}
-                min={0}
-                value={step.offsetHours}
-                aria-label={`Step ${index + 1} offset in hours`}
-                onChange={(e) =>
-                  setSteps(steps.map((s, i) => (i === index ? { ...s, offsetHours: Number(e.target.value) } : s)))
-                }
-              />
-              <span className="faint nowrap">h for</span>
-              <input
-                className="input"
-                style={{ width: 78, flex: 'none' }}
-                type="number"
-                step={0.5}
-                min={0}
-                value={step.durationHours ?? ''}
-                placeholder="—"
-                aria-label={`Step ${index + 1} duration in hours`}
-                onChange={(e) =>
-                  setSteps(
-                    steps.map((s, i) =>
-                      i === index
-                        ? { ...s, durationHours: e.target.value ? Number(e.target.value) : undefined }
-                        : s,
-                    ),
-                  )
-                }
-              />
-              <button
-                className="btn ghost icon"
-                aria-label={`Remove step ${index + 1}`}
-                onClick={() => setSteps(steps.filter((_, i) => i !== index))}
-              >
-                <IconTrash size={14} />
-              </button>
-            </div>
-          ))}
-        </div>
-        <button
-          className="btn sm"
-          style={{ alignSelf: 'flex-start', marginTop: 8 }}
-          onClick={() =>
-            setSteps([...steps, { name: 'New step', offsetHours: (steps.at(-1)?.offsetHours ?? 0) + 1 }])
-          }
-        >
-          <IconPlus size={12} /> Add step
-        </button>
-      </div>
-    </Modal>
   );
 }
 
