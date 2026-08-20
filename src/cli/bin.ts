@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { hostname } from 'node:os';
 import { App } from '../commands/app.ts';
 import { deviceTag } from '../commands/ids.ts';
+import { ancestorsOf, descendantsOf } from '../core/lineage.ts';
 import type { TreeNode } from '../commands/views.ts';
 import { notFound, toCommandError } from '../commands/errors.ts';
 import { formatDayMonth, systemClock } from '../core/dates.ts';
@@ -76,10 +77,18 @@ usage: pt [--vault DIR] [--json] <command> [args]
     scaffold add <type> <n>   record a fabricated batch
     protocols                 list crosslinking protocols and their steps
     protocol add <name> [--agent NAME] [--notes TEXT]
+    protocol recipe <id> [--takes TYPE:AMOUNT] [--makes TYPE:AMOUNT]
+                              what it spends and what it leaves behind.
+                              Repeatable; no flags clears the recipe.
     protocol rm <id>
     protocol step add <protocol-id> <name> --at HOURS [--for HOURS]
     protocol step rm <protocol-id> <step-id>
-    crosslink <protocol> <batch-id...> [--at YYYY-MM-DDTHH:MM]
+    run <protocol> [batch-id...] [--at YYYY-MM-DDTHH:MM] [--task REF]
+                   [--take BATCH:AMOUNT]
+                              start a timed procedure. Batches are acted on and
+                              handed back; --take is material it spends.
+    crosslink ...             the same verb, named for the bath.
+    lineage <batch-id>        what it was made from, and what it became.
     runs                      live crosslinking runs
     step <run-id> <step-id>   tick a protocol step
 
@@ -101,6 +110,31 @@ interface Args {
   flags: Record<string, string | boolean>;
 }
 
+/**
+ * Flags that never take a value.
+ *
+ * Without this list a switch swallows whatever follows it, and the usage line
+ * documents the order that breaks: `pt --vault DIR --json cultures` gave
+ * `--json` the value "cultures", left no verb behind, printed the help and
+ * exited 0. A read that quietly returns nothing at all is the worst thing a
+ * command-line tool can do to a script, and to anything reading it.
+ */
+const SWITCHES = new Set(['json', 'help', 'experiment', 'undated', 'preview', 'merge', 'yes', 'new']);
+
+/** A flag given more than once, or once, or not at all. */
+function list(value: string | boolean | (string | boolean)[] | undefined): string[] {
+  if (value === undefined || value === true) return [];
+  return (Array.isArray(value) ? value : [value]).filter((v): v is string => typeof v === 'string');
+}
+
+/** `b12:20` — the thing and how much of it. */
+function split(token: string, hint: string): [string, number] {
+  const at = token.lastIndexOf(':');
+  const quantity = at < 0 ? NaN : Number(token.slice(at + 1));
+  if (at < 0 || !Number.isFinite(quantity)) throw new Error(hint);
+  return [token.slice(0, at), quantity];
+}
+
 function parseArgs(argv: string[]): Args {
   const positional: string[] = [];
   const flags: Record<string, string | boolean> = {};
@@ -113,7 +147,7 @@ function parseArgs(argv: string[]): Args {
     }
     const name = token.slice(2);
     const next = argv[i + 1];
-    if (next !== undefined && !next.startsWith('--')) {
+    if (!SWITCHES.has(name) && next !== undefined && !next.startsWith('--')) {
       flags[name] = next;
       i += 1;
     } else {
@@ -166,6 +200,23 @@ async function main(argv: string[]): Promise<number> {
   // Before NodeVault's constructor creates the directory and the answer stops
   // being knowable.
   const isNew = !holdsVault(root);
+  /*
+    A path given by hand that holds no vault is a typo far more often than it
+    is a new vault. It used to be created in silence and every read then
+    answered "nothing", successfully — so a mistyped --vault looked exactly
+    like an empty week, and left a phantom vault on disk to find later.
+
+    Refused, unless the intent is stated. The default path and $PROTRACKER_VAULT
+    are still created on first use, because that is somebody's first run.
+  */
+  if (isNew && choice.source === 'flag' && flags['new'] !== true) {
+    const message = `There is no vault at ${root}. Check the path, or pass --new to start one there.`;
+    if (json) process.stdout.write(`${JSON.stringify({ ok: false, code: 'not-found', message }, null, 2)}
+`);
+    else process.stderr.write(`${message}
+`);
+    return 1;
+  }
   if (!json) warnAboutNewVault(choice);
   // The machine's own tag, so ids minted here cannot collide with ids minted
   // by the same vault open on another computer.
@@ -485,6 +536,21 @@ async function run(
       }
       if (rest[0] === 'rm') return say(app.deleteProtocol(rest[1] ?? '')), 0;
 
+      /*
+        The recipe, set as one statement rather than a field at a time: what it
+        takes off the shelf and what it puts back. Both are repeatable and both
+        are replaced wholesale, so `protocol recipe p1` with no flags clears it.
+      */
+      if (rest[0] === 'recipe') {
+        const protocol = protocolOf(app, rest[1]);
+        const parse = (name: string) =>
+          list(flags[name]).map((token) => {
+            const [typeId, quantity] = split(token, `Use --${name} TYPE:AMOUNT.`);
+            return { typeId, quantity };
+          });
+        return say(app.setProtocolIO(protocol.id, { consumes: parse('takes'), produces: parse('makes') })), 0;
+      }
+
       // Both step verbs hand the whole list back, ids and all. An id says "this
       // is the step you gave me"; sending one without would re-key it, and a
       // live run records what it has done against those ids.
@@ -505,12 +571,43 @@ async function run(
       throw new Error('Use "protocol add <name>", "protocol rm <id>" or "protocol step add|rm".');
     }
 
-    case 'crosslink': {
+    // `crosslink` is what this was called when crosslinking was all it did.
+    // `run` is the same verb without the assumption, and both are kept: one
+    // reads better for a bath, the other for a dialysis.
+    case 'crosslink':
+    case 'run': {
       // A run typed up after the fact started when it started: every step's
       // time is counted from here, so the default of "now" would date them all
       // to the moment of typing.
       const at = typeof flags['at'] === 'string' ? flags['at'] : undefined;
-      return say(app.startRun(rest[0]!, rest.slice(1), at)), 0;
+      const task = typeof flags['task'] === 'string' ? ref(flags['task']) : undefined;
+      // --take b12:20 — a batch and how much of it to spend. Repeatable.
+      const take = list(flags['take']).map((token) => {
+        const [batchId, quantity] = split(token, 'Use --take BATCH:AMOUNT.');
+        return { batchId, quantity };
+      });
+      return say(app.startRun(rest[0]!, rest.slice(1), at, task, take)), 0;
+    }
+
+    case 'lineage': {
+      const batchId = rest[0];
+      if (!batchId) throw new Error('Which batch? Give a batch id.');
+      const back = ancestorsOf(app.state, batchId);
+      const forward = descendantsOf(app.state, batchId);
+      if (json) return out({ madeFrom: back, wentInto: forward }), 0;
+      const name = (id: string) => {
+        const batch = app.state.batches.find((b) => b.id === id);
+        const type = app.state.scaffoldTypes.find((t) => t.id === batch?.typeId);
+        return `${type?.name ?? '?'}${batch?.label ? ` (${batch.label})` : ''}`;
+      };
+      if (!back.length && !forward.length) return out(dim('Nothing recorded either side of it.')), 0;
+      for (const step of back) {
+        out(`${'  '.repeat(step.depth - 1)}↑ ${step.batch.id.padEnd(8)} ${name(step.batch.id)}  ${dim(`${step.quantity} into ${step.via.id}`)}`);
+      }
+      for (const step of forward) {
+        out(`${'  '.repeat(step.depth - 1)}↓ ${step.batch.id.padEnd(8)} ${name(step.batch.id)}  ${dim(`via ${step.via.id}`)}`);
+      }
+      return 0;
     }
 
     case 'runs': {

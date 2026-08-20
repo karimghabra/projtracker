@@ -254,19 +254,51 @@ the steps a project, and so a colour on the calendar and a place in the day's
 grouping. It is deliberately **not** a dependency: inventory stays out of the
 graph, and a running protocol never decides whether a task is ready.
 
-A run must name batches, a task, or both. One belonging to nothing is a set of
+A run must name batches, a task, material it spends, or be an instance of a
+protocol that produces something. One belonging to nothing at all is a set of
 reminders that cannot be traced back to why they exist.
 
 - **Scaffold types** are user-managed (name, material, geometry, notes).
 - **Batches** are created by "I fabricated *n* of type *t* on date *d*". Each
   batch carries a lifecycle state: `fabricated` → `crosslinking` →
   `crosslinked` → `sterilised` → `seeded` → `consumed`.
-- **Crosslinking protocols** are user-managed templates: an ordered list of
-  steps, each with an offset from protocol start and a duration. EDC/NHS and
-  genipin ship as editable defaults.
-- **Running a protocol** on a selected set of batches instantiates every step
-  as a dated reminder in the to-do list, automatically. Ticking the last step
-  advances the batches to `crosslinked`.
+- **Protocols** are user-managed templates: an ordered list of steps, each with
+  an offset from protocol start and a duration. EDC/NHS and genipin ship as
+  editable defaults. They have **their own page** — they lived under the
+  inventory while crosslinking was all they did, which was true of the two that
+  shipped and false of the model. Scaffolds keeps batch selection, which
+  genuinely belongs there, and links out for the definitions.
+- **Running a protocol** instantiates every step as a dated reminder in the
+  to-do list, automatically. Ticking the last step advances any batches it was
+  acting on to `crosslinked`.
+
+### A protocol's recipe
+
+A protocol may say what it **takes off the shelf** and what it **puts back**.
+That is what turns a set of unrelated timers into a pipeline: dialysis makes the
+collagen electrocompaction spends, which makes the thread a braid is made from.
+
+The template holds the intent — "about 50 mL of raw collagen in, about 45 mL of
+dialysed out" — and the run holds what actually happened. The difference between
+them is the yield, and it only exists because the two are kept apart.
+
+- **Batches a run acts on** are handed back: crosslinking a braid leaves you the
+  same braid, crosslinked. **Material a run consumes** is not. Spending happens
+  when the run starts, because that is when it leaves the shelf; producing
+  happens when the last step is ticked, because there is no dialysed collagen
+  until the dialysis is done.
+- A produced batch records **the run that made it**, and nothing else. The run
+  already knows what it spent, so ancestry is walked batch → run → batches and
+  there is no second list to disagree with the first. `ancestorsOf` and
+  `descendantsOf` in the pure core walk it both ways: which lot of collagen a
+  construct came from, and — when a lot turns out bad — everything it touched.
+- Produced amounts are the protocol's nominal ones. At the moment the last step
+  is ticked nobody has said what the real yield was, and a batch saying "about
+  45 mL, from this run" is worth more than no batch at all. Correcting it after
+  is one edit.
+- A run must still name **something**: batches, a task, material spent, or a
+  protocol that produces. Only a run belonging to nothing at all is refused —
+  its reminders could not be traced back to why they exist.
 
 Everything here is available from the CLI and fully editable after the fact.
 
@@ -478,6 +510,42 @@ Consequences that fall out of this:
   replaces everything from the `Vault` tab, the other merges reviewed cells from
   the readable tabs; sharing a name or a code path would be the worst bug the
   feature could have.
+
+### 7.2b Writing while the vault is moving underneath
+
+The vault is a directory of text files precisely so that the app, the CLI and
+the sync can all point at one. That means a long-running window holds a state
+that goes stale under it, and the save that follows must not silently replace
+what arrived.
+
+The store therefore remembers the bytes it believes are on disk and refuses to
+write over anything else. What it does with the refusal is the part that
+mattered: it takes in what arrived and applies the change to *that*, then
+writes. The change is re-run rather than replayed from a diff, because a change
+is a function of the state it is given — an id is allocated against the vault
+as it now stands, and a command whose target has been deleted elsewhere fails
+honestly instead of resurrecting it.
+
+Only if the change cannot survive the new state does it fail, and then memory
+is put back exactly as it was. **What the screen shows is on disk, always.**
+Before this, a refused write left the change applied in memory, so the app went
+on showing a note or a completed task it had never written and lost it at the
+next reload.
+
+Two details that are easy to get wrong and were:
+
+- **History is recorded after the write, not before.** A refused write leaves
+  no undo entry, because an undo stack that offers to step back through a state
+  the vault never held is worse than one that offers nothing — stepping back
+  through it would write that state.
+- **The guard watches every file it believed was there**, not only the files it
+  is about to write and the files the vault still has. A rename moves a record
+  to a new filename, so a deletion of the old one was checked by neither list,
+  and the stale window put the deleted project back.
+
+A transaction is rolled back but not retried: its body has already run and may
+hold ids it allocated on the way through, so running it again is not the same
+act.
 
 ### 7.3 The same vault on two machines
 
