@@ -28,6 +28,7 @@ import type {
 import { BATCH_STATES, isContainerKind, isTerminalState, pathNameOf, refOf } from '../core/model.ts';
 import type { Precision } from '../core/periods.ts';
 import { encodePeriod, formatPeriod } from '../core/periods.ts';
+import { formatOffset } from '../core/protocols.ts';
 import type { GraphIndex } from '../core/graph.ts';
 import { blockersOf, completesDirectly, derivedStatus, hasBegun, inProgressLeaves, isAbandoned, isDone, leavesOf, progressOf, projectProgress, readyLeaves, rootProjects, transitiveReduction } from '../core/graph.ts';
 import type { ExperimentDef } from '../core/model.ts';
@@ -1292,6 +1293,76 @@ export interface RunView {
   total: number;
   finished: boolean;
   cancelled: boolean;
+}
+
+/**
+ * A protocol as its own page reads it: the recipe, the shape of the timeline,
+ * and whether it can actually be run right now.
+ *
+ * `shortOf` is the question that decides whether the Start button does anything
+ * useful — a dialysis with no raw collagen on the shelf is a button that leads
+ * to a dead end, and saying so on the row is cheaper than saying so in a dialog.
+ */
+export interface ProtocolView {
+  id: string;
+  name: string;
+  agent: string;
+  notes?: string;
+  builtin: boolean;
+  steps: { id: string; name: string; offsetHours: number; durationHours?: number; label: string }[];
+  /** How long the whole thing runs, end to end. */
+  hours: number;
+  consumes: { typeId: string; name: string; quantity: number; unit?: string; inStock: number }[];
+  produces: { typeId: string; name: string; quantity: number; unit?: string }[];
+  /** Inputs there is not enough of. Empty means it can be started. */
+  shortOf: string[];
+  /** Runs of this protocol still going.  */
+  live: number;
+}
+
+export function protocolsView(state: State): ProtocolView[] {
+  const typeById = new Map(state.scaffoldTypes.map((t) => [t.id, t] as const));
+  const stock = new Map<string, number>();
+  for (const batch of state.batches) {
+    if (isTerminalState(batch.state)) continue;
+    stock.set(batch.typeId, (stock.get(batch.typeId) ?? 0) + batch.count);
+  }
+
+  return [...state.protocols]
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((p) => {
+      const consumes = (p.consumes ?? []).map((io) => ({
+        typeId: io.typeId,
+        name: typeById.get(io.typeId)?.name ?? io.typeId,
+        quantity: io.quantity,
+        unit: typeById.get(io.typeId)?.unit,
+        inStock: stock.get(io.typeId) ?? 0,
+      }));
+      return {
+        id: p.id,
+        name: p.name,
+        agent: p.agent,
+        notes: p.notes,
+        builtin: Boolean(p.builtin),
+        steps: p.steps.map((step) => ({
+          id: step.id,
+          name: step.name,
+          offsetHours: step.offsetHours,
+          durationHours: step.durationHours,
+          label: formatOffset(step.offsetHours),
+        })),
+        hours: p.steps.reduce((most, s) => Math.max(most, s.offsetHours + (s.durationHours ?? 0)), 0),
+        consumes,
+        produces: (p.produces ?? []).map((io) => ({
+          typeId: io.typeId,
+          name: typeById.get(io.typeId)?.name ?? io.typeId,
+          quantity: io.quantity,
+          unit: typeById.get(io.typeId)?.unit,
+        })),
+        shortOf: consumes.filter((c) => c.inStock < c.quantity).map((c) => c.name),
+        live: state.runs.filter((r) => r.protocolId === p.id && !r.finishedAt && !r.cancelledAt).length,
+      };
+    });
 }
 
 export interface InventoryView {

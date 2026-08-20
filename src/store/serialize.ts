@@ -18,6 +18,7 @@ import type {
   Ordering,
   PlannerEntry,
   Protocol,
+  ProtocolIO,
   ProtocolRun,
   Reminder,
   ReminderSource,
@@ -122,11 +123,12 @@ const NODE_KNOWN = [
  * build knew about a scaffold type. These lists close that.
  */
 const TYPE_KNOWN = ['name', 'category', 'unit', 'material', 'geometry', 'notes', 'createdAt'] as const;
-const BATCH_KNOWN = ['type', 'count', 'fabricatedOn', 'state', 'label', 'notes', 'run', 'usedBy', 'location'] as const;
+const BATCH_KNOWN = ['type', 'count', 'fabricatedOn', 'state', 'label', 'notes', 'run', 'usedBy', 'location', 'madeBy'] as const;
 const PROTOCOL_KNOWN = ['name', 'agent', 'notes', 'builtin'] as const;
 const PSTEP_KNOWN = ['name', 'offsetHours', 'durationHours', 'notes'] as const;
 const RUN_KNOWN = [
   'protocol', 'batches', 'node', 'startedAt', 'completedSteps', 'cancelledAt', 'finishedAt',
+  'produced',
 ] as const;
 
 
@@ -402,6 +404,7 @@ export function serializeInventory(state: State): string {
       run: batch.runId,
       usedBy: batch.usedBy,
       location: batch.location,
+      madeBy: batch.madeBy,
     });
     applyExtras(b.fields, batch.extra);
     for (const [i, event] of batch.history.entries()) {
@@ -420,6 +423,12 @@ export function serializeInventory(state: State): string {
       builtin: p.builtin ? 'true' : undefined,
     });
     applyExtras(b.fields, p.extra);
+    for (const [i, io] of (p.consumes ?? []).entries()) {
+      b.children.push(block('takes', `i${i}`, { type: io.typeId, quantity: String(io.quantity) }));
+    }
+    for (const [i, io] of (p.produces ?? []).entries()) {
+      b.children.push(block('makes', `o${i}`, { type: io.typeId, quantity: String(io.quantity) }));
+    }
     for (const step of p.steps) {
       const sb = block('pstep', step.id, {
         name: step.name,
@@ -444,11 +453,37 @@ export function serializeInventory(state: State): string {
       completedSteps: encodeList(run.completedStepIds),
       cancelledAt: run.cancelledAt,
       finishedAt: run.finishedAt,
+      produced: run.produced?.length ? encodeList(run.produced) : undefined,
     });
     applyExtras(b.fields, run.extra);
+    for (const [i, took] of (run.consumed ?? []).entries()) {
+      b.children.push(block('took', `c${i}`, { batch: took.batchId, quantity: String(took.quantity) }));
+    }
     blocks.push(b);
   }
   return serialize(blocks);
+}
+
+/**
+ * What a protocol takes or makes, read back from its nested records.
+ *
+ * Undefined rather than empty when there are none, so a protocol that only
+ * spends time serialises exactly as it did before any of this existed.
+ */
+function readTook(b: Block): { batchId: string; quantity: number }[] | undefined {
+  const found = childrenOfKind(b, 'took').map((c) => ({
+    batchId: requireField(c, 'batch'),
+    quantity: numberField(c, 'quantity', 0),
+  }));
+  return found.length ? found : undefined;
+}
+
+function readIO(b: Block, kind: 'takes' | 'makes'): ProtocolIO[] | undefined {
+  const found = childrenOfKind(b, kind).map((c) => ({
+    typeId: requireField(c, 'type'),
+    quantity: numberField(c, 'quantity', 0),
+  }));
+  return found.length ? found : undefined;
 }
 
 function byId(a: { id: string }, b: { id: string }): number {
@@ -598,6 +633,7 @@ export function deserialize(files: VaultFiles): State {
             label: field(b, 'label'),
             notes: field(b, 'notes'),
             runId: field(b, 'run'),
+            madeBy: field(b, 'madeBy'),
             usedBy: field(b, 'usedBy'),
             location: field(b, 'location'),
             history: childrenOfKind(b, 'event').map((e) => ({
@@ -617,6 +653,8 @@ export function deserialize(files: VaultFiles): State {
             agent: field(b, 'agent') ?? '',
             notes: field(b, 'notes'),
             builtin: boolField(b, 'builtin') || undefined,
+            consumes: readIO(b, 'takes'),
+            produces: readIO(b, 'makes'),
             steps: childrenOfKind(b, 'pstep').map((s) => ({
               id: s.slug,
               name: field(s, 'name') ?? s.slug,
@@ -640,6 +678,11 @@ export function deserialize(files: VaultFiles): State {
             completedStepIds: listField(b, 'completedSteps'),
             cancelledAt: field(b, 'cancelledAt'),
             finishedAt: field(b, 'finishedAt'),
+            produced: listField(b, 'produced').length ? listField(b, 'produced') : undefined,
+            // Undefined rather than empty, so memory equals disk exactly: a run
+            // that spent nothing must read back as one that spent nothing, not
+            // as one that spent an empty list of things.
+            consumed: readTook(b),
             extra: extraFields(b, RUN_KNOWN),
           };
           state.runs.push(run);

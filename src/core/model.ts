@@ -340,8 +340,33 @@ export interface ScaffoldBatch {
    * no second list to disagree with this one.
    */
   usedBy?: NodeId;
+  /**
+   * The run that made this, when a protocol did.
+   *
+   * One reference rather than a copy of what went in: the run already records
+   * what it consumed, so ancestry is walked batch → run → batches, and there
+   * is no second list to disagree with the first. Absent on a batch somebody
+   * simply wrote down, which is most of them.
+   */
+  madeBy?: string;
   history: BatchEvent[];
   extra?: Record<string, string>;
+}
+
+/**
+ * Something a protocol takes in or gives out, and roughly how much.
+ *
+ * On the template it is the recipe: dialysis consumes about 50 mL of raw
+ * collagen and gives back about 45 mL of dialysed. On a run it is what
+ * actually happened, which is never quite the recipe — so the template holds
+ * the intent, the run holds the truth, and the difference between them is the
+ * yield.
+ */
+export interface ProtocolIO {
+  /** A scaffold type or a material type; the inventory does not distinguish. */
+  typeId: string;
+  /** Nominal amount, in that type's unit. */
+  quantity: number;
 }
 
 export interface ProtocolStep {
@@ -362,6 +387,17 @@ export interface Protocol {
   /** EDC/NHS, genipin, … */
   agent: string;
   steps: ProtocolStep[];
+  /**
+   * What it takes in and what it gives out, nominally.
+   *
+   * This is what makes a chain of procedures legible rather than a set of
+   * unrelated timers: dialysis produces the collagen electrocompaction
+   * consumes, which produces the thread a ligament is made from. Absent on a
+   * protocol that only spends time — which is what every protocol was before
+   * this, so no existing record gains a field.
+   */
+  consumes?: ProtocolIO[];
+  produces?: ProtocolIO[];
   notes?: string;
   /** Shipped as a default. Editable and deletable like any other. */
   builtin?: boolean;
@@ -386,6 +422,16 @@ export interface ProtocolRun {
   completedStepIds: string[];
   cancelledAt?: Stamp;
   finishedAt?: Stamp;
+  /**
+   * What this run actually took, and what it actually made.
+   *
+   * `consumed` is recorded when the run starts, because that is when the
+   * material leaves the shelf. `produced` names the batches it created, which
+   * happens when the run finishes — there is no dialysed collagen until the
+   * dialysis is done.
+   */
+  consumed?: { batchId: string; quantity: number }[];
+  produced?: string[];
   extra?: Record<string, string>;
 }
 

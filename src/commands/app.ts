@@ -68,6 +68,7 @@ import type {
   GraphView,
   BatchView,
   InventoryView,
+  ProtocolView,
   NodeView,
   ContributionsView,
   ProgressRow,
@@ -83,6 +84,7 @@ import {
   graphView,
   availableScaffolds,
   inventoryView,
+  protocolsView,
   nodeView,
   contributionsView,
   progressView,
@@ -358,6 +360,11 @@ export class App {
 
   sheet(): SheetRow[] {
     return sheetView(this.index, this.today);
+  }
+
+  /** Every protocol, its recipe, and whether the shelf can support running it. */
+  protocols(): ProtocolView[] {
+    return protocolsView(this.state);
   }
 
   inventory(): InventoryView {
@@ -1989,17 +1996,74 @@ export class App {
    * One of the two is required, because a run belonging to nothing is a set of
    * reminders nobody can trace back.
    */
+  /**
+   * Begin a procedure.
+   *
+   * `batchIds` are batches the run acts *on* and hands back — crosslinking a
+   * braid leaves you the same braid, crosslinked. `consume` is different: it
+   * is material the run spends and does not return, which is how dialysis
+   * turns fifty millilitres of raw collagen into something else. Spending is
+   * recorded now, because that is when the material leaves the shelf; what the
+   * run makes is recorded when it finishes, because there is nothing to put on
+   * the shelf until then.
+   */
+  /**
+   * What a protocol takes in and gives out — its recipe.
+   *
+   * Replaced wholesale rather than patched, because a recipe is read as one
+   * thing: two lines in and one out is a statement, and editing it a field at a
+   * time makes half-states that mean nothing.
+   */
+  setProtocolIO(
+    protocolId: string,
+    io: { consumes?: { typeId: string; quantity: number }[]; produces?: { typeId: string; quantity: number }[] },
+  ): Delta {
+    const protocol = this.state.protocols.find((p) => p.id === protocolId);
+    if (!protocol) throw notFound('protocol', protocolId);
+    for (const entry of [...(io.consumes ?? []), ...(io.produces ?? [])]) {
+      const type = this.state.scaffoldTypes.find((t) => t.id === entry.typeId);
+      if (!type) throw notFound('type', entry.typeId);
+      const problem = quantityProblem(entry.quantity, type);
+      if (problem) throw invalid(problem);
+    }
+
+    return this.mutate(`Recipe for "${protocol.name}"`, (draft) => {
+      const target = draft.protocols.find((p) => p.id === protocolId)!;
+      target.consumes = io.consumes?.length ? io.consumes.map((c) => ({ ...c })) : undefined;
+      target.produces = io.produces?.length ? io.produces.map((c) => ({ ...c })) : undefined;
+      return { ok: true as const, message: `Recipe set for "${target.name}".` };
+    });
+  }
+
   startRun(
     protocolId: string,
     batchIds: string[],
     startedAt?: Stamp,
     nodeId?: NodeId,
+    consume: { batchId: string; quantity: number }[] = [],
   ): Delta & { id: string; reminders: number } {
     const protocol = this.state.protocols.find((p) => p.id === protocolId);
     if (!protocol) throw notFound('protocol', protocolId);
     if (!protocol.steps.length) throw invalid(`"${protocol.name}" has no steps yet.`);
-    if (!batchIds.length && !nodeId) {
-      throw invalid('Pick some scaffolds to run this on, or start it from a task.');
+    /*
+      A run has to be traceable back to why it exists. A task says why, batches
+      say what it is being done to, and material spent says what it is turning
+      into — any of the three is an answer, and a protocol that declares what it
+      makes will produce one. Only a run that is none of those is refused.
+    */
+    if (!batchIds.length && !nodeId && !consume.length && !protocol.produces?.length) {
+      throw invalid('Pick some scaffolds, start it from a task, or give it something to work on.');
+    }
+    for (const take of consume) {
+      const batch = this.state.batches.find((b) => b.id === take.batchId);
+      if (!batch) throw notFound('batch', take.batchId);
+      if (isTerminalState(batch.state)) throw notAllowed('That batch is already used up.');
+      const type = this.state.scaffoldTypes.find((t) => t.id === batch.typeId);
+      const problem = type ? quantityProblem(take.quantity, type) : undefined;
+      if (problem) throw invalid(problem);
+      if (take.quantity > batch.count) {
+        throw invalid(`There is only ${describeQuantity(batch.count, type?.name ?? 'it', type?.unit)} left in that batch.`);
+      }
     }
     if (nodeId && !this.state.nodes[nodeId]) throw notFound('node', nodeId);
     // Every step's time is this plus an offset, so unreadable text here does not
@@ -2023,11 +2087,25 @@ export class App {
 
     return this.mutate(`Start ${protocol.name}`, (draft) => {
       const id = allocateId(draft, 'x', this.tag);
+      // Spent now: taken off the batch, and written into its history so the
+      // shelf and the story of the shelf never disagree.
+      for (const take of consume) {
+        const batch = draft.batches.find((b) => b.id === take.batchId)!;
+        const takenType = draft.scaffoldTypes.find((t) => t.id === batch.typeId);
+        batch.count = roundQuantity(batch.count - take.quantity);
+        batch.history.push({
+          state: batch.count <= 0 ? 'consumed' : batch.state,
+          at: now,
+          note: `${describeQuantity(take.quantity, takenType?.name ?? 'stock', takenType?.unit)} into ${protocol.name}`,
+        });
+        if (batch.count <= 0) batch.state = 'consumed';
+      }
       draft.runs.push({
         id,
         protocolId,
         batchIds: [...batchIds],
         nodeId,
+        consumed: consume.length ? consume.map((c) => ({ ...c })) : undefined,
         startedAt: start,
         completedStepIds: [],
       });
@@ -2050,6 +2128,7 @@ export class App {
     const run = this.state.runs.find((r) => r.id === runId);
     if (!run) throw notFound('run', runId);
     const now = this.now;
+    const today = this.today;
 
     return this.mutate('Protocol step', (draft) => {
       const target = draft.runs.find((r) => r.id === runId)!;
@@ -2058,13 +2137,18 @@ export class App {
       else set.delete(stepId);
       target.completedStepIds = [...set];
       const advanced = advanceBatchesIfRunComplete(draft, runId, now);
+      const made = advanced
+        ? produceOutputs(draft, runId, now, today, (d) => allocateId(d, 'b', this.tag))
+        : [];
       return {
         ok: true as const,
-        message: advanced
-          ? 'Last step done — those scaffolds are now crosslinked.'
-          : done
-            ? 'Step done.'
-            : 'Step reopened.',
+        message: made.length
+          ? `Last step done — ${made.length === 1 ? 'a batch is' : `${made.length} batches are`} on the shelf.`
+          : advanced
+            ? 'Last step done — those scaffolds are now crosslinked.'
+            : done
+              ? 'Step done.'
+              : 'Step reopened.',
       };
     });
   }
@@ -2455,6 +2539,48 @@ function advanceBatchesIfRunComplete(draft: State, runId: string, now: Stamp): b
     }
   }
   return true;
+}
+
+/**
+ * What a finished run put on the shelf.
+ *
+ * The nominal amounts from the protocol, because at the moment the last step is
+ * ticked nobody has told us the real yield — and a batch that says "about 45 mL,
+ * from this run" is worth far more than no batch at all. Correcting the number
+ * afterwards is one edit, and the run it came from is recorded either way.
+ *
+ * Called with the id allocator passed in, because allocation belongs to the
+ * command layer and this is a helper that only knows about drafts.
+ */
+function produceOutputs(
+  draft: State,
+  runId: string,
+  now: Stamp,
+  today: DateOnly,
+  mint: (draft: State) => string,
+): string[] {
+  const run = draft.runs.find((r) => r.id === runId);
+  if (!run || run.produced?.length) return [];
+  const protocol = draft.protocols.find((p) => p.id === run.protocolId);
+  if (!protocol?.produces?.length) return [];
+
+  const made: string[] = [];
+  for (const output of protocol.produces) {
+    if (!draft.scaffoldTypes.some((t) => t.id === output.typeId)) continue;
+    const id = mint(draft);
+    draft.batches.push({
+      id,
+      typeId: output.typeId,
+      count: output.quantity,
+      fabricatedOn: today,
+      state: 'fabricated',
+      madeBy: runId,
+      history: [{ state: 'fabricated', at: now, note: `Made by ${protocol.name}` }],
+    });
+    made.push(id);
+  }
+  run.produced = made.length ? made : undefined;
+  return made;
 }
 
 /**
