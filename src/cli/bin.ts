@@ -587,7 +587,9 @@ async function run(
         const [batchId, quantity] = split(token, 'Use --take BATCH:AMOUNT.');
         return { batchId, quantity };
       });
-      return say(app.startRun(rest[0]!, rest.slice(1), at, task, take)), 0;
+      // The id is what `step <run-id> <step-id>` asks for next; a start that
+      // keeps it to itself forces a `runs` round trip before the first tick.
+      return made(app.startRun(rest[0]!, rest.slice(1), at, task, take)), 0;
     }
 
     case 'lineage': {

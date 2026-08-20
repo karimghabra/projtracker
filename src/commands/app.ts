@@ -2131,7 +2131,7 @@ export class App {
       }
       return {
         ok: true as const,
-        message: `Started ${protocol.name}. ${protocol.steps.length} steps are now in your to-do list.`,
+        message: `Started ${protocol.name}. ${protocol.steps.length} step${protocol.steps.length === 1 ? ' is' : 's are'} now in your to-do list.`,
         id,
         reminders: protocol.steps.length,
       };
