@@ -105,6 +105,7 @@ usage: pt [--vault DIR] [--json] <command> [args]
     undo | redo
 
   --vault DIR   defaults to $PROTRACKER_VAULT, else ~/.protracker/vault
+  --new         start an empty vault at that path, alongside any command
 `;
 
 /** `b12:20` — the thing and how much of it. */
@@ -148,6 +149,14 @@ function warnAboutNewVault(choice: VaultChoice): void {
 async function main(argv: string[]): Promise<number> {
   const { positional, flags } = parseArgs(argv);
   const json = flags['json'] === true;
+
+  // `pt --new` alone used to print this help and create nothing, so the next
+  // command failed with "no vault" — the flag works alongside a command, and
+  // saying so beats demonstrating it.
+  if (flags['new'] === true && positional.length === 0) {
+    process.stderr.write('--new starts the vault when a command runs against it — give it one, e.g. pt --vault DIR --new add project "Name".\n');
+    return 1;
+  }
 
   if (positional.length === 0 || flags['help'] || positional[0] === 'help') {
     process.stdout.write(HELP);
@@ -211,6 +220,16 @@ async function run(
 ): Promise<number> {
   const [command, ...rest] = positional;
   const say = (delta: { message: string }) => out(json ? delta : delta.message);
+  /*
+    Anything that mints an id says the id. Every verb here takes a ref, and a
+    confirmation that keeps the ref to itself forces a `--json tree` round
+    trip before the very next command — which is exactly what an agent driving
+    this CLI was observed doing, three times per level.
+  */
+  const made = (delta: { id: string; message: string }) => {
+    if (json) return out(delta);
+    out(`${delta.id.padEnd(8)} ${delta.message}`);
+  };
 
   switch (command) {
     // ------------------------------------------------------------- seeing
@@ -359,13 +378,13 @@ async function run(
     // ------------------------------------------------------------ editing
     case 'add': {
       if (rest[0] === 'project') {
-        return say(app.addProject(rest.slice(1).join(' '))), 0;
+        return made(app.addProject(rest.slice(1).join(' '))), 0;
       }
       const parent = ref(rest[0]);
       const name = rest.slice(1).join(' ');
       const seqFlag = one(flags['seq']);
       const seq = seqFlag !== undefined ? Number(seqFlag) : undefined;
-      return say(app.addNode(parent, name, {
+      return made(app.addNode(parent, name, {
         seq,
         kind: flags['experiment'] === true ? 'experiment' : undefined,
       })), 0;
@@ -464,8 +483,18 @@ async function run(
     }
 
     case 'scaffold': {
-      if (rest[0] === 'type') return say(app.addScaffoldType(rest.slice(1).join(' '))), 0;
-      if (rest[0] === 'add') return say(app.addBatch(rest[1]!, Number(rest[2]))), 0;
+      if (rest[0] === 'type') return made(app.addScaffoldType(rest.slice(1).join(' '))), 0;
+      if (rest[0] === 'add') {
+        // The id is the canonical handle, but the name the user just typed to
+        // create the type has to work too — "collagen sponge" failing right
+        // after `scaffold type "Collagen sponge"` succeeded reads as a bug.
+        const token = rest[1] ?? '';
+        const type =
+          app.state.scaffoldTypes.find((t) => t.id === token) ??
+          app.state.scaffoldTypes.find((t) => t.name.toLowerCase() === token.toLowerCase());
+        if (!type) throw notFound('scaffold type', token);
+        return made(app.addBatch(type.id, Number(rest[2]))), 0;
+      }
       throw new Error('Use "scaffold type <name>" or "scaffold add <type> <count>".');
     }
 
@@ -493,9 +522,17 @@ async function run(
       if (rest[0] === 'add') {
         const agent = one(flags['agent']) ?? '';
         const notes = one(flags['notes']);
-        const made = app.addProtocol(rest.slice(1).join(' '), agent, [], notes);
-        if (json) return out(made), 0;
-        return out(`${made.id.padEnd(12)} ${made.message}`), 0;
+        const name = rest.slice(1).join(' ');
+        // Every vault ships with preset protocols, which nothing else says out
+        // loud — so "set up EDC/NHS crosslinking" naturally starts with `add`
+        // and silently mints an empty twin of a fully populated preset.
+        const twin = app.state.protocols.find((p) => p.name.trim().toLowerCase() === name.trim().toLowerCase());
+        if (twin && !json) {
+          process.stderr.write(`Note: a protocol named "${twin.name}" already exists (${twin.id}) — editing that one may be what you meant.\n`);
+        }
+        const added = app.addProtocol(name, agent, [], notes);
+        if (json) return out(added), 0;
+        return out(`${added.id.padEnd(12)} ${added.message}`), 0;
       }
       if (rest[0] === 'rm') return say(app.deleteProtocol(rest[1] ?? '')), 0;
 
