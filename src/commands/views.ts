@@ -45,7 +45,7 @@ import {
   experimentStatus,
   stagesOf,
 } from '../core/experiments.ts';
-import { scheduleRun } from '../core/protocols.ts';
+import { runIsLive, scheduleRun } from '../core/protocols.ts';
 import { describeQuantity, summariseLots } from '../core/inventory.ts';
 import type { Reminder } from '../core/model.ts';
 import type { TodayItem } from '../core/planner.ts';
@@ -1279,6 +1279,8 @@ export interface RunView {
   protocolId: string;
   protocolName: string;
   agent: string;
+  /** Still holding its protocol open — see runIsLive. */
+  live: boolean;
   batchIds: string[];
   batchLabels: string[];
   /**
@@ -1360,7 +1362,7 @@ export function protocolsView(state: State): ProtocolView[] {
           unit: typeById.get(io.typeId)?.unit,
         })),
         shortOf: consumes.filter((c) => c.inStock < c.quantity).map((c) => c.name),
-        live: state.runs.filter((r) => r.protocolId === p.id && !r.finishedAt && !r.cancelledAt).length,
+        live: state.runs.filter((r) => r.protocolId === p.id && runIsLive(state, r)).length,
       };
     });
 }
@@ -1494,6 +1496,7 @@ export function inventoryView(state: State, today: DateOnly, now: string): Inven
       total: scheduled.length,
       finished: !!run.finishedAt,
       cancelled: !!run.cancelledAt,
+      live: runIsLive(state, run),
     };
   });
 

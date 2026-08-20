@@ -650,7 +650,10 @@ function StartRunDialog({
 
 function RunsPanel({ inventory }: { inventory: Inventory }) {
   const { app, run } = useApp();
-  const live = inventory.runs.filter((r) => !r.cancelled);
+  // Finished runs stay visible with their "complete" chip; what is hidden is
+  // a run that is neither over nor truly live — one whose task ended before
+  // its steps did, in a vault written before such runs were closed.
+  const live = inventory.runs.filter((r) => !r.cancelled && (r.finished || r.live));
   if (live.length === 0) return null;
 
   return (

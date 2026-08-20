@@ -258,6 +258,16 @@ A run must name batches, a task, material it spends, or be an instance of a
 protocol that produces something. One belonging to nothing at all is a set of
 reminders that cannot be traced back to why they exist.
 
+A run belongs to the task it is carrying out, so the task ending ends the run.
+Completing the task finishes it — scaffolds still in the bath come out
+crosslinked, because the completion says the work happened, but steps nobody
+ticked mint nothing. Dropping the task cancels it, bath reverted, exactly as
+"Cancel run" would. Reopening the task later does not resurrect a closed run:
+when it ended is a fact, not a preference. Before this rule a run started from
+a task outlived it, and its protocol read "1 running" forever about work long
+over — and could never be deleted. Vaults written in that era still hold such
+runs, so "live" is judged by the run's task too, not only by its own dates.
+
 - **Scaffold types** are user-managed (name, material, geometry, notes).
 - **Batches** are created by "I fabricated *n* of type *t* on date *d*". Each
   batch carries a lifecycle state: `fabricated` → `crosslinking` →

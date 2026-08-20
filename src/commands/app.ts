@@ -48,7 +48,7 @@ import {
   stagesOf,
   validateExperiment,
 } from '../core/experiments.ts';
-import { isRunComplete, scheduleRun } from '../core/protocols.ts';
+import { isRunComplete, runIsLive, scheduleRun } from '../core/protocols.ts';
 import { describeQuantity, quantityProblem, roundQuantity } from '../core/inventory.ts';
 import { plannedAhead, upcomingReminders } from '../core/planner.ts';
 import { parsePeriod } from '../core/periods.ts';
@@ -698,6 +698,7 @@ export class App {
     }
 
     const label = `${period.at}${period.precision === 'day' ? '' : ` (${period.precision})`}`;
+    const now = this.now;
     return this.mutate(`Complete "${node.name}" ${label}`, (draft) => {
       const target = draft.nodes[id]!;
       target.status = 'done';
@@ -708,6 +709,7 @@ export class App {
       for (const entry of draft.planner) {
         if (entry.nodeId === id && !entry.outcome) entry.outcome = 'completed';
       }
+      closeRunsFor(draft, id, 'done', now);
       return { ok: true as const, message: 'Recorded.' };
     });
   }
@@ -801,6 +803,7 @@ export class App {
       if (status === 'active' && target.health === 'not_begun' && target.startedAt) {
         target.health = 'on_track';
       }
+      if (status === 'dropped') closeRunsFor(draft, id, 'dropped', now);
       return { ok: true as const, message: `${past} "${target.name}".` };
     });
   }
@@ -846,6 +849,8 @@ export class App {
       for (const entry of draft.planner) {
         if (entry.nodeId === id && !entry.outcome) entry.outcome = 'completed';
       }
+
+      closeRunsFor(draft, id, 'done', now);
 
       const after = readyView(buildIndex(draft), today);
       const unblocked = after.filter((r) => !before.has(r.id) && r.id !== id).map((r) => r.name);
@@ -1949,7 +1954,14 @@ export class App {
       if (patch.notes !== undefined) target.notes = patch.notes || undefined;
       if (patch.steps !== undefined) {
         if (patch.steps.some((s) => !s.name.trim())) throw invalid('Every step needs a name.');
-        if (patch.steps.some((s) => s.offsetHours < 0)) throw invalid('Step offsets cannot be negative.');
+        // `undefined < 0` is false, so a step arriving without an offset used
+        // to sail through and render as a bare "+" forever after.
+        if (patch.steps.some((s) => !Number.isFinite(s.offsetHours) || s.offsetHours < 0)) {
+          throw invalid('Every step needs hours after the start — zero or more.');
+        }
+        if (patch.steps.some((s) => s.durationHours !== undefined && (!Number.isFinite(s.durationHours) || s.durationHours <= 0))) {
+          throw invalid('A step duration has to be a positive number of hours.');
+        }
 
         // A step id is an identity, not a position. Runs record which steps are
         // done by id, and reminders are keyed `run-<runId>-<stepId>`, so
@@ -1977,7 +1989,9 @@ export class App {
   deleteProtocol(id: string): Delta {
     const protocol = this.state.protocols.find((p) => p.id === id);
     if (!protocol) throw notFound('protocol', id);
-    const active = this.state.runs.filter((r) => r.protocolId === id && !r.finishedAt && !r.cancelledAt);
+    // Live, not merely unfinished: a run whose task is done or gone is over,
+    // and must not hold the protocol hostage.
+    const active = this.state.runs.filter((r) => r.protocolId === id && runIsLive(this.state, r));
     if (active.length) throw conflict(`${active.length} run(s) are using "${protocol.name}".`);
 
     return this.mutate(`Delete protocol "${protocol.name}"`, (draft) => {
@@ -2509,6 +2523,33 @@ function suggestParent(childKind: NodeKind): string {
 }
 
 /** When every step of a run is ticked, the scaffolds have finished crosslinking. */
+/**
+ * A run belongs to the task it is carrying out, so the task ending ends the
+ * run. Ending in completion keeps the claim honest both ways: scaffolds still
+ * in the bath come out crosslinked — the task says the work happened — but
+ * steps nobody ticked mint nothing, because outputs are recorded only when the
+ * last step is. Dropped work is the opposite claim, and cancels the run the
+ * way "Cancel run" does, bath reverted. Reopening a task later does not
+ * resurrect a closed run: when it ended is a fact, not a preference.
+ */
+function closeRunsFor(draft: State, nodeId: NodeId, ending: 'done' | 'dropped', now: Stamp): void {
+  for (const run of draft.runs) {
+    if (run.nodeId !== nodeId || run.finishedAt || run.cancelledAt) continue;
+    if (ending === 'done') run.finishedAt = now;
+    else run.cancelledAt = now;
+    const state = ending === 'done' ? ('crosslinked' as const) : ('fabricated' as const);
+    const note = ending === 'done' ? 'task completed' : 'task dropped';
+    for (const batchId of run.batchIds) {
+      const batch = draft.batches.find((b) => b.id === batchId);
+      if (batch && batch.state === 'crosslinking') {
+        batch.state = state;
+        batch.runId = undefined;
+        batch.history.push({ state, at: now, note });
+      }
+    }
+  }
+}
+
 function advanceBatchesIfRunComplete(draft: State, runId: string, now: Stamp): boolean {
   const run = draft.runs.find((r) => r.id === runId);
   if (!run || run.cancelledAt) return false;

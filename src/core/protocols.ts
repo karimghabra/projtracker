@@ -11,7 +11,7 @@
 
 import type { Stamp } from './dates.ts';
 import { addHours, dateOf, timeOf } from './dates.ts';
-import type { Protocol, ProtocolRun, ProtocolStep } from './model.ts';
+import type { Protocol, ProtocolRun, ProtocolStep, State } from './model.ts';
 
 export interface ScheduledStep {
   step: ProtocolStep;
@@ -49,6 +49,24 @@ export function totalHours(protocol: Protocol): number {
   );
 }
 
+/**
+ * Whether a run still holds its protocol open.
+ *
+ * Finished and cancelled runs are over. So is a run whose task has ended or
+ * vanished: the task ending ends the run. The command layer closes such runs
+ * at the moment the task completes, but vaults written before it did still
+ * hold runs that never will be closed — this predicate keeps one of those
+ * from pinning its protocol, and its "running" chip, forever.
+ */
+export function runIsLive(state: State, run: ProtocolRun): boolean {
+  if (run.finishedAt || run.cancelledAt) return false;
+  if (run.nodeId) {
+    const node = state.nodes[run.nodeId];
+    if (!node || node.status === 'done' || node.status === 'dropped') return false;
+  }
+  return true;
+}
+
 export function isRunComplete(protocol: Protocol, run: ProtocolRun): boolean {
   if (protocol.steps.length === 0) return false;
   const done = new Set(run.completedStepIds);
@@ -57,6 +75,9 @@ export function isRunComplete(protocol: Protocol, run: ProtocolRun): boolean {
 
 /** Human summary of an offset: '+4 h', '+2 d 3 h', 'start'. */
 export function formatOffset(hours: number): string {
+  // A vault edited by hand can hold a step with no offset; a lone "+" beside
+  // an empty number reads as a broken button, so say nothing instead.
+  if (!Number.isFinite(hours)) return '';
   if (hours === 0) return 'start';
   const sign = hours < 0 ? '-' : '+';
   const abs = Math.abs(hours);
