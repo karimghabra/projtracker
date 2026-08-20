@@ -555,6 +555,9 @@ async function run(
     case 'lineage': {
       const batchId = rest[0];
       if (!batchId) throw new Error('Which batch? Give a batch id.');
+      // A mistyped id and a batch with no history would otherwise read the
+      // same: "nothing either side" is only an answer about a batch that exists.
+      if (!app.state.batches.some((b) => b.id === batchId)) throw notFound('batch', batchId);
       const back = ancestorsOf(app.state, batchId);
       const forward = descendantsOf(app.state, batchId);
       if (json) return out({ madeFrom: back, wentInto: forward }), 0;
