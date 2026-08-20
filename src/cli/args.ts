@@ -21,7 +21,7 @@ export interface Args {
  * exited 0. A read that quietly returns nothing at all is the worst thing a
  * command-line tool can do to a script, and to anything reading it.
  */
-const SWITCHES = new Set(['json', 'help', 'experiment', 'undated', 'preview', 'merge', 'yes', 'new']);
+const SWITCHES = new Set(['json', 'help', 'experiment', 'undated', 'preview', 'merge', 'yes', 'new', 'undo']);
 
 /** A flag given more than once, or once, or not at all. */
 export function list(value: string | boolean | string[] | undefined): string[] {

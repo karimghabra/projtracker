@@ -56,4 +56,28 @@ describe('parseArgs', () => {
     expect(positional).toEqual(['cultures']);
     expect(flags['json']).toBe(true);
   });
+
+  it('does not let --undo swallow the run id after it', () => {
+    // `pt step --undo r1 s1` used to parse r1 as the value of --undo,
+    // leaving one positional where tickRunStep expects two.
+    expect(parseArgs(['step', '--undo', 'r1', 's1'])).toEqual({
+      positional: ['step', 'r1', 's1'],
+      flags: { undo: true },
+    });
+  });
+
+  it('treats every documented switch as valueless', () => {
+    for (const name of ['json', 'help', 'experiment', 'undated', 'preview', 'merge', 'yes', 'new', 'undo']) {
+      const { positional, flags } = parseArgs([`--${name}`, 'verb']);
+      expect(positional, `--${name} swallowed the word after it`).toEqual(['verb']);
+      expect(flags[name]).toBe(true);
+    }
+  });
+
+  it('reads a valued flag followed by another flag as a switch', () => {
+    expect(parseArgs(['--vault', '--json'])).toEqual({
+      positional: [],
+      flags: { vault: true, json: true },
+    });
+  });
 });

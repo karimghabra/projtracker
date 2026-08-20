@@ -91,7 +91,8 @@ usage: pt [--vault DIR] [--json] <command> [args]
     crosslink ...             the same verb, named for the bath.
     lineage <batch-id>        what it was made from, and what it became.
     runs                      live crosslinking runs
-    step <run-id> <step-id>   tick a protocol step
+    step <run-id> <step-id> [--undo]
+                              tick a protocol step, or untick it
 
   bringing a workbook across
     import <file.xlsx> [--preview] [--merge]
