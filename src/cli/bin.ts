@@ -26,6 +26,7 @@ import { exportWorkbook } from '../store/excelExport.ts';
 import { APP_VERSION } from '../core/version.ts';
 import { NodeVault } from '../store/nodeVault.ts';
 import { holdsVault } from '../desktop/vaultLocation.ts';
+import { list, one, parseArgs, type Args } from './args.ts';
 
 const HELP = `protracker — a lab project tracker
 
@@ -105,56 +106,12 @@ usage: pt [--vault DIR] [--json] <command> [args]
   --vault DIR   defaults to $PROTRACKER_VAULT, else ~/.protracker/vault
 `;
 
-interface Args {
-  positional: string[];
-  flags: Record<string, string | boolean>;
-}
-
-/**
- * Flags that never take a value.
- *
- * Without this list a switch swallows whatever follows it, and the usage line
- * documents the order that breaks: `pt --vault DIR --json cultures` gave
- * `--json` the value "cultures", left no verb behind, printed the help and
- * exited 0. A read that quietly returns nothing at all is the worst thing a
- * command-line tool can do to a script, and to anything reading it.
- */
-const SWITCHES = new Set(['json', 'help', 'experiment', 'undated', 'preview', 'merge', 'yes', 'new']);
-
-/** A flag given more than once, or once, or not at all. */
-function list(value: string | boolean | (string | boolean)[] | undefined): string[] {
-  if (value === undefined || value === true) return [];
-  return (Array.isArray(value) ? value : [value]).filter((v): v is string => typeof v === 'string');
-}
-
 /** `b12:20` — the thing and how much of it. */
 function split(token: string, hint: string): [string, number] {
   const at = token.lastIndexOf(':');
   const quantity = at < 0 ? NaN : Number(token.slice(at + 1));
   if (at < 0 || !Number.isFinite(quantity)) throw new Error(hint);
   return [token.slice(0, at), quantity];
-}
-
-function parseArgs(argv: string[]): Args {
-  const positional: string[] = [];
-  const flags: Record<string, string | boolean> = {};
-
-  for (let i = 0; i < argv.length; i++) {
-    const token = argv[i]!;
-    if (!token.startsWith('--')) {
-      positional.push(token);
-      continue;
-    }
-    const name = token.slice(2);
-    const next = argv[i + 1];
-    if (!SWITCHES.has(name) && next !== undefined && !next.startsWith('--')) {
-      flags[name] = next;
-      i += 1;
-    } else {
-      flags[name] = true;
-    }
-  }
-  return { positional, flags };
 }
 
 interface VaultChoice {
@@ -164,7 +121,8 @@ interface VaultChoice {
 }
 
 function vaultPath(flags: Args['flags']): VaultChoice {
-  if (typeof flags['vault'] === 'string') return { path: flags['vault'], source: 'flag' };
+  const given = one(flags['vault']);
+  if (given !== undefined) return { path: given, source: 'flag' };
   const fromEnv = process.env['PROTRACKER_VAULT'];
   if (fromEnv) return { path: fromEnv, source: 'env' };
   return { path: join(homedir(), '.protracker', 'vault'), source: 'default' };
@@ -322,7 +280,7 @@ async function run(
     }
 
     case 'upcoming': {
-      const days = Number(flags['days'] ?? 60);
+      const days = Number(one(flags['days']) ?? 60);
       const data = app.upcoming(days);
       if (json) return out(data), 0;
       // What is late is on `today`, saying how late it is, rather than here.
@@ -404,7 +362,8 @@ async function run(
       }
       const parent = ref(rest[0]);
       const name = rest.slice(1).join(' ');
-      const seq = flags['seq'] !== undefined ? Number(flags['seq']) : undefined;
+      const seqFlag = one(flags['seq']);
+      const seq = seqFlag !== undefined ? Number(seqFlag) : undefined;
       return say(app.addNode(parent, name, {
         seq,
         kind: flags['experiment'] === true ? 'experiment' : undefined,
@@ -422,8 +381,9 @@ async function run(
     case 'pause':
       return say(app.pause(ref(rest[0]))), 0;
     case 'done': {
-      const when = typeof flags['in'] === 'string' ? flags['in'] : undefined;
-      const under = typeof flags['under'] === 'string' ? ref(flags['under']) : null;
+      const when = one(flags['in']);
+      const underFlag = one(flags['under']);
+      const under = underFlag !== undefined ? ref(underFlag) : null;
       const undated = flags['undated'] === true;
 
       const targets = selectForCompletion(app, rest, under, undated);
@@ -455,7 +415,7 @@ async function run(
     }
 
     case 'wait': {
-      const until = typeof flags['until'] === 'string' ? flags['until'] : undefined;
+      const until = one(flags['until']);
       return say(app.wait(ref(rest[0]), rest.slice(1).join(' '), until)), 0;
     }
 
@@ -468,14 +428,16 @@ async function run(
       return say(app.removeDep(rest[0]!)), 0;
 
     case 'remind': {
-      const on = typeof flags['on'] === 'string' ? flags['on'] : undefined;
+      const on = one(flags['on']);
       if (!on) throw new Error('When? Pass --on YYYY-MM-DD.');
-      const span = flags['span'] !== undefined ? Number(flags['span']) : undefined;
+      const spanFlag = one(flags['span']);
+      const span = spanFlag !== undefined ? Number(spanFlag) : undefined;
       return say(app.addReminder(rest.join(' '), on, { spanDays: span })), 0;
     }
 
     case 'note': {
-      const node = typeof flags['node'] === 'string' ? ref(flags['node']) : undefined;
+      const nodeFlag = one(flags['node']);
+      const node = nodeFlag !== undefined ? ref(nodeFlag) : undefined;
       return say(app.capture(rest.join(' '), node)), 0;
     }
 
@@ -528,8 +490,8 @@ async function run(
 
     case 'protocol': {
       if (rest[0] === 'add') {
-        const agent = typeof flags['agent'] === 'string' ? flags['agent'] : '';
-        const notes = typeof flags['notes'] === 'string' ? flags['notes'] : undefined;
+        const agent = one(flags['agent']) ?? '';
+        const notes = one(flags['notes']);
         const made = app.addProtocol(rest.slice(1).join(' '), agent, [], notes);
         if (json) return out(made), 0;
         return out(`${made.id.padEnd(12)} ${made.message}`), 0;
@@ -579,8 +541,9 @@ async function run(
       // A run typed up after the fact started when it started: every step's
       // time is counted from here, so the default of "now" would date them all
       // to the moment of typing.
-      const at = typeof flags['at'] === 'string' ? flags['at'] : undefined;
-      const task = typeof flags['task'] === 'string' ? ref(flags['task']) : undefined;
+      const at = one(flags['at']);
+      const taskFlag = one(flags['task']);
+      const task = taskFlag !== undefined ? ref(taskFlag) : undefined;
       // --take b12:20 — a batch and how much of it to spend. Repeatable.
       const take = list(flags['take']).map((token) => {
         const [batchId, quantity] = split(token, 'Use --take BATCH:AMOUNT.');
@@ -745,9 +708,10 @@ function protocolOf(app: App, token: string | undefined): Protocol {
 }
 
 /** A flag that has to be a number of hours, or the question it did not answer. */
-function hours(value: string | boolean | undefined, question: string): number {
-  const n = Number(value);
-  if (typeof value !== 'string' || !Number.isFinite(n)) throw new Error(question);
+function hours(value: string | boolean | string[] | undefined, question: string): number {
+  const given = one(value);
+  const n = Number(given);
+  if (given === undefined || !Number.isFinite(n)) throw new Error(question);
   return n;
 }
 
