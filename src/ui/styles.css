@@ -51,6 +51,9 @@
 /* Light is the default; the lab is usually bright. */
 :root,
 [data-theme='light'] {
+  /* Native controls — date pickers, selects — follow this, not the OS. A dark
+     OS preference under a light app painted invisible calendar icons. */
+  color-scheme: light;
   --bg: #f7f7f8;
   --bg-raised: #ffffff;
   --bg-sunken: #f0f0f2;
@@ -85,6 +88,7 @@
 }
 
 [data-theme='dark'] {
+  color-scheme: dark;
   --bg: #101013;
   --bg-raised: #18181b;
   --bg-sunken: #0b0b0d;
@@ -106,7 +110,9 @@
   --ok: #4ade80;
   --ok-soft: #052e16;
   --warn: #fbbf24;
-  --warn-soft: #3b2508;
+  /* Soft means soft: six overdue rows in a run card should murmur, not roar.
+     The light themes whisper this colour; the dark ones were shouting it. */
+  --warn-soft: #2a1f0d;
   --danger: #f87171;
   --danger-soft: #401414;
   --info: #60a5fa;
@@ -130,6 +136,7 @@
 
 /* Warm paper. Light without the blue-white glare of a screen at 2am. */
 [data-theme='sepia'] {
+  color-scheme: light;
   --bg: #f3ede1;
   --bg-raised: #fbf7ef;
   --bg-sunken: #e9e1d1;
@@ -165,6 +172,7 @@
 
 /* Deep blue-black. The dark theme for a dark room. */
 [data-theme='midnight'] {
+  color-scheme: dark;
   --bg: #0b1020;
   --bg-raised: #141b30;
   --bg-sunken: #070b17;
@@ -186,7 +194,7 @@
   --ok: #5eead4;
   --ok-soft: #073b38;
   --warn: #fcd34d;
-  --warn-soft: #3d2f08;
+  --warn-soft: #2b2410;
   --danger: #fb7185;
   --danger-soft: #431521;
   --info: #a5b4fc;
@@ -200,6 +208,7 @@
 
 /* Cold green on near-black, for the incubator room at 11pm. */
 [data-theme='terminal'] {
+  color-scheme: dark;
   --bg: #0a0f0c;
   --bg-raised: #101713;
   --bg-sunken: #060a08;
@@ -221,7 +230,7 @@
   --ok: #22d3ee;
   --ok-soft: #06282e;
   --warn: #facc15;
-  --warn-soft: #2e2707;
+  --warn-soft: #231e09;
   --danger: #f87171;
   --danger-soft: #3a1414;
   --info: #93c5fd;
@@ -235,6 +244,7 @@
 
 /* Higher contrast than the rest, for a bright bench or a projector. */
 [data-theme='contrast'] {
+  color-scheme: light;
   --bg: #ffffff;
   --bg-raised: #ffffff;
   --bg-sunken: #f2f2f2;
@@ -270,6 +280,7 @@
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]) {
+    color-scheme: dark;
     --bg: #101013;
     --bg-raised: #18181b;
     --bg-sunken: #0b0b0d;
@@ -287,7 +298,7 @@
     --ok: #4ade80;
     --ok-soft: #052e16;
     --warn: #fbbf24;
-    --warn-soft: #3b2508;
+    --warn-soft: #2a1f0d;
     --danger: #f87171;
     --danger-soft: #401414;
     --info: #60a5fa;

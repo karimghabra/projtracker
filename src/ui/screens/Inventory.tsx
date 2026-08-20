@@ -362,7 +362,7 @@ function TypeGroup({
   const { run } = useApp();
   return (
     <div data-testid={testid}>
-      <div className="row-sub" style={{ padding: '4px 8px 2px', fontWeight: 600 }}>
+      <div className="row-sub" style={{ padding: '4px 8px 2px', fontWeight: 600, color: 'var(--text-muted)' }}>
         {label}
       </div>
       <div className="list">
@@ -667,7 +667,7 @@ function RunsPanel({ inventory }: { inventory: Inventory }) {
             <div className="run-card" key={item.id} data-testid={`run-${item.id}`}>
               <div className="inline">
                 <strong>{item.protocolName}</strong>
-                <span className="chip">{item.batchLabels.join(', ')}</span>
+                {item.batchLabels.length > 0 && <span className="chip">{item.batchLabels.join(', ')}</span>}
                 <span className="spacer" />
                 {item.finished ? (
                   <span className="chip ok">complete</span>
