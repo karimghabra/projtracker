@@ -413,6 +413,27 @@ describe('sixty days of use', () => {
         expect(entries.map((n) => n.at)).toEqual([...entries.map((n) => n.at)].sort().reverse());
       }
 
+      // 9b. The log is the record read whole: it holds every note exactly
+      // once, every completion under the month that completion claims, and it
+      // reads in time order. It is a reading, never a writer — so it can be
+      // checked on every day of the sixty without changing one of them.
+      {
+        const whole = app.log();
+        expect(whole.map((e) => e.at)).toEqual([...whole.map((e) => e.at)].sort());
+        expect(new Set(whole.filter((e) => e.kind === 'note').map((e) => e.noteId))).toEqual(
+          new Set(app.state.notes.map((n) => n.id)),
+        );
+        for (const node of Object.values(app.state.nodes)) {
+          if (node.status !== 'done' || !node.doneAt) continue;
+          expect(
+            app
+              .log(node.doneAt.slice(0, 7))
+              .some((e) => e.kind === 'done' && e.nodeId === node.id),
+            `completion of ${node.id} missing from its month's log`,
+          ).toBe(true);
+        }
+      }
+
       // 10. Troubleshooting is a field of its own, and stays out of the notes.
       // The sheet is the surface it was asked for, so the sheet is where it is
       // checked — a column that reads blank is the failure people would meet.

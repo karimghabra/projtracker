@@ -71,6 +71,7 @@ import type {
   ProtocolView,
   NodeView,
   ContributionsView,
+  LogEntry,
   ProgressRow,
   ReadyBranch,
   ReadyRow,
@@ -90,6 +91,7 @@ import {
   progressView,
   experimentsView,
   inProgressView,
+  logView,
   readyTree,
   readyView,
   sheetView,
@@ -414,6 +416,11 @@ export class App {
         nodeId: n.nodeId,
         nodeName: n.nodeId ? this.state.nodes[n.nodeId]?.name : undefined,
       }));
+  }
+
+  /** The manifest: everything recorded, in time order. See logView. */
+  log(month?: string): LogEntry[] {
+    return logView(this.state, month);
   }
 
   /** One substring search across names, notes, tags and the journal. */

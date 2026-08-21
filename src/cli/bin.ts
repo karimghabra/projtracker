@@ -70,7 +70,8 @@ usage: pt [--vault DIR] [--json] <command> [args]
     today rm <ref>
     remind <text> --on DATE [--span N]
     note <text> [--node ref]
-    journal [YYYY-MM]
+    journal [YYYY-MM]         notes alone
+    log [YYYY-MM | DATE]      the manifest: everything recorded, by day
 
   the lab
     scaffolds                 inventory summary
@@ -466,6 +467,32 @@ async function run(
       if (json) return out(notes), 0;
       for (const note of notes) out(`${note.at}  ${note.text}${note.nodeName ? dim(` · ${note.nodeName}`) : ''}`);
       if (!notes.length) out('No notes.');
+      return 0;
+    }
+
+    case 'log': {
+      // The manifest: everything recorded — notes, completions, fabrications,
+      // batch movements, runs and their steps — read by the day.
+      const when = rest[0];
+      if (when && !/^\d{4}-\d{2}(-\d{2})?$/.test(when)) {
+        throw new Error(`Cannot read "${when}" as a month or a day. Try 2026-08 or 2026-08-20.`);
+      }
+      const month = when ? when.slice(0, 7) : app.today.slice(0, 7);
+      const entries = app
+        .log(month)
+        .filter((e) => (when && when.length === 10 ? e.at.startsWith(when) : true));
+      if (json) return out(entries), 0;
+      if (!entries.length) return out('Nothing recorded.'), 0;
+      let day = '';
+      for (const entry of entries) {
+        if (entry.at.slice(0, 10) !== day) {
+          day = entry.at.slice(0, 10);
+          out(`${day === app.today ? `${day} (today)` : day}`);
+        }
+        const period = entry.period ? `  (${entry.period})` : '';
+        const where = entry.parentPath ? dim(`  · ${entry.parentPath}`) : '';
+        out(`  ${entry.at.slice(11, 16)}  ${entry.text}${period}${where}`);
+      }
       return 0;
     }
 

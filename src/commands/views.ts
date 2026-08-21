@@ -8,8 +8,8 @@
  * component.
  */
 
-import type { DateOnly } from '../core/dates.ts';
-import { addDays, dateOf, diffDays, monthGrid, startOfMonth, weekGrid } from '../core/dates.ts';
+import type { DateOnly, Stamp } from '../core/dates.ts';
+import { MONTH_NAMES, addDays, dateOf, diffDays, monthGrid, startOfMonth, weekGrid } from '../core/dates.ts';
 import type {
   DerivedStatus,
   Health,
@@ -1526,6 +1526,138 @@ export function inventoryView(state: State, today: DateOnly, now: string): Inven
       a.startedAt !== b.startedAt ? (a.startedAt < b.startedAt ? 1 : -1) : a.id < b.id ? 1 : -1,
     ),
   };
+}
+
+// ------------------------------------------------------------- the log
+
+export interface LogEntry {
+  /** Orders the day; kinds that carry only a date sit at noon. */
+  at: Stamp;
+  kind: 'note' | 'done' | 'batch' | 'batch-state' | 'run' | 'run-step';
+  /** What happened, phrased for someone reading the day back. */
+  text: string;
+  nodeId?: NodeId;
+  nodeName?: string;
+  /** Where it belongs — "Project › Milestone › Goal" — when it belongs somewhere. */
+  parentPath?: string;
+  /** Set on notes, which stay editable from wherever they are read. */
+  noteId?: string;
+  /** "Q2 2026" on a back-filled completion: the period the user stated. */
+  period?: string;
+}
+
+/**
+ * The manifest: everything recorded, one stream, grouped by the reader.
+ *
+ * The tracker was built to be a lab notebook, and a notebook is read by the
+ * day — "what did I do on the day the staining worked". Every source here
+ * already exists and is already stamped; this view only assembles: notes,
+ * completions (back-fills under the period the user stated), batches
+ * fabricated and every state a batch moved through, runs started, finished
+ * and cancelled, and each protocol step ticked, placed at its scheduled hour.
+ * Nothing is written, so nothing here can disagree with the record.
+ */
+export function logView(state: State, month?: string): LogEntry[] {
+  const inMonth = (stamp: string) => !month || stamp.startsWith(month);
+  const entries: LogEntry[] = [];
+
+  const pathOf = (id: NodeId | undefined): { name?: string; path?: string } => {
+    if (!id) return {};
+    const node = state.nodes[id];
+    if (!node) return {};
+    const names: string[] = [];
+    for (let up = node.parent; up; up = state.nodes[up]?.parent ?? null) {
+      const parent = state.nodes[up];
+      if (!parent) break;
+      names.unshift(parent.name);
+    }
+    return { name: node.name, path: names.join(' › ') || undefined };
+  };
+
+  for (const note of state.notes) {
+    if (!inMonth(note.at)) continue;
+    const where = pathOf(note.nodeId);
+    entries.push({
+      at: note.at,
+      kind: 'note',
+      text: note.text,
+      nodeId: note.nodeId,
+      nodeName: where.name,
+      parentPath: where.path,
+      noteId: note.id,
+    });
+  }
+
+  for (const node of Object.values(state.nodes)) {
+    if (node.status !== 'done' || !node.doneAt || !inMonth(node.doneAt)) continue;
+    const where = pathOf(node.id);
+    entries.push({
+      at: node.doneAt,
+      kind: 'done',
+      text: `Completed "${node.name}"`,
+      nodeId: node.id,
+      nodeName: node.name,
+      parentPath: where.path,
+      period:
+        node.donePrecision && node.donePrecision !== 'day'
+          ? describePeriod(node.doneAt, node.donePrecision)
+          : undefined,
+    });
+  }
+
+  const typeName = new Map(state.scaffoldTypes.map((t) => [t.id, t.name] as const));
+  const unitOf = new Map(state.scaffoldTypes.map((t) => [t.id, t.unit] as const));
+  for (const batch of state.batches) {
+    const name = typeName.get(batch.typeId) ?? batch.typeId;
+    if (inMonth(batch.fabricatedOn)) {
+      // The first history entry is the fabrication itself; its stamp keeps the
+      // hour when the record was made the same day, and a back-dated batch
+      // sits at noon of the day it claims.
+      const first = batch.history[0];
+      entries.push({
+        at: first && first.at.startsWith(batch.fabricatedOn) ? first.at : `${batch.fabricatedOn}T12:00`,
+        kind: 'batch',
+        text: `Fabricated ${describeQuantity(batch.count, name, unitOf.get(batch.typeId))}${batch.label ? ` — ${batch.label}` : ''}`,
+      });
+    }
+    for (const step of batch.history.slice(1)) {
+      if (!inMonth(step.at)) continue;
+      entries.push({
+        at: step.at,
+        kind: 'batch-state',
+        text: `${name}${batch.label ? ` (${batch.label})` : ''} → ${step.state}${step.note ? ` — ${step.note}` : ''}`,
+      });
+    }
+  }
+
+  const protocolById = new Map(state.protocols.map((p) => [p.id, p] as const));
+  for (const run of state.runs) {
+    const protocol = protocolById.get(run.protocolId);
+    const title = protocol?.name ?? run.protocolId;
+    const where = pathOf(run.nodeId);
+    const on = (at: Stamp, text: string, kind: LogEntry['kind'] = 'run') => {
+      if (inMonth(at)) entries.push({ at, kind, text, nodeId: run.nodeId, nodeName: where.name, parentPath: where.path });
+    };
+    on(run.startedAt, `Started ${title}`);
+    if (run.finishedAt) on(run.finishedAt, `Finished ${title}`);
+    if (run.cancelledAt) on(run.cancelledAt, `Cancelled ${title}`);
+    if (protocol) {
+      for (const scheduled of scheduleRun(protocol, run)) {
+        if (scheduled.done) on(scheduled.at, `${title}: ${scheduled.step.name}`, 'run-step');
+      }
+    }
+  }
+
+  return entries.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.text < b.text ? -1 : 1));
+}
+
+/** "Q2 2026", "Aug 2026", "2026" — the words a back-fill was given in. */
+function describePeriod(doneAt: Stamp, precision: 'month' | 'quarter' | 'year'): string {
+  const year = doneAt.slice(0, 4);
+  const monthIndex = Number(doneAt.slice(5, 7)) - 1;
+  if (precision === 'year') return year;
+  if (precision === 'quarter') return `Q${Math.floor(monthIndex / 3) + 1} ${year}`;
+  return `${MONTH_NAMES[monthIndex]?.slice(0, 3)} ${year}`;
 }
 
 // ---------------------------------------------------------- contributions
