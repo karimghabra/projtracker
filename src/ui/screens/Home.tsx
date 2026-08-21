@@ -62,6 +62,18 @@ import {
   type PanelId,
 } from '../state/dashboard.ts';
 
+/**
+ * The tail of a parent path — "… › Milestone › Goal". A row has one line for
+ * context, and the end of the road distinguishes better than the start:
+ * everything this week may share a project, but not a goal.
+ */
+function shortPath(parentPath?: string): string | undefined {
+  if (!parentPath) return undefined;
+  const parts = parentPath.split(' › ');
+  if (parts.length <= 2) return parentPath;
+  return `… › ${parts.slice(-2).join(' › ')}`;
+}
+
 /** What every panel needs to draw its own frame. */
 type Frame = { id: PanelId; collapsed: boolean; onToggle: () => void };
 
@@ -524,7 +536,15 @@ function TodayRow({
           {item.title}
         </div>
         <div className="inline" style={{ gap: 6, marginTop: 1 }}>
-          {item.node?.projectName && <span className="row-sub">{item.node.projectName}</span>}
+          {/* Where it belongs, ending at the goal: "Fabricate scaffolds" under
+              three goals is a riddle with only a project name beside it. The
+              row keeps the last two steps of the path — the distinguishing
+              end — and the title holds the whole road. */}
+          {item.node && (item.node.parentPath || item.node.projectName) && (
+            <span className="row-sub" title={item.node.parentPath || item.node.projectName}>
+              {shortPath(item.node.parentPath) || item.node.projectName}
+            </span>
+          )}
           {item.source === 'rolled-over' && (
             <span className="chip warn" title={`First put on your list on ${item.rolledFrom}`}>
               carried {item.ageDays}d
