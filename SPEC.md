@@ -352,6 +352,26 @@ every draft would double the journal to answer a question nobody has asked.
 
 A node's `notes` field is a different thing and stays: it says what the task
 *is*. The notebook says what *happened*. One text box cannot answer both.
+The dashboard offers both acts by their own names — "Add a note" edits the
+field, "Write in the journal" makes a dated entry — because one button that
+means two things depending on mood is how a record gets written into the
+wrong place.
+
+**The log** — the manifest: everything recorded, one stream, read by the day.
+Notes, completions (a back-fill files under the period the user stated),
+batches fabricated and every state a batch moved through, runs started,
+finished and cancelled, and each protocol step ticked at its scheduled hour.
+It is strictly a reading of records that already exist — `logView` writes
+nothing, so the manifest cannot disagree with the record. The Journal screen
+shows it whole (with a Notes filter for the written word alone) and `pt log
+[month|day]` prints it, which is all an agent needs to draft an invoice or a
+morning brief from what actually happened.
+
+Rows on the day's list say where their task belongs — the tail of the path,
+"… › Milestone › Goal", with the whole road in the tooltip — because a task
+named "Fabricate scaffolds" under three goals is a riddle with only a project
+name beside it. The pool keeps paths off its rows; its crumbs already say
+where you are standing.
 
 **Attachments are not in the vault.** The canonical state is UTF-8 text (§1.4)
 and `Vault.read` returns a string, so a photo or a workbook cannot live inside a

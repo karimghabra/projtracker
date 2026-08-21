@@ -6,50 +6,19 @@ entries honest about what already exists, so nobody re-solves a solved half.
 
 ## Named priorities
 
-### 1. Say where a task belongs, everywhere it appears
+*(Shipped in 1.18.0, now recorded in SPEC.md: paths on the day's rows —
+"… › Milestone › Goal" with the whole road in the tooltip; the manifest —
+`logView`, the Journal screen's Everything stream, and `pt log`; and "Write in
+the journal" on every dashboard row, a dated capture kept deliberately apart
+from the standing note.)*
 
-A row that says only "Fabricate scaffolds" is a riddle when three goals could
-own it. Today's list shows the project name alone (`Home.tsx` row sub-line);
-the ready pool shows no path on rows at all, leaning on its navigation crumbs —
-which works when you have drilled in, and fails exactly when the pool shows
-work from several branches at once.
-
-Wanted: the full path — project › milestone › goal — on Today rows and on any
-pool row shown outside its own branch. Design care: the path is context, not
-content; it should read quieter than the task, truncate from the left (the
-project is the least distinguishing part), and never wrap a one-line row into
-three. `nodeView` already knows its ancestry; this is a views + Home change,
-no model work.
-
-### 2. The manifest: a running log of everything done in the lab
-
-The want: one chronological record — "what did I do on this day" — covering
-everything, including work never planned in the tracker. Go back to a day with
-a good result and see what was done, what was noted, what went wrong.
-
-What already exists (mostly unassembled, all timestamped):
-- Notes with `at` stamps, reachable from every dashboard row via `NoteDialog`
-  — including quick-add tasks, which are real nodes and can carry notes now.
-  (If this feels missing in use, the gap is discoverability, not capture.)
-- Completions with dates and back-fill periods (`doneAt`, `donePrecision`).
-- Run steps ticked, batches fabricated/advanced (each batch keeps a dated
-  `history`), reminders resolved, planner outcomes.
-
-Missing: the view that reads them together. A Logbook screen (and `pt log
-[date|month]`) that merges these into one day-by-day stream, each entry saying
-what it was and what it belonged to. Read-only, computed in `views.ts` from
-state that already exists — no new writes, no new files, no migration. This is
-the highest value-per-effort item in this file.
-
-Capture-side niceties once the view exists: writing a note from the manifest
-itself ("also did X today"), and a `#tag` vocabulary that survives into
-filtering (tags already parse on quick-adds).
-
-### 3. Invoicing — the reason this tool exists
+### Invoicing — the reason this tool exists
 
 The original itch: a digital lab notebook that makes invoicing painless. The
-manifest is the substrate; an invoice is a reading of it — a date range,
-grouped by project, phrased for a client, with the private noise left out.
+manifest now exists and is the substrate; an invoice is a reading of it — a
+date range, grouped by project, phrased for a client, with the private noise
+left out. `pt log --json` over a date range is already enough for an
+agent-drafted first pass.
 
 Open decisions to settle before building (write the answers into SPEC when
 made):

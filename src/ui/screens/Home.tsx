@@ -41,10 +41,12 @@ import {
   IconProjects,
   IconClose,
   IconEdit,
+  IconJournal,
   IconTrash,
   IconUndo,
 } from '../components/icons.tsx';
 import type { ViewName } from '../AppShell.tsx';
+import { CaptureDialog } from '../components/CaptureDialog.tsx';
 import { DashPanel, LessRow, MoreRow } from '../components/DashPanel.tsx';
 import { DashGrid } from '../components/DashGrid.tsx';
 import { PanelChooser } from '../components/PanelChooser.tsx';
@@ -480,6 +482,7 @@ function TodayRow({
   const [startingProtocol, setStartingProtocol] = useState(false);
   const [moving, setMoving] = useState(false);
   const [noting, setNoting] = useState(false);
+  const [capturing, setCapturing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const toggle = () => {
@@ -667,6 +670,13 @@ function TodayRow({
                     testId: `today-note-${item.key}`,
                     onSelect: () => setNoting(true),
                   },
+                  {
+                    label: 'Write in the journal',
+                    name: `Write a journal entry on ${item.title}`,
+                    icon: <IconJournal size={13} />,
+                    testId: `today-capture-${item.key}`,
+                    onSelect: () => setCapturing(true),
+                  },
                 ]
               : []),
             ...(item.kind === 'task' && !item.done
@@ -736,6 +746,10 @@ function TodayRow({
           current={item.node?.notes}
           onClose={() => setNoting(false)}
         />
+      )}
+
+      {capturing && (
+        <CaptureDialog nodeId={item.id} title={item.title} onClose={() => setCapturing(false)} />
       )}
     </div>
   );
@@ -947,6 +961,7 @@ function BranchNote({ branch }: { branch: ReadyBranch }) {
  */
 function BranchMenu({ branch }: { branch: ReadyBranch }) {
   const [noting, setNoting] = useState(false);
+  const [capturing, setCapturing] = useState(false);
   if (branch.id === MISC_BRANCH) return null;
 
   return (
@@ -962,6 +977,13 @@ function BranchMenu({ branch }: { branch: ReadyBranch }) {
             testId: `ready-note-${branch.id}`,
             onSelect: () => setNoting(true),
           },
+          {
+            label: 'Write in the journal',
+            name: `Write a journal entry on ${branch.name}`,
+            icon: <IconJournal size={13} />,
+            testId: `ready-capture-${branch.id}`,
+            onSelect: () => setCapturing(true),
+          },
         ]}
       />
       {noting && (
@@ -971,6 +993,9 @@ function BranchMenu({ branch }: { branch: ReadyBranch }) {
           current={branch.notes}
           onClose={() => setNoting(false)}
         />
+      )}
+      {capturing && (
+        <CaptureDialog nodeId={branch.id} title={branch.name} onClose={() => setCapturing(false)} />
       )}
     </>
   );
@@ -1506,6 +1531,7 @@ function ReadyRowView({
   const { app, run } = useApp();
   const today = app.today;
   const [noting, setNoting] = useState(false);
+  const [capturing, setCapturing] = useState(false);
   return (
                 <div
                   className={[
@@ -1634,6 +1660,13 @@ function ReadyRowView({
                       testId: `ready-note-${row.id}`,
                       onSelect: () => setNoting(true),
                     },
+                    {
+                      label: 'Write in the journal',
+                      name: `Write a journal entry on ${row.name}`,
+                      icon: <IconJournal size={13} />,
+                      testId: `ready-capture-${row.id}`,
+                      onSelect: () => setCapturing(true),
+                    },
                   ]}
                 />
                 {noting && (
@@ -1643,6 +1676,9 @@ function ReadyRowView({
                     current={row.notes}
                     onClose={() => setNoting(false)}
                   />
+                )}
+                {capturing && (
+                  <CaptureDialog nodeId={row.id} title={row.name} onClose={() => setCapturing(false)} />
                 )}
                 </div>
   );
