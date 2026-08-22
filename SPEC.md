@@ -404,6 +404,16 @@ button the moment a newer undoable one arrives, and undo and redo themselves
 clear every button. A command that changed nothing — "No change." — offers
 nothing, since the only thing it could take back is the change before it.
 
+**Two hands, one notebook.** The CLI defaults to the desktop app's vault when
+this machine has one — the folder chosen in Settings, else the app's default —
+so `pt` and the app share the record with no setup. The app watches its vault
+folder and rebuilds the board when a hand other than its own writes there (the
+CLI, a sync, an editor); its own writes are recognised and ignored, because a
+reload throws the undo stack away and must not follow every keystroke. The CLI
+ships inside the app; "Install the pt command" writes a shim that runs the
+app's own executable as Node against the bundled CLI, into a folder already on
+the PATH where the platform has one.
+
 **A ref** is an id, a dotted path of slugs, an exact name, or — since cold
 agents guessed it first every time — an exact slug (`bead-size-sweep`),
 resolved by the same rule as a name: when it names exactly one node, and

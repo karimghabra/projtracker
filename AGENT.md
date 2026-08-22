@@ -13,7 +13,10 @@ to the agent.
 
 ## 1. Invoking the CLI
 
-Installed, the binary is `pt`. In a checkout, run it from source:
+Installed, the binary is `pt`: the desktop app's Settings page has **Install
+the pt command**, which puts a `pt` shim on the PATH that runs the CLI bundled
+inside the app. In a checkout, `npm run cli:link` does the same with Node; or
+run it from source:
 
 ```
 node --experimental-transform-types --no-warnings src/cli/bin.ts <args>
@@ -25,10 +28,12 @@ points at.)
 Every invocation is `pt [--vault DIR] [--json] <command> [args]`.
 
 - **`--vault DIR`** — the vault to work in. Defaults to `$PROTRACKER_VAULT`,
-  then `~/.protracker/vault`. The desktop app's vault lives under the app's
-  data folder (the app's Settings page shows the path, and `pt where` prints
-  the one the CLI is using). Point both at the same directory and they share
-  the record.
+  then **the desktop app's vault on this machine** (the folder chosen in its
+  Settings, else its default — so on the PI's computer `pt` and the app share
+  the notebook with no setup), then `~/.protracker/vault`. `pt where` prints
+  the one in use; check it once before the first write. The app watches its
+  vault and reloads when `pt` writes, so what you add appears on the board
+  within a second.
 - **`--new`** — start a vault at a path that has none. It takes effect
   *alongside a command*, any command: `pt --vault DIR --new add project "X"`
   or `pt --vault DIR --new scaffold type "Collagen sponge"`. Alone, it is
@@ -107,6 +112,7 @@ result with refs and derived statuses.
 **Move work along**
 ```
 pt start n4dmh            pt done n4dmh            pt pause | drop | reopen <ref>
+pt seed <experiment-ref> --on 2026-08-21 --cells hMSC --count 12 --days 21   (day zero of a culture; done collects it)
 pt wait n5dmh "sieves from stores" --until 2026-09-01     (one undo step, nudge included)
 pt arrived n5dmh                                         (the hold is over)
 pt done n4dmh --in "Q2 2026"                             (a back-fill: recorded under that period)
@@ -202,16 +208,16 @@ The shapes you will reason over most:
 - **"Nothing recorded either side of it"** from `lineage` on a batch you just
   spent: lineage is written when a run *produces*. Tick the run's last step
   and ask again, from the produced batch's id.
-- **`show <batch-id>` says "No node"** — `show` is for nodes. Read a batch from
-  `--json scaffolds`; read its history from `pt log`.
+- **`show <batch-id>`** describes the batch — count, state, label, history,
+  what it went into — the way `show <ref>` describes a node.
 - **A run's `batchIds` is empty** (and `quantityLabel` reads "nothing
   selected") though it spent material: acting-on and spending are different.
   Spent material is under `spent`.
 - **`--json protocols`** (from `scaffolds`/`protocols`) carries `consumes` /
   `produces`; a recipe set with `protocol recipe` is visible there.
-- **An unknown flag is ignored, not refused.** If a write did not do what you
-  meant, read the state back (`--json show`) rather than assuming. `pt <verb>
-  --help` prints the whole help page; there is no per-verb usage yet.
+- **A flag a verb did not read is named on stderr** ("Note: --deadline was
+  not used by this command") — read it. `pt help <verb>` or `pt <verb> --help`
+  prints that verb's usage alone.
 - **"Updated external hold."** from `wait` on a node already waiting; a fresh
   hold says "Waiting on …".
 - **Completing a task closes any run started from it** (`--task`). Steps
