@@ -12,7 +12,7 @@ import { formatDayMonth } from '../../core/dates.ts';
 import { formatOffset } from '../../core/protocols.ts';
 import { useApp } from '../state/store.ts';
 import { ConfirmDialog, Empty, InlineEdit, Modal, ProgressBar } from '../components/ui.tsx';
-import { IconBox, IconFlask, IconPlus, IconTrash } from '../components/icons.tsx';
+import { IconBox, IconFlask, IconLink, IconPlus, IconTrash } from '../components/icons.tsx';
 import { BATCH_STATES, isTerminalState } from '../../core/model.ts';
 import { formatQuantity, summariseLots } from '../../core/inventory.ts';
 
@@ -113,6 +113,7 @@ function BatchPanel({
   const { app, run } = useApp();
   const [adding, setAdding] = useState(false);
   const [confirm, setConfirm] = useState<string | null>(null);
+  const [tracing, setTracing] = useState<string | null>(null);
   const chosen = [...selected]
     .map((id) => inventory.batches.find((b) => b.id === id))
     .filter((b): b is Inventory['batches'][number] => Boolean(b));
@@ -174,7 +175,7 @@ function BatchPanel({
                 <th style={{ width: 108 }}>Made</th>
                 <th style={{ width: 116 }}>State</th>
                 <th style={{ width: 168 }}>Where</th>
-                <th style={{ width: 78 }} />
+                <th style={{ width: 112 }} />
               </tr>
             </thead>
             <tbody>
@@ -238,8 +239,17 @@ function BatchPanel({
                         />
                       )}
                     </td>
-                    <td>
+                    <td className="nowrap">
                       <span className={`chip ${BATCH_TONE[batch.state] ?? ''}`}>{batch.ageDays}d</span>
+                      <button
+                        className="btn ghost icon sm"
+                        aria-label={`Lineage of ${batch.typeName} batch`}
+                        title="What it was made from, and what it became"
+                        data-testid={`lineage-${batch.id}`}
+                        onClick={() => setTracing(batch.id)}
+                      >
+                        <IconLink size={12} />
+                      </button>
                       <button
                         className="btn ghost icon sm"
                         aria-label={`Delete batch of ${batch.typeName}`}
@@ -257,6 +267,7 @@ function BatchPanel({
       </div>
 
       {adding && <AddBatchDialog onClose={() => setAdding(false)} />}
+      {tracing && <LineageDialog batchId={tracing} onClose={() => setTracing(null)} />}
       {confirm && (
         <ConfirmDialog
           title="Delete this batch?"
@@ -707,5 +718,70 @@ function RunsPanel({ inventory }: { inventory: Inventory }) {
         </div>
       </div>
     </section>
+  );
+}
+
+// ---------------------------------------------------------------- lineage
+
+/**
+ * Which lot did this come from, and what did it touch. The question asked
+ * when a result is strange, and the one `pt lineage` has answered from the
+ * CLI; this is the same walk (core/lineage, through the view) drawn in a box.
+ */
+function LineageDialog({ batchId, onClose }: { batchId: string; onClose: () => void }) {
+  const { app } = useApp();
+  const lineage = app.lineage(batchId);
+  if (!lineage) return null;
+  const title = `${lineage.name}${lineage.label ? ` — ${lineage.label}` : ''}`;
+  const row = (step: NonNullable<typeof lineage>['madeFrom'][number], arrow: string) => (
+    <div className="row" key={`${arrow}${step.batchId}`} style={{ paddingLeft: 8 + (step.depth - 1) * 16 }}>
+      <span className="mono faint nowrap">{arrow}</span>
+      <span className="grow">
+        {step.name}
+        {step.label && <span className="faint"> · {step.label}</span>}
+      </span>
+      <span className="chip">{step.quantity}</span>
+      <span className="faint nowrap">via {step.runName}</span>
+    </div>
+  );
+  return (
+    <Modal
+      title={`Lineage of ${title}`}
+      onClose={onClose}
+      footer={
+        <>
+          <span className="spacer" />
+          <button className="btn" onClick={onClose}>
+            Close
+          </button>
+        </>
+      }
+    >
+      {!lineage.madeFrom.length && !lineage.wentInto.length ? (
+        <Empty title="Nothing recorded either side of it" icon={<IconLink size={20} />}>
+          Lineage is written when a run spends a batch and when a run's last step puts one back. A
+          batch simply written down has no ancestry yet, which is most of them.
+        </Empty>
+      ) : (
+        <div className="stack" data-testid="lineage-dialog">
+          {lineage.madeFrom.length > 0 && (
+            <div>
+              <div className="row-sub" style={{ fontWeight: 600, color: 'var(--text-muted)' }}>
+                Made from
+              </div>
+              <div className="list">{lineage.madeFrom.map((s) => row(s, '↑'))}</div>
+            </div>
+          )}
+          {lineage.wentInto.length > 0 && (
+            <div>
+              <div className="row-sub" style={{ fontWeight: 600, color: 'var(--text-muted)' }}>
+                Went into
+              </div>
+              <div className="list">{lineage.wentInto.map((s) => row(s, '↓'))}</div>
+            </div>
+          )}
+        </div>
+      )}
+    </Modal>
   );
 }

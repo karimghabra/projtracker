@@ -3,6 +3,7 @@ import { MONTH_NAMES, addMonths, formatRelativeDay, startOfMonth } from '../../c
 import type { LogEntry } from '../../commands/views.ts';
 import { useApp } from '../state/store.ts';
 import { Empty } from '../components/ui.tsx';
+import { StatementButton } from '../components/StatementButton.tsx';
 import { IconChevronLeft, IconChevronRight, IconEdit, IconJournal, IconTrash } from '../components/icons.tsx';
 
 /**
@@ -74,6 +75,7 @@ export function JournalScreen() {
           <span className="spacer" />
           {!searching && (
             <>
+              <StatementButton month={month} />
               <button
                 className={notesOnly ? 'btn sm' : 'btn sm primary'}
                 aria-pressed={!notesOnly}
