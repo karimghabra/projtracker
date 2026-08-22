@@ -25,7 +25,7 @@ import { readBackupFile, readWorkbookFile } from '../store/excel.ts';
 import { exportStatement, exportWorkbook } from '../store/excelExport.ts';
 import { APP_VERSION } from '../core/version.ts';
 import { NodeVault } from '../store/nodeVault.ts';
-import { holdsVault } from '../desktop/vaultLocation.ts';
+import { desktopVault, holdsVault } from '../desktop/vaultLocation.ts';
 import { list, one, parseArgs, type Args } from './args.ts';
 
 const HELP = `protracker — a lab project tracker
@@ -41,8 +41,9 @@ usage: pt [--vault DIR] [--json] <command> [args]
     upcoming [--days N]       reminders and dates coming up
     progress                  which projects have gone quiet
     tree [ref]                the whole hierarchy
-    show <ref>                one node in detail
+    show <ref | batch-id>     one node, or one batch, in detail
     find <text>               search names, notes and the journal
+    help <command>            that command's usage alone
 
   changing things
     add project <name>
@@ -60,6 +61,8 @@ usage: pt [--vault DIR] [--json] <command> [args]
                               the day it has to be finished by
     wait <ref> <reason> [--until DATE]
     arrived <ref>
+    seed <ref> [--on DATE] [--cells NAME] [--count N] [--days N]
+                              day zero of a culture; done collects it
     rm <ref>
 
   dependencies
@@ -114,12 +117,31 @@ usage: pt [--vault DIR] [--json] <command> [args]
     where                     where the files are
     undo | redo
 
-  --vault DIR   defaults to $PROTRACKER_VAULT, else ~/.protracker/vault
+  --vault DIR   defaults to $PROTRACKER_VAULT, else the desktop app's vault on
+                this machine, else ~/.protracker/vault; where says which.
   --new         start an empty vault at that path, alongside any command
 
   A <ref> is an id, a dotted path of slugs (project.milestone.goal.task), an
   exact name, or an exact slug. tree prints every node's ref, and so does add.
 `;
+
+/**
+ * The help for one verb: its own lines out of the page, continuation lines
+ * included. `pt help add` and `pt add --help` both land here, because every
+ * cold reader of this CLI asked for one verb's usage and was handed the lot.
+ */
+function helpFor(verb: string): string {
+  const lines = HELP.split('\n');
+  const mine: string[] = [];
+  let taking = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const starts = trimmed === verb || trimmed.startsWith(`${verb} `) || trimmed.startsWith(`${verb}|`) || trimmed.includes(`|${verb}`);
+    if (/^ {4}\S/.test(line)) taking = starts;
+    if (taking && trimmed) mine.push(line);
+  }
+  return mine.length ? `${mine.join('\n')}\n` : `No such command "${verb}".\n\n${HELP}`;
+}
 
 /** `b12:20` — the thing and how much of it. */
 function split(token: string, hint: string): [string, number] {
@@ -132,7 +154,7 @@ function split(token: string, hint: string): [string, number] {
 interface VaultChoice {
   path: string;
   /** How we arrived at it, which is what makes a warning worth printing. */
-  source: 'flag' | 'env' | 'default';
+  source: 'flag' | 'env' | 'app' | 'default';
 }
 
 function vaultPath(flags: Args['flags']): VaultChoice {
@@ -140,6 +162,11 @@ function vaultPath(flags: Args['flags']): VaultChoice {
   if (given !== undefined) return { path: given, source: 'flag' };
   const fromEnv = process.env['PROTRACKER_VAULT'];
   if (fromEnv) return { path: fromEnv, source: 'env' };
+  // The desktop app's vault, when this machine has one: the CLI and the app
+  // are two hands on one notebook, and the notebook is wherever the app keeps
+  // it. Only then the CLI's own default.
+  const shared = desktopVault();
+  if (shared) return { path: shared, source: 'app' };
   return { path: join(homedir(), '.protracker', 'vault'), source: 'default' };
 }
 
@@ -172,7 +199,8 @@ async function main(argv: string[]): Promise<number> {
   }
 
   if (positional.length === 0 || flags['help'] || positional[0] === 'help') {
-    process.stdout.write(HELP);
+    const verb = positional[0] === 'help' ? positional[1] : positional[0];
+    process.stdout.write(verb ? helpFor(verb) : HELP);
     return 0;
   }
 
@@ -211,8 +239,21 @@ async function main(argv: string[]): Promise<number> {
     return app.resolve(token).id;
   };
 
+  // A flag a verb never reads is a guess that went nowhere — and it used to go
+  // nowhere silently, so a wrong `--deadline` looked like it had worked. Every
+  // read is recorded; what was handed in and never read is named at the end.
+  const read = new Set<string>();
+  const watched = new Proxy(flags, {
+    get(target, key) {
+      if (typeof key === 'string') read.add(key);
+      return target[key as string];
+    },
+  });
   try {
-    return await run(app, positional, flags, root, json, out, ref, isNew);
+    const code = await run(app, positional, watched, root, json, out, ref, isNew);
+    const ignored = Object.keys(flags).filter((k) => !read.has(k) && !['json', 'vault', 'new', 'help'].includes(k));
+    if (ignored.length) process.stderr.write(`Note: ${ignored.map((k) => `--${k}`).join(', ')} ${ignored.length === 1 ? 'was' : 'were'} not used by this command.\n`);
+    return code;
   } catch (error) {
     const failure = toCommandError(error);
     if (json) out({ ok: false, code: failure.code, message: failure.message, ...failure.details });
@@ -380,6 +421,23 @@ async function run(
     }
 
     case 'show': {
+      // A batch id answers here too: `show` is "tell me about this", and an
+      // inventory batch is a thing a person holds in their hand.
+      if (rest[0] && !app.find(rest[0])) {
+        const batch = app.inventory().batches.find((b) => b.id === rest[0]);
+        if (batch) {
+          const lineage = app.lineage(batch.id);
+          if (json) return out({ ...batch, lineage }), 0;
+          out(`${batch.typeName}${batch.label ? ` — ${batch.label}` : ''}   ${dim(batch.id)}`);
+          out(`  ${batch.count} in stock · ${batch.state} · fabricated ${batch.fabricatedOn}${batch.location ? ` · kept ${batch.location}` : ''}`);
+          if (batch.runName) out(`  in a ${batch.runName} run`);
+          if (batch.usedByName) out(`  seeded into ${batch.usedByName}`);
+          for (const step of batch.history) out(`  ${step.at}  ${step.state}${step.note ? `  ${dim(step.note)}` : ''}`);
+          if (lineage?.madeFrom.length) out(`  made from: ${lineage.madeFrom.map((s) => `${s.batchId} ${s.name}`).join(', ')}`);
+          if (lineage?.wentInto.length) out(`  went into: ${lineage.wentInto.map((s) => `${s.batchId} ${s.name}`).join(', ')}`);
+          return 0;
+        }
+      }
       const view = app.node(ref(rest[0]));
       if (json) return out(view), 0;
       out(`${view.name}   ${dim(view.ref)}`);
@@ -476,6 +534,23 @@ async function run(
     case 'plan': {
       const date = rest[1] === 'none' ? null : rest[1] ?? null;
       return say(app.planFor(ref(rest[0]), date)), 0;
+    }
+
+    case 'seed': {
+      // Day zero of a culture, from the bench: what went in, when, and how
+      // long it runs. Anything not said keeps what the experiment already had.
+      const id = ref(rest[0]);
+      const current = app.node(id).experiment?.def;
+      const count = one(flags['count']);
+      const days = one(flags['days']);
+      const cells = one(flags['cells']);
+      return say(app.seedCulture(id, {
+        ...(current ?? { sampleCount: 0, durationDays: 21, mediaPhases: [], stagesDone: [] }),
+        seedingDate: one(flags['on']) ?? app.today,
+        ...(count !== undefined ? { sampleCount: Number(count) } : {}),
+        ...(days !== undefined ? { durationDays: Number(days) } : {}),
+        ...(cells !== undefined ? { cellLine: cells } : {}),
+      })), 0;
     }
 
     case 'deadline': {

@@ -190,3 +190,51 @@ describe('what the second trial asked for', () => {
     expect(runs.find((r) => r.id === run.id)?.spent).toEqual([{ batchId: lot.id, quantity: 1, name: 'Raw collagen', label: 'Lot 12' }]);
   });
 });
+
+describe('help for one verb, a batch on show, a flag that went nowhere', () => {
+  it('prints one verb\'s usage alone', () => {
+    const viaHelp = pt('help', 'add');
+    expect(viaHelp.status).toBe(0);
+    expect(viaHelp.stdout).toContain('add project <name>');
+    expect(viaHelp.stdout).not.toContain('scaffold type');
+    const viaFlag = pt('add', '--help');
+    expect(viaFlag.stdout).toBe(viaHelp.stdout);
+    expect(pt('help', 'nonsense').stdout).toContain('No such command "nonsense"');
+  });
+
+  it('shows a batch in detail when the id is a batch', () => {
+    pt('scaffold', 'type', 'Show me');
+    const lot = JSON.parse(pt('--json', 'scaffold', 'add', 'Show me', '4', '--label', 'Lot S').stdout) as { id: string };
+    const shown = pt('show', lot.id);
+    expect(shown.status).toBe(0);
+    expect(shown.stdout).toContain('Show me — Lot S');
+    expect(shown.stdout).toContain('4 in stock');
+    const asJson = JSON.parse(pt('--json', 'show', lot.id).stdout) as { id: string; lineage: unknown };
+    expect(asJson.id).toBe(lot.id);
+    expect(asJson.lineage).toBeTruthy();
+  });
+
+  it('says so when a flag was handed in and never read', () => {
+    const result = pt('add', 'project', 'Flagged', '--deadline', '2030-01-01');
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain('--deadline was not used by this command');
+  });
+});
+
+describe('pt seed', () => {
+  it('puts a culture in the incubator from the bench', () => {
+    const project = JSON.parse(pt('--json', 'add', 'project', 'Cultures').stdout) as { id: string };
+    const milestone = JSON.parse(pt('--json', 'add', project.id, 'Run').stdout) as { id: string };
+    const goal = JSON.parse(pt('--json', 'add', milestone.id, 'First').stdout) as { id: string };
+    const exp = JSON.parse(pt('--json', 'add', goal.id, 'Osteo run 1', '--experiment').stdout) as { id: string };
+    // Seeded today, so it is in the incubator now — `cultures` is what is
+    // growing, not what is planned.
+    const seeded = pt('seed', exp.id, '--cells', 'hMSC', '--count', '12', '--days', '21');
+    expect(seeded.status).toBe(0);
+    const cultures = JSON.parse(pt('--json', 'cultures').stdout) as { id: string; experiment: { def: { seedingDate: string; cellLine: string; sampleCount: number; durationDays: number } } }[];
+    const row = cultures.find((c) => c.id === exp.id)!;
+    expect(row, 'seeded culture not in the incubator').toBeTruthy();
+    expect(row.experiment.def).toMatchObject({ cellLine: 'hMSC', sampleCount: 12, durationDays: 21 });
+    expect(row.experiment.def.seedingDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+});
