@@ -280,7 +280,9 @@ runs, so "live" is judged by the run's task too, not only by its own dates.
   genuinely belongs there, and links out for the definitions.
 - **Running a protocol** instantiates every step as a dated reminder in the
   to-do list, automatically. Ticking the last step advances any batches it was
-  acting on to `crosslinked`.
+  acting on to `crosslinked`. The confirmation says what the run acts on and
+  what it spends — "Started Dialysis, spending 50 mL Raw collagen" — because it
+  is the one line a person reads before the shelf has changed.
 
 ### A protocol's recipe
 
@@ -372,6 +374,42 @@ Rows on the day's list say where their task belongs — the tail of the path,
 named "Fabricate scaffolds" under three goals is a riddle with only a project
 name beside it. The pool keeps paths off its rows; its crumbs already say
 where you are standing.
+
+**The brief** — `pt late` (and `App.late()`): what is overdue, and by how much,
+in one read. It is a reading of the day's list — the carried tasks and waiting
+reminders the list already marks, plus work whose own deadline has passed — so
+it can never disagree with it; what it adds is the *only-that* view a standup
+or an assistant drafting one actually asks for. Own deadlines only: a task on
+the way to a late goal inherits the lateness and is not listed twice.
+
+**The statement** — `pt statement <from> <to> [--xlsx]`, and the Journal's
+"Statement" button for its month: the manifest over a range of days, grouped
+by project, with days worked and what was done. It is the record an invoice is
+written from, and only the record. The tool keeps no rates and prints no
+prices — what a day is worth is decided by whoever sends the invoice, not by
+the notebook — so an agent or an accountant reads `statement --json` and does
+the pricing. Work that belongs to no project (a batch fabricated, a run on
+nothing in particular) is filed under "Unfiled" rather than dropped, so the
+statement always adds up to the log.
+
+**Lineage in the inventory** — a batch row opens the same walk `pt lineage`
+prints: what it was made from and what it went into, each step naming the run.
+One pure walk (`core/lineage`), one view (`lineageView`) that puts names to
+ids, two surfaces reading it.
+
+**Undo on the toast** — the toast that reports a change offers to take it
+back. Only the latest change can honestly be undone from a toast (undo pops
+the top of the stack, whichever toast was pressed), so an older toast loses its
+button the moment a newer undoable one arrives, and undo and redo themselves
+clear every button. A command that changed nothing — "No change." — offers
+nothing, since the only thing it could take back is the change before it.
+
+**A ref** is an id, a dotted path of slugs, an exact name, or — since cold
+agents guessed it first every time — an exact slug (`bead-size-sweep`),
+resolved by the same rule as a name: when it names exactly one node, and
+refused by name when it names two. Tried after the name, so nothing that
+resolved before resolves differently now. `pt tree` prints every node's ref
+beside it, and every `add` says the id it minted.
 
 **Attachments are not in the vault.** The canonical state is UTF-8 text (§1.4)
 and `Vault.read` returns a string, so a photo or a workbook cannot live inside a

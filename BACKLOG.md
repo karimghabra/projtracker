@@ -4,61 +4,42 @@ Quality-of-life work that has been asked for out loud but not built. This file
 is where wants wait; `SPEC.md` records decisions once something is built. Keep
 entries honest about what already exists, so nobody re-solves a solved half.
 
+## Shipped
+
+*(1.18.0)* paths on the day's rows; the manifest (`logView`, the Journal's
+Everything stream, `pt log`); "Write in the journal" on every dashboard row.
+
+*(next release)* `pt late` and `App.late()` — the morning brief; lineage from
+the inventory; the statement of work (`pt statement`, the Journal's Statement
+button, `exportStatement`); Undo on the toast; a run's confirmation naming what
+it acts on and spends; refs printed on `pt tree`, and a bare slug as a ref.
+Two candidates turned out to exist already and were struck: reminders already
+move to a chosen day (the clock button on the row, with Tomorrow / Next week
+presets), and the batch picker already leads with the label.
+
 ## Named priorities
 
-*(Shipped in 1.18.0, now recorded in SPEC.md: paths on the day's rows —
-"… › Milestone › Goal" with the whole road in the tooltip; the manifest —
-`logView`, the Journal screen's Everything stream, and `pt log`; and "Write in
-the journal" on every dashboard row, a dated capture kept deliberately apart
-from the standing note.)*
+### Invoicing — the pricing half
 
-### Invoicing — the reason this tool exists
+The statement exists; what remains is the half the tool has decided not to own:
+rates. Open, and to be written into SPEC when decided:
 
-The original itch: a digital lab notebook that makes invoicing painless. The
-manifest now exists and is the substrate; an invoice is a reading of it — a
-date range, grouped by project, phrased for a client, with the private noise
-left out. `pt log --json` over a date range is already enough for an
-agent-drafted first pass.
-
-Open decisions to settle before building (write the answers into SPEC when
-made):
-- What is the billable unit — a day worked, a task completed, a deliverable?
-  Nothing in the model tracks hours, and adding time-tracking is a big
-  step with its own gravity. A per-entry "billable" mark plus day-granularity
-  may be enough for real invoices.
-- Export shape: the Excel layer already exists (`exceljs`), so a workbook per
-  invoice period is the natural first target.
-- The agent's role: drafting the invoice from the manifest (selecting,
-  grouping, phrasing) is exactly the kind of reading an assistant can do
-  through the CLI today — `pt log --json` for a date range would already be
-  enough for a first agent-drafted invoice. Ship the manifest first; the
-  invoice agent needs no new write verbs.
+- Whether a per-entry or per-day "billable" mark is wanted, or whether every
+  recorded day counts. Today everything counts, and the agent reading
+  `statement --json` decides.
+- Whether an invoice template (client, period, rate × days, totals) should be a
+  workbook the tool writes, or stay the agent's job from the statement. The
+  current answer is the agent's job — the tool keeps the record, not the price.
 
 ## Candidates observed in live use
 
-From the visual audit and the cold-agent trial (2026-08-20), in rough order of
-value:
-
-- **Lineage in the GUI.** `pt lineage` answers "which lot did this come from"
-  in the CLI only. A batch row should open the same answer — ancestry one way,
-  everything it touched the other. The pure walk exists (`core/lineage.ts`);
-  this is one panel.
-- **Refs on the tree** and consistent short-ref matching (chipped already —
-  "Make CLI refs discoverable and consistent").
-- **A morning-brief read** — overdue what, how late, in one command (chipped
-  already — "Give the CLI a morning-brief overdue view"). Pairs naturally with
-  the manifest: yesterday's log plus today's lateness is a standup.
-- **Run start feedback in the GUI**: the CLI now says the run id it minted;
-  the StartDialog toast still doesn't name the run or link to it.
-- **Batch pickers say too little.** "3 × Collagen sponge, 2026-08-20" — when
-  two same-day batches differ only by label, the label is the identity; show
-  it first.
-- **Snooze on reminders.** Overdue reminders roll forward saying how late they
-  are (right), but the only actions are done or delete; "next Monday" is a
-  legitimate answer to a reminder.
-- **Undo lives only in the header.** A mutation toast with an Undo button in
-  it would make the single most reassuring feature of the app visible at the
-  moment it matters.
+- **The brief on the dashboard.** `pt late` exists; a small "Late" panel on
+  Today saying the same thing would spare the glance down the list.
+- **Capture-side niceties for the manifest**: writing a note from the manifest
+  itself ("also did X today"), and a `#tag` vocabulary that survives into
+  filtering (tags already parse on quick-adds).
+- **Run start feedback in the GUI** now names what was spent; a link from the
+  toast to the run card would close the loop.
 
 ## Explicitly not wanted
 
