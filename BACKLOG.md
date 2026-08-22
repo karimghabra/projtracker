@@ -40,6 +40,17 @@ rates. Open, and to be written into SPEC when decided:
   filtering (tags already parse on quick-adds).
 - **Run start feedback in the GUI** now names what was spent; a link from the
   toast to the run card would close the loop.
+- **Per-verb help.** `pt <verb> --help` reprints the whole help page; every
+  cold agent wished for the one verb's usage. The HELP text is one template —
+  splitting it by verb is mechanical.
+- **A batch as a thing you can `show`.** `show <batch-id>` says "No node";
+  `lineage` answers only once a run has produced. One read that describes a
+  batch — type, label, count, state, history, what it went into so far — would
+  spare the `--json scaffolds` grep agents fall back to.
+- **Silent flags.** The parser keeps any `--flag` it is handed; a verb that
+  ignores one (`today add --deadline`) says nothing. Warning on flags a verb
+  does not read would turn a guessed flag into a correction instead of a
+  surprise.
 
 ## Explicitly not wanted
 
