@@ -153,6 +153,10 @@ async function seedHeavy(page: Page): Promise<string[]> {
         { name: 'Load cassettes', offsetHours: 0, durationHours: 0.5 },
         { name: 'Swap bath', offsetHours: 8 },
       ], 'Against 0.02 M acetic acid');
+      a.setProtocolIO(dial.id, {
+        consumes: [{ typeId: typeOf('Raw collagen'), quantity: 1 }],
+        produces: [{ typeId: typeOf('Dialysed collagen'), quantity: 1 }],
+      });
       const dialSteps = (app.state.protocols as any[]).find((p: any) => p.id === dial.id)!.steps as any[];
       const sponge = (app.inventory().batches as any[]).find((b: any) => b.count === 24);
       const raw = (app.inventory().batches as any[]).find((b: any) => b.typeId === typeOf('Raw collagen'));
@@ -276,11 +280,20 @@ test.describe('visual audit', () => {
       await page.locator('.tree-row', { hasText: 'Quench and wash ×3' }).first().click();
       await shoot(page, `dialog-${theme}-node-detail`);
 
-      // Inventory: add-batch dialog.
+      // Inventory: add-batch dialog, and the lineage of the batch dialysis made.
       await page.getByTestId('nav-inventory').click();
       await page.getByTestId('add-batch').click();
       await shoot(page, `dialog-${theme}-add-batch`);
       await page.keyboard.press('Escape');
+      const made = await page.evaluate(() => {
+        const pt = (window as unknown as { __pt: { app: any } }).__pt;
+        return (pt.app.state.batches as any[]).find((b: any) => b.madeBy)?.id ?? '';
+      });
+      if (made) {
+        await page.getByTestId(`lineage-${made}`).click();
+        await shoot(page, `dialog-${theme}-lineage`);
+        await page.keyboard.press('Escape');
+      }
 
       // Protocols: recipe dialog and start dialog, populated.
       await page.getByTestId('nav-protocols').click();
