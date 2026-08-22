@@ -219,6 +219,15 @@ test.describe('visual audit', () => {
         await shoot(page, `full-${theme}-search`);
         await page.keyboard.press('Escape');
       }
+      // The incubator and what is late, which sit below the fold.
+      await page.getByTestId('nav-home').click();
+      for (const panel of ['experiments-panel', 'late-panel']) {
+        const target = page.getByTestId(panel);
+        if (await target.count()) {
+          await target.scrollIntoViewIfNeeded();
+          await shoot(page, `full-${theme}-${panel}`);
+        }
+      }
       // Collapsed sidebar.
       await page.getByTestId('nav-home').click();
       await page.getByTestId('sidebar-toggle').click();

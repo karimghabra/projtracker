@@ -28,6 +28,7 @@ export type PanelId =
   | 'projects'
   | 'calendar'
   | 'upcoming'
+  | 'late'
   | 'experiments'
   | 'scaffolds'
   | 'notes'
@@ -83,6 +84,7 @@ export const PANELS: readonly PanelSpec[] = [
   { id: 'calendar', title: 'Calendar', x: 7, w: 5 },
   { id: 'in-progress', title: 'In progress', x: 0, w: 7, cap: 6 },
   { id: 'upcoming', title: 'Coming up', x: 7, w: 5, cap: 5 },
+  { id: 'late', title: 'Late', x: 7, w: 5, cap: 6 },
   { id: 'ready', title: 'Ready to work on', x: 0, w: 7, cap: 8 },
   { id: 'experiments', title: 'Experiments', x: 7, w: 5, cap: 5 },
   { id: 'projects', title: 'Projects', x: 0, w: 7 },

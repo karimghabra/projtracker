@@ -22,6 +22,7 @@ import { MISC_BRANCH } from '../../commands/views.ts';
 import { useApp } from '../state/store.ts';
 import { Calendar, DayPanel } from '../components/Calendar.tsx';
 import { UpcomingPanel } from '../components/UpcomingPanel.tsx';
+import { LatePanel } from '../components/LatePanel.tsx';
 import { ConfirmDialog, Empty, InlineEdit, Modal, QuickAdd } from '../components/ui.tsx';
 import { PlanButton, PlanDialog } from '../components/PlanDialog.tsx';
 import { RowMenu } from '../components/RowMenu.tsx';
@@ -171,6 +172,7 @@ export function HomeScreen({
       />
     ),
     upcoming: <UpcomingPanel key="upcoming" {...capProps('upcoming')} />,
+    late: <LatePanel key="late" {...capProps('late')} />,
     experiments: <ExperimentsPanel key="experiments" {...capProps('experiments')} />,
     scaffolds: <ScaffoldsPanel key="scaffolds" onNavigate={onNavigate} {...capProps('scaffolds')} />,
     notes: <NotesPanel key="notes" {...panelProps('notes')} />,

@@ -80,3 +80,27 @@ test.describe('the statement of work', () => {
     await expect(page.locator('.toast', { hasText: 'Saved Protracker statement' })).toBeVisible();
   });
 });
+
+test.describe('the Late panel', () => {
+  test('says what is owed, and how late, in one place', async ({ h }) => {
+    const { page } = h;
+    await page.evaluate(() => {
+      const pt = (window as unknown as { __pt: { app: any; run: (fn: (a: any) => unknown) => unknown } }).__pt;
+      pt.run((a: any) => {
+        const p = a.addProject('Late things');
+        const m = a.addNode(p.id, 'M', {});
+        const g = a.addNode(m.id, 'G', {});
+        const t = a.addNode(g.id, 'Owed since Tuesday', {});
+        const [y, mo, d] = (pt.app.today as string).split('-').map(Number);
+        const back = new Date(y!, mo! - 1, d! - 3);
+        const pad = (n: number) => String(n).padStart(2, '0');
+        a.todayAdd(t.id, `${back.getFullYear()}-${pad(back.getMonth() + 1)}-${pad(back.getDate())}`);
+        return true;
+      });
+    });
+    const panel = page.getByTestId('late-panel');
+    await expect(panel).toBeVisible();
+    await expect(panel).toContainText('Owed since Tuesday');
+    await expect(panel).toContainText('3d over');
+  });
+});
