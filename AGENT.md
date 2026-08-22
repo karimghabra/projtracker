@@ -241,3 +241,21 @@ The shapes you will reason over most:
   can succeed against the wrong node.
 - **Do not `restore`, `rm` a project, or change `--vault` on your own.** Those
   are the human's calls. `undo` is always available for your own last step.
+- **Do not experiment on the record.** Every trial agent that was unsure how a
+  verb behaved found out by running it against the vault and undoing — and
+  one probe took two undos to unwind. The vault is the PI's notebook, not a
+  sandbox: find out by reading (`--json show`, the help), or try the verb in
+  a scratch vault (`pt --vault /tmp/try --new …`) and throw it away.
+- **Say what you could not do; do not record the nearest thing as the thing.**
+  An agent asked for a deadline, finding no verb, set a planned date and then
+  briefed "2 days past its deadline" — true of the workaround, not of the
+  record. State the limit plainly and leave the decision to the PI. (There is
+  a `deadline` verb now; the lesson stands for the next gap.)
+- **Prefer `undo` to `rm` for your own mistakes**, and do not delete what you
+  did not create. Two agents minted a duplicate of a preset protocol and then
+  deleted it unasked — the right outcome, reached by a verb that should make
+  you pause.
+- **Ambiguity that changes the record is a question, not a guess.** "Record 3
+  lots" is either three batches or one of three; the statement reads
+  differently each way. Ask, or record the choice you made in the same breath
+  as the result.
