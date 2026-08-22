@@ -434,6 +434,25 @@ describe('sixty days of use', () => {
         }
       }
 
+      // 9c. The brief and the statement are readings of the same record: what
+      // the day's list carries as late is exactly what `late` says is late, and
+      // a statement over the whole stretch adds up to the log, entry for entry.
+      {
+        const late = app.late();
+        const carried = app.todayList().items.filter((i) => i.source === 'rolled-over' && !i.done);
+        expect(late.reminders.length + late.tasks.length).toBe(carried.length);
+        for (const item of late.tasks) expect(item.daysOver).toBeGreaterThan(0);
+        for (const item of late.reminders) expect(item.daysOver).toBeGreaterThan(0);
+        const whole = app.log();
+        const first = whole[0]?.at.slice(0, 10);
+        const last = whole.at(-1)?.at.slice(0, 10);
+        if (first && last) {
+          const statement = app.statement(first, last);
+          expect(statement.projects.reduce((n, p) => n + p.entries.length, 0)).toBe(whole.length);
+          for (const project of statement.projects) expect(project.days).toBeGreaterThan(0);
+        }
+      }
+
       // 10. Troubleshooting is a field of its own, and stays out of the notes.
       // The sheet is the surface it was asked for, so the sheet is where it is
       // checked — a column that reads blank is the failure people would meet.

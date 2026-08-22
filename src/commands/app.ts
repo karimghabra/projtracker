@@ -71,8 +71,11 @@ import type {
   ProtocolView,
   NodeView,
   ContributionsView,
+  LateView,
+  LineageView,
   LogEntry,
   ProgressRow,
+  StatementView,
   ReadyBranch,
   ReadyRow,
   SheetRow,
@@ -91,8 +94,11 @@ import {
   progressView,
   experimentsView,
   inProgressView,
+  lateView,
+  lineageView,
   logView,
   readyTree,
+  statementView,
   readyView,
   sheetView,
   todayView,
@@ -421,6 +427,23 @@ export class App {
   /** The manifest: everything recorded, in time order. See logView. */
   log(month?: string): LogEntry[] {
     return logView(this.state, month);
+  }
+
+  /** What is overdue, and by how much. See lateView. */
+  late(): LateView {
+    return lateView(this.index, this.today);
+  }
+
+  /** What a batch was made from, and what it became. Null for an id no batch has. */
+  lineage(batchId: string): LineageView | null {
+    return lineageView(this.state, batchId);
+  }
+
+  /** The manifest over a range of days, by project — what an invoice is written from. */
+  statement(from: DateOnly, to: DateOnly): StatementView {
+    if (!isDateOnly(from) || !isDateOnly(to)) throw invalid('A statement needs two dates, YYYY-MM-DD.');
+    if (from > to) throw invalid(`"${from}" is after "${to}".`);
+    return statementView(this.state, from, to);
   }
 
   /** One substring search across names, notes, tags and the journal. */
@@ -2105,6 +2128,20 @@ export class App {
 
     const start = startedAt ?? this.now;
     const now = this.now;
+    // Say what it is doing and what it is spending, so the confirmation is a
+    // record and not a receipt for "something": the toast and the CLI line
+    // are the only place a person sees this before the shelf has changed.
+    const typeOf = (typeId: string) => this.state.scaffoldTypes.find((t) => t.id === typeId);
+    const acting = batchIds.map((batchId) => {
+      const batch = this.state.batches.find((b) => b.id === batchId)!;
+      const type = typeOf(batch.typeId);
+      return describeQuantity(batch.count, type?.name ?? 'scaffolds', type?.unit);
+    });
+    const spent = consume.map((take) => {
+      const batch = this.state.batches.find((b) => b.id === take.batchId)!;
+      const type = typeOf(batch.typeId);
+      return describeQuantity(take.quantity, type?.name ?? 'stock', type?.unit);
+    });
 
     return this.mutate(`Start ${protocol.name}`, (draft) => {
       const id = allocateId(draft, 'x', this.tag);
@@ -2138,7 +2175,7 @@ export class App {
       }
       return {
         ok: true as const,
-        message: `Started ${protocol.name}. ${protocol.steps.length} step${protocol.steps.length === 1 ? ' is' : 's are'} now in your to-do list.`,
+        message: `Started ${protocol.name}${acting.length ? ` on ${acting.join(', ')}` : ''}${spent.length ? `, spending ${spent.join(', ')}` : ''}. ${protocol.steps.length} step${protocol.steps.length === 1 ? ' is' : 's are'} now in your to-do list.`,
         id,
         reminders: protocol.steps.length,
       };

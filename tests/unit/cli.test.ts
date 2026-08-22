@@ -12,7 +12,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -93,5 +93,49 @@ describe('pt lineage', () => {
       code: 'not-found',
       token: 'zzzzz',
     });
+  });
+});
+
+describe('pt late', () => {
+  it('says what is overdue and by how much, in one read', () => {
+    pt('remind', 'Water the dialysis bath', '--on', '2020-01-01');
+    const result = pt('late');
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('reminders still waiting');
+    expect(result.stdout).toContain('Water the dialysis bath');
+    expect(result.stdout).toMatch(/\d+ days over/);
+    const json = JSON.parse(pt('--json', 'late').stdout) as { reminders: { title: string; daysOver: number }[] };
+    expect(json.reminders.some((r) => r.title === 'Water the dialysis bath' && r.daysOver > 1000)).toBe(true);
+  });
+});
+
+describe('pt tree', () => {
+  it('prints every node\'s ref beside its name, so the next command can use it', () => {
+    pt('add', 'project', 'Refs on the tree');
+    const result = pt('tree');
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('Refs on the tree');
+    expect(result.stdout).toContain('refs-on-the-tree');
+  });
+
+  it('lets a bare slug name a node', () => {
+    const result = pt('show', 'refs-on-the-tree');
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('Refs on the tree');
+  });
+});
+
+describe('pt statement', () => {
+  it('writes a workbook for a range, and refuses a range that is not one', () => {
+    const file = join(dir, 'statement.xlsx');
+    const result = pt('statement', '2020-01-01', '2030-12-31', '--xlsx', file);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('with recorded work');
+    expect(result.stdout).toContain(`Wrote ${file}.`);
+    expect(statSync(file).size).toBeGreaterThan(1000);
+
+    const backwards = pt('statement', '2030-12-31', '2020-01-01');
+    expect(backwards.status).toBe(1);
+    expect(backwards.stderr).toContain('is after');
   });
 });

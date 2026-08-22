@@ -15,14 +15,13 @@ import { join } from 'node:path';
 import { hostname } from 'node:os';
 import { App } from '../commands/app.ts';
 import { deviceTag } from '../commands/ids.ts';
-import { ancestorsOf, descendantsOf } from '../core/lineage.ts';
 import type { TreeNode } from '../commands/views.ts';
 import { notFound, toCommandError } from '../commands/errors.ts';
 import { formatDayMonth, systemClock } from '../core/dates.ts';
 import type { Protocol } from '../core/model.ts';
 import { formatOffset } from '../core/protocols.ts';
 import { readBackupFile, readWorkbookFile } from '../store/excel.ts';
-import { exportWorkbook } from '../store/excelExport.ts';
+import { exportStatement, exportWorkbook } from '../store/excelExport.ts';
 import { APP_VERSION } from '../core/version.ts';
 import { NodeVault } from '../store/nodeVault.ts';
 import { holdsVault } from '../desktop/vaultLocation.ts';
@@ -34,6 +33,7 @@ usage: pt [--vault DIR] [--json] <command> [args]
 
   seeing what to do
     today                     the day's list
+    late                      what is overdue, and by how much
     ready                     everything unblocked right now
     doing                     what you started and have not finished
     cultures                  what is in the incubator, ending soonest first
@@ -72,6 +72,9 @@ usage: pt [--vault DIR] [--json] <command> [args]
     note <text> [--node ref]
     journal [YYYY-MM]         notes alone
     log [YYYY-MM | DATE]      the manifest: everything recorded, by day
+    statement <from> <to> [--xlsx FILE]
+                              what was done, by project, between two days —
+                              the record an invoice is written from
 
   the lab
     scaffolds                 inventory summary
@@ -107,6 +110,9 @@ usage: pt [--vault DIR] [--json] <command> [args]
 
   --vault DIR   defaults to $PROTRACKER_VAULT, else ~/.protracker/vault
   --new         start an empty vault at that path, alongside any command
+
+  A <ref> is an id, a dotted path of slugs (project.milestone.goal.task), an
+  exact name, or an exact slug. tree prints every node's ref, and so does add.
 `;
 
 /** `b12:20` — the thing and how much of it. */
@@ -300,6 +306,27 @@ async function run(
       return 0;
     }
 
+    case 'late': {
+      const late = app.late();
+      if (json) return out(late), 0;
+      const total = late.reminders.length + late.tasks.length + late.deadlines.length;
+      if (!total) return out('Nothing is late.'), 0;
+      const over = (n: number) => `${n} day${n === 1 ? '' : 's'} over`;
+      if (late.deadlines.length) {
+        out('past their deadline');
+        for (const d of late.deadlines) out(`  ${d.name}  ${dim(`${d.parentPath} · due ${d.due} · ${over(d.daysOver)}`)}`);
+      }
+      if (late.tasks.length) {
+        out('carried from an earlier day');
+        for (const t of late.tasks) out(`  ${t.name}  ${dim(`${t.parentPath} · since ${t.since} · ${over(t.daysOver)}`)}`);
+      }
+      if (late.reminders.length) {
+        out('reminders still waiting');
+        for (const r of late.reminders) out(`  ${r.title}  ${dim(`since ${r.since} · ${over(r.daysOver)}`)}`);
+      }
+      return 0;
+    }
+
     case 'upcoming': {
       const days = Number(one(flags['days']) ?? 60);
       const data = app.upcoming(days);
@@ -328,7 +355,7 @@ async function run(
       const walk = (list: typeof nodes) => {
         for (const node of list) {
           const mark = node.derived === 'done' ? 'x' : node.derived === 'blocked' ? '-' : ' ';
-          out(`${'  '.repeat(node.depth)}[${mark}] ${node.seq}. ${node.name}  ${dim(node.derived)}`);
+          out(`${'  '.repeat(node.depth)}[${mark}] ${node.seq}. ${node.name}  ${dim(node.ref)}  ${dim(node.derived)}`);
           walk(node.children);
         }
       };
@@ -624,21 +651,18 @@ async function run(
       if (!batchId) throw new Error('Which batch? Give a batch id.');
       // A mistyped id and a batch with no history would otherwise read the
       // same: "nothing either side" is only an answer about a batch that exists.
-      if (!app.state.batches.some((b) => b.id === batchId)) throw notFound('batch', batchId);
-      const back = ancestorsOf(app.state, batchId);
-      const forward = descendantsOf(app.state, batchId);
-      if (json) return out({ madeFrom: back, wentInto: forward }), 0;
-      const name = (id: string) => {
-        const batch = app.state.batches.find((b) => b.id === id);
-        const type = app.state.scaffoldTypes.find((t) => t.id === batch?.typeId);
-        return `${type?.name ?? '?'}${batch?.label ? ` (${batch.label})` : ''}`;
-      };
-      if (!back.length && !forward.length) return out(dim('Nothing recorded either side of it.')), 0;
-      for (const step of back) {
-        out(`${'  '.repeat(step.depth - 1)}↑ ${step.batch.id.padEnd(8)} ${name(step.batch.id)}  ${dim(`${step.quantity} into ${step.via.id}`)}`);
+      const lineage = app.lineage(batchId);
+      if (!lineage) throw notFound('batch', batchId);
+      if (json) return out(lineage), 0;
+      const label = (step: { name: string; label?: string }) => `${step.name}${step.label ? ` (${step.label})` : ''}`;
+      if (!lineage.madeFrom.length && !lineage.wentInto.length) {
+        return out(dim('Nothing recorded either side of it.')), 0;
       }
-      for (const step of forward) {
-        out(`${'  '.repeat(step.depth - 1)}↓ ${step.batch.id.padEnd(8)} ${name(step.batch.id)}  ${dim(`via ${step.via.id}`)}`);
+      for (const step of lineage.madeFrom) {
+        out(`${'  '.repeat(step.depth - 1)}↑ ${step.batchId.padEnd(8)} ${label(step)}  ${dim(`${step.quantity} into ${step.runName} (${step.runId})`)}`);
+      }
+      for (const step of lineage.wentInto) {
+        out(`${'  '.repeat(step.depth - 1)}↓ ${step.batchId.padEnd(8)} ${label(step)}  ${dim(`via ${step.runName} (${step.runId})`)}`);
       }
       return 0;
     }
@@ -702,6 +726,29 @@ async function run(
       writeFileSync(file, bytes);
       const delta = { ok: true as const, message: `Wrote ${bytes.length} bytes to ${file}.` };
       return say(delta), 0;
+    }
+
+    case 'statement': {
+      const [from, to] = [rest[0], rest[1]];
+      if (!from || !to) throw new Error('Between which days? pt statement 2026-08-01 2026-08-31 [--xlsx statement.xlsx]');
+      const statement = app.statement(from, to);
+      const file = one(flags['xlsx']);
+      if (file) writeFileSync(file, await exportStatement(statement));
+      if (json) return out(statement), 0;
+      out(`${from} → ${to}: ${statement.days} day${statement.days === 1 ? '' : 's'} with recorded work, ${statement.projects.length} project${statement.projects.length === 1 ? '' : 's'}`);
+      for (const project of statement.projects) {
+        out(`\n${project.name}  ${dim(`${project.days} day(s) · ${project.completed} completed · ${project.notes} journal · ${project.runs} runs · ${project.batches} batches`)}`);
+        let day = '';
+        for (const entry of project.entries) {
+          if (entry.at.slice(0, 10) !== day) {
+            day = entry.at.slice(0, 10);
+            out(`  ${day}`);
+          }
+          out(`    ${entry.at.slice(11, 16)}  ${entry.text}${entry.period ? ` (${entry.period})` : ''}`);
+        }
+      }
+      if (file) out(`\nWrote ${file}.`);
+      return 0;
     }
 
     case 'backup': {

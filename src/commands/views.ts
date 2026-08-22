@@ -46,6 +46,8 @@ import {
   stagesOf,
 } from '../core/experiments.ts';
 import { runIsLive, scheduleRun } from '../core/protocols.ts';
+import type { Ancestor } from '../core/lineage.ts';
+import { ancestorsOf, descendantsOf } from '../core/lineage.ts';
 import { describeQuantity, summariseLots } from '../core/inventory.ts';
 import type { Reminder } from '../core/model.ts';
 import type { TodayItem } from '../core/planner.ts';
@@ -1658,6 +1660,165 @@ function describePeriod(doneAt: Stamp, precision: 'month' | 'quarter' | 'year'):
   if (precision === 'year') return year;
   if (precision === 'quarter') return `Q${Math.floor(monthIndex / 3) + 1} ${year}`;
   return `${MONTH_NAMES[monthIndex]?.slice(0, 3)} ${year}`;
+}
+
+// ------------------------------------------------------------- late
+
+export interface LateView {
+  today: DateOnly;
+  /** Reminders carried forward from an earlier day, still open. */
+  reminders: { id: string; title: string; since: DateOnly; daysOver: number; nodeName?: string }[];
+  /** Tasks put on an earlier day's list and still open. */
+  tasks: { id: NodeId; name: string; parentPath: string; since: DateOnly; daysOver: number }[];
+  /** Work whose own deadline has passed, unfinished. */
+  deadlines: { id: NodeId; name: string; parentPath: string; due: DateOnly; daysOver: number }[];
+}
+
+/**
+ * The morning brief's first question: what is late, and by how much.
+ *
+ * Nothing here is new information — the day's list already carries each late
+ * item and says how late it is, which is the rule that nothing dated goes
+ * quiet. What was missing was the one place that says *only* that, which is
+ * the question a standup (or an assistant drafting one) actually asks.
+ */
+export function lateView(index: GraphIndex, today: DateOnly): LateView {
+  const items = todayItems(index.state, index, today);
+  const reminders = items
+    .filter((i) => i.kind === 'reminder' && i.source === 'rolled-over' && !i.done && i.reminder)
+    .map((i) => ({
+      id: i.reminder!.id,
+      title: shortTitle(i.reminder!),
+      since: i.rolledFrom ?? today,
+      daysOver: i.ageDays ?? 0,
+      nodeName: i.node?.name,
+    }));
+  const tasks = items
+    .filter((i) => i.kind === 'task' && i.source === 'rolled-over' && !i.done && i.node)
+    .map((i) => {
+      const view = nodeView(index, i.node!.id, today);
+      return { id: view.id, name: view.name, parentPath: view.parentPath, since: i.rolledFrom ?? today, daysOver: i.ageDays ?? 0 };
+    });
+  const deadlines = flatTree(index, today)
+    .filter((v) => v.due && !v.due.inherited && v.due.daysLeft < 0 && v.derived !== 'done')
+    .map((v) => ({ id: v.id, name: v.name, parentPath: v.parentPath, due: v.due!.on, daysOver: -v.due!.daysLeft }));
+  const byLateness = <T extends { daysOver: number }>(a: T, b: T) => b.daysOver - a.daysOver;
+  return {
+    today,
+    reminders: reminders.sort(byLateness),
+    tasks: tasks.sort(byLateness),
+    deadlines: deadlines.sort(byLateness),
+  };
+}
+
+// ---------------------------------------------------------- lineage
+
+export interface LineageStep {
+  batchId: string;
+  name: string;
+  label?: string;
+  /** How much went in, or came out. */
+  quantity: number;
+  runId: string;
+  runName: string;
+  depth: number;
+}
+
+export interface LineageView {
+  batchId: string;
+  name: string;
+  label?: string;
+  /** What it was made from, nearest first. */
+  madeFrom: LineageStep[];
+  /** What it went on to become, nearest first. */
+  wentInto: LineageStep[];
+}
+
+/** The pure walk in core/lineage, with names put to the ids. Null for an id no batch has. */
+export function lineageView(state: State, batchId: string): LineageView | null {
+  const batch = state.batches.find((b) => b.id === batchId);
+  if (!batch) return null;
+  const typeName = new Map(state.scaffoldTypes.map((t) => [t.id, t.name] as const));
+  const runName = (protocolId: string) => state.protocols.find((p) => p.id === protocolId)?.name ?? protocolId;
+  const describe = (step: Ancestor): LineageStep => ({
+    batchId: step.batch.id,
+    name: typeName.get(step.batch.typeId) ?? step.batch.typeId,
+    label: step.batch.label,
+    quantity: step.quantity,
+    runId: step.via.id,
+    runName: runName(step.via.protocolId),
+    depth: step.depth,
+  });
+  return {
+    batchId,
+    name: typeName.get(batch.typeId) ?? batch.typeId,
+    label: batch.label,
+    madeFrom: ancestorsOf(state, batchId).map(describe),
+    wentInto: descendantsOf(state, batchId).map(describe),
+  };
+}
+
+// -------------------------------------------------------- statement
+
+export interface StatementProject {
+  name: string;
+  /** Distinct days with anything recorded under this project. */
+  days: number;
+  completed: number;
+  notes: number;
+  runs: number;
+  batches: number;
+  entries: LogEntry[];
+}
+
+export interface StatementView {
+  from: DateOnly;
+  to: DateOnly;
+  /** Distinct days with anything recorded at all. */
+  days: number;
+  projects: StatementProject[];
+}
+
+/**
+ * A statement of work: the manifest over a range of days, grouped by project.
+ * The record an invoice is written from — and only the record: the tool keeps
+ * no rates and prints no prices, because what a day is worth is a decision
+ * made by whoever sends the invoice, not by the notebook. Entries that belong
+ * to no project (a batch fabricated, a run on nothing in particular) are
+ * "Unfiled" rather than dropped, so the statement adds up to the log.
+ */
+export function statementView(state: State, from: DateOnly, to: DateOnly): StatementView {
+  const entries = logView(state).filter((e) => {
+    const day = e.at.slice(0, 10);
+    return day >= from && day <= to;
+  });
+  const projectOf = (entry: LogEntry): string => {
+    if (entry.parentPath) return entry.parentPath.split(' › ')[0]!;
+    if (entry.nodeId) {
+      const node = state.nodes[entry.nodeId];
+      if (node && node.kind === 'project') return node.name;
+    }
+    return 'Unfiled';
+  };
+  const groups = new Map<string, LogEntry[]>();
+  for (const entry of entries) {
+    const key = projectOf(entry);
+    const list = groups.get(key);
+    if (list) list.push(entry);
+    else groups.set(key, [entry]);
+  }
+  const projects: StatementProject[] = [...groups.entries()]
+    .map(([name, list]) => ({
+      name,
+      days: new Set(list.map((e) => e.at.slice(0, 10))).size,
+      completed: list.filter((e) => e.kind === 'done').length,
+      notes: list.filter((e) => e.kind === 'note').length,
+      runs: list.filter((e) => e.kind === 'run' && e.text.startsWith('Started')).length,
+      batches: list.filter((e) => e.kind === 'batch').length,
+      entries: list,
+    }))
+    .sort((a, b) => b.days - a.days || a.name.localeCompare(b.name));
+  return { from, to, days: new Set(entries.map((e) => e.at.slice(0, 10))).size, projects };
 }
 
 // ---------------------------------------------------------- contributions

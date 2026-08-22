@@ -594,6 +594,17 @@ export function resolveNode(state: State, token: string): Node | null {
       `"${trimmed}" matches ${byName.length} nodes: ${byName.map((n) => refOf(state, n.id)).join(', ')}`,
     );
   }
+  // A bare slug — "bead-size-sweep" — is what a ref path is made of, and what
+  // anyone who has read one guesses first. It resolves by the same rule a name
+  // does: when it names exactly one node. Tried after the name, so nothing
+  // that resolved before resolves differently now.
+  const bySlug = allNodes(state).filter((n) => n.slug === lower);
+  if (bySlug.length === 1) return bySlug[0]!;
+  if (bySlug.length > 1) {
+    throw new Error(
+      `"${trimmed}" matches ${bySlug.length} nodes: ${bySlug.map((n) => refOf(state, n.id)).join(', ')}`,
+    );
+  }
   return null;
 }
 

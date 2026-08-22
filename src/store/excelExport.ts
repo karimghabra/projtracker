@@ -26,6 +26,7 @@ import type { GraphIndex } from '../core/graph.ts';
 import { dateOf } from '../core/dates.ts';
 import { encodePeriod } from '../core/periods.ts';
 import type { BackupMeta, VaultFiles } from './backup.ts';
+import type { StatementView } from '../commands/views.ts';
 import { BACKUP_HEADERS, BACKUP_SHEET, backupGrid } from './backup.ts';
 
 /**
@@ -523,4 +524,55 @@ export function encodeCulture(def: ExperimentDef): string {
 /** A filename that sorts sensibly and says what it is. */
 export function exportFilename(today: string): string {
   return `Protracker ${today}.xlsx`;
+}
+
+// ---------------------------------------------------------------- statement
+
+/**
+ * A statement of work as a workbook: what was done, by project, between two
+ * days — the record an invoice is written from. Two sheets: the summary a
+ * client reads, and the detail a question about it is answered from. No
+ * prices, deliberately: the notebook keeps the record; whoever bills decides
+ * what a day is worth.
+ */
+export async function exportStatement(statement: StatementView): Promise<Uint8Array> {
+  const ExcelJS = await import('exceljs');
+  const book = new ExcelJS.default.Workbook();
+  book.creator = 'Protracker';
+  book.created = new Date();
+  writeStatement(book as unknown as Bookish, statement);
+  return new Uint8Array((await book.xlsx.writeBuffer()) as ArrayBuffer);
+}
+
+export function statementFilename(from: string, to: string): string {
+  return `Protracker statement ${from} to ${to}.xlsx`;
+}
+
+export function writeStatement(book: Bookish, statement: StatementView): void {
+  const summary = book.addWorksheet('Statement');
+  summary.addRow([`Statement of work, ${statement.from} to ${statement.to}`]);
+  summary.addRow([`${statement.days} day${statement.days === 1 ? '' : 's'} with recorded work`]);
+  summary.addRow([]);
+  headerRow(summary, ['Project', 'Days worked', 'Completed', 'Journal entries', 'Runs started', 'Batches made']);
+  for (const project of statement.projects) {
+    summary.addRow([project.name, project.days, project.completed, project.notes, project.runs, project.batches]);
+  }
+  summary.columns = [{ width: 44 }, { width: 13 }, { width: 12 }, { width: 16 }, { width: 13 }, { width: 14 }];
+
+  const detail = book.addWorksheet('Detail');
+  headerRow(detail, ['Date', 'Time', 'Project', 'Where', 'Kind', 'What']);
+  for (const project of statement.projects) {
+    for (const entry of project.entries) {
+      detail.addRow([
+        entry.at.slice(0, 10),
+        entry.at.slice(11, 16),
+        project.name,
+        entry.parentPath ?? '',
+        entry.kind,
+        `${entry.text}${entry.period ? ` (${entry.period})` : ''}`,
+      ]);
+    }
+  }
+  detail.columns = [{ width: 12 }, { width: 7 }, { width: 30 }, { width: 44 }, { width: 12 }, { width: 80 }];
+  detail.views = [{ state: 'frozen', ySplit: 1 }];
 }
