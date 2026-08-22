@@ -78,3 +78,23 @@ describe('what is late', () => {
     expect(b.h.app.late().tasks).toHaveLength(0);
   });
 });
+
+describe('waiting on something', () => {
+  it('is one undo step, nudge included', () => {
+    const b = board();
+    b.h.app.wait(b.task, 'sieves from stores', '2026-09-01');
+    expect(b.h.app.state.nodes[b.task]!.waitingOn).toMatchObject({ reason: 'sieves from stores', until: '2026-09-01' });
+    expect(b.h.app.state.reminders.some((r) => r.title.startsWith('sieves from stores'))).toBe(true);
+
+    b.h.app.undo();
+
+    expect(b.h.app.state.nodes[b.task]!.waitingOn).toBeUndefined();
+    expect(b.h.app.state.reminders.some((r) => r.title.startsWith('sieves from stores'))).toBe(false);
+  });
+
+  it('says it is waiting the first time, and updated after', () => {
+    const b = board();
+    expect(b.h.app.wait(b.task, 'sieves').message).toBe('Waiting on sieves.');
+    expect(b.h.app.wait(b.task, 'the courier').message).toBe('Updated external hold.');
+  });
+});

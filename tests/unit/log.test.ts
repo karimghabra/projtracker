@@ -87,3 +87,18 @@ describe('the log', () => {
     expect(JSON.stringify(b.h.app.state)).toBe(before);
   });
 });
+
+describe('what was fabricated', () => {
+  it('is what was made, not what is left after a run has drawn on it', () => {
+    const b = bench();
+    const type = b.h.app.addScaffoldType('Collagen sponge').id;
+    const batch = b.h.app.addBatch(type, 6).id;
+    const protocol = b.h.app.addProtocol('Soak', '', [{ name: 'Soak', offsetHours: 0 }]).id;
+    b.h.app.startRun(protocol, [], undefined, undefined, [{ batchId: batch, quantity: 4 }]);
+    expect(b.h.app.state.batches.find((x) => x.id === batch)!.count).toBe(2);
+
+    const texts = b.h.app.log('2026-08').map((e) => e.text);
+    expect(texts).toContain('Fabricated 6 × Collagen sponge');
+    expect(texts.some((t) => t.startsWith('Fabricated 2 ×'))).toBe(false);
+  });
+});

@@ -139,3 +139,43 @@ describe('pt statement', () => {
     expect(backwards.stderr).toContain('is after');
   });
 });
+
+describe('what the second trial asked for', () => {
+  it('sets a deadline, and late reports it', () => {
+    pt('add', 'project', 'Deadlines');
+    const made = JSON.parse(pt('--json', 'add', 'deadlines', 'Milestone one').stdout) as { id: string };
+    const goal = JSON.parse(pt('--json', 'add', made.id, 'Goal one').stdout) as { id: string };
+    expect(pt('deadline', goal.id, '2020-01-01').status).toBe(0);
+    const late = JSON.parse(pt('--json', 'late').stdout) as { deadlines: { name: string; daysOver: number }[] };
+    expect(late.deadlines.some((d) => d.name === 'Goal one' && d.daysOver > 1000)).toBe(true);
+    expect(pt('deadline', goal.id, 'someday').status).toBe(1);
+    expect(pt('deadline', goal.id, 'none').status).toBe(0);
+  });
+
+  it('puts a task on another day with --on', () => {
+    const goal = JSON.parse(pt('--json', 'tree').stdout) as unknown;
+    void goal;
+    const task = JSON.parse(pt('--json', 'add', 'deadlines.milestone-one.goal-one', 'Carried task').stdout) as { id: string };
+    expect(pt('today', 'add', task.id, '--on', '2020-01-02').status).toBe(0);
+    const late = JSON.parse(pt('--json', 'late').stdout) as { tasks: { name: string; since: string }[] };
+    expect(late.tasks.some((t) => t.name === 'Carried task' && t.since === '2020-01-02')).toBe(true);
+  });
+
+  it('labels a batch, names types in recipes, and shows what a run spent', () => {
+    pt('scaffold', 'type', 'Raw collagen');
+    pt('scaffold', 'type', 'Dialysed collagen');
+    const lot = JSON.parse(pt('--json', 'scaffold', 'add', 'Raw collagen', '3', '--label', 'Lot 12').stdout) as { id: string };
+    const scaffolds = JSON.parse(pt('--json', 'scaffolds').stdout) as { batches: { id: string; label?: string }[] };
+    expect(scaffolds.batches.find((b) => b.id === lot.id)?.label).toBe('Lot 12');
+
+    const protocol = JSON.parse(pt('--json', 'protocol', 'add', 'Dialysis').stdout) as { id: string };
+    pt('protocol', 'step', 'add', protocol.id, 'Swap bath', '--at', '0');
+    expect(pt('protocol', 'recipe', protocol.id, '--takes', 'Raw collagen:1', '--makes', 'Dialysed collagen:1').status).toBe(0);
+    const protocols = JSON.parse(pt('--json', 'protocols').stdout) as { id: string; consumes: { quantity: number }[] }[];
+    expect(protocols.find((p) => p.id === protocol.id)?.consumes).toEqual([{ typeId: 'raw-collagen', quantity: 1 }]);
+
+    const run = JSON.parse(pt('--json', 'run', protocol.id, '--take', `${lot.id}:1`).stdout) as { id: string };
+    const runs = JSON.parse(pt('--json', 'runs').stdout) as { id: string; spent: { batchId: string; quantity: number; label?: string }[] }[];
+    expect(runs.find((r) => r.id === run.id)?.spent).toEqual([{ batchId: lot.id, quantity: 1, name: 'Raw collagen', label: 'Lot 12' }]);
+  });
+});

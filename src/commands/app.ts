@@ -899,11 +899,18 @@ export class App {
   wait(id: NodeId, reason: string, until?: DateOnly): Delta {
     if (!reason.trim()) throw invalid('Say what you are waiting for.');
     if (until && !isDateOnly(until)) throw invalid(`"${until}" is not a date.`);
-    const delta = this.updateNode(id, { waitingOn: { reason: reason.trim(), until } });
-    // An expected arrival is worth a nudge on the day, so it does not sit
-    // waiting forever because nobody looked.
-    if (until) this.addReminder(`${reason.trim()} — expected`, until, { nodeId: id });
-    return delta;
+    const node = this.state.nodes[id];
+    if (!node) throw notFound('node', id);
+    const fresh = !node.waitingOn;
+    // One decision — "this is waiting on X" — is one undo step, nudge included.
+    // It used to be two, and undoing the hold left its reminder behind. The
+    // nudge is an expected arrival on the day, so it does not sit waiting
+    // forever because nobody looked.
+    return this.transaction(`Wait "${node.name}"`, (app) => {
+      app.updateNode(id, { waitingOn: { reason: reason.trim(), until } });
+      if (until) app.addReminder(`${reason.trim()} — expected`, until, { nodeId: id });
+      return { ok: true as const, message: fresh ? `Waiting on ${reason.trim()}.` : 'Updated external hold.' };
+    });
   }
 
   arrived(id: NodeId): Delta {

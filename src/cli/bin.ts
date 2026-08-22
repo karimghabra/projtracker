@@ -20,6 +20,7 @@ import { notFound, toCommandError } from '../commands/errors.ts';
 import { formatDayMonth, systemClock } from '../core/dates.ts';
 import type { Protocol } from '../core/model.ts';
 import { formatOffset } from '../core/protocols.ts';
+import { describeQuantity } from '../core/inventory.ts';
 import { readBackupFile, readWorkbookFile } from '../store/excel.ts';
 import { exportStatement, exportWorkbook } from '../store/excelExport.ts';
 import { APP_VERSION } from '../core/version.ts';
@@ -55,6 +56,8 @@ usage: pt [--vault DIR] [--json] <command> [args]
                               picks only what was completed with no period,
                               which is what a back-fill is correcting.
     plan <ref> <YYYY-MM-DD|none>
+    deadline <ref> <YYYY-MM-DD|none>
+                              the day it has to be finished by
     wait <ref> <reason> [--until DATE]
     arrived <ref>
     rm <ref>
@@ -65,7 +68,8 @@ usage: pt [--vault DIR] [--json] <command> [args]
     blockers <ref>
 
   the planner
-    today add <ref>           pull something into today
+    today add <ref> [--on DATE]
+                              pull something into today, or onto a day
     today new <text>          a standalone task
     today rm <ref>
     remind <text> --on DATE [--span N]
@@ -79,11 +83,13 @@ usage: pt [--vault DIR] [--json] <command> [args]
   the lab
     scaffolds                 inventory summary
     scaffold type <name>      add a scaffold type
-    scaffold add <type> <n>   record a fabricated batch
+    scaffold add <type> <n> [--label TEXT] [--on DATE]
+                              record a fabricated batch; type by id or name
     protocols                 list crosslinking protocols and their steps
     protocol add <name> [--agent NAME] [--notes TEXT]
     protocol recipe <id> [--takes TYPE:AMOUNT] [--makes TYPE:AMOUNT]
-                              what it spends and what it leaves behind.
+                              what it spends and what it leaves behind;
+                              TYPE by id or name.
                               Repeatable; no flags clears the recipe.
     protocol rm <id>
     protocol step add <protocol-id> <name> --at HOURS [--for HOURS]
@@ -147,7 +153,7 @@ function vaultPath(flags: Args['flags']): VaultChoice {
  */
 function warnAboutNewVault(choice: VaultChoice): void {
   if (holdsVault(choice.path)) return;
-  process.stderr.write(`Note: ${choice.path} is not a vault yet, so this one is new and empty.\n`);
+  process.stderr.write(`Note: ${choice.path} is not a vault yet, so this one is new — empty but for the two preset protocols.\n`);
   if (choice.source === 'default') {
     process.stderr.write('      Pass --vault DIR, or set PROTRACKER_VAULT, if you meant another.\n');
   }
@@ -237,11 +243,21 @@ async function run(
     if (json) return out(delta);
     out(`${delta.id.padEnd(8)} ${delta.message}`);
   };
+  // A scaffold type by its id or by the name it was given — the same rule in
+  // every place a type is named, because "collagen sponge" working in one verb
+  // and failing in the next reads as a bug.
+  const typeIdOf = (token: string): string => {
+    const type =
+      app.state.scaffoldTypes.find((t) => t.id === token) ??
+      app.state.scaffoldTypes.find((t) => t.name.toLowerCase() === token.toLowerCase());
+    if (!type) throw notFound('scaffold type', token);
+    return type.id;
+  };
 
   switch (command) {
     // ------------------------------------------------------------- seeing
     case 'today': {
-      if (rest[0] === 'add') return say(app.todayAdd(ref(rest[1]))), 0;
+      if (rest[0] === 'add') return say(app.todayAdd(ref(rest[1]), one(flags['on']))), 0;
       if (rest[0] === 'new') return say(app.todayQuickAdd(rest.slice(1).join(' '))), 0;
       if (rest[0] === 'rm') return say(app.todayRemove(`node:${ref(rest[1])}`)), 0;
 
@@ -370,7 +386,7 @@ async function run(
       out(`  ${view.kind} · ${view.derived}${view.health !== 'not_begun' ? ` · ${view.health}` : ''}`);
       if (view.doneLabel) out(`  completed ${view.doneLabel}`);
       if (view.plannedFor) out(`  planned for ${view.plannedFor}`);
-      if (view.waitingOn) out(`  waiting on: ${view.waitingOn.reason}`);
+      if (view.waitingOn) out(`  waiting on: ${view.waitingOn.reason}${view.waitingOn.until ? ` (until ${view.waitingOn.until})` : ''}`);
       if (view.blockers.length) out(`  after: ${view.blockers.map((b) => b.name).join(', ')}`);
       if (view.progress) out(`  ${view.progress.done}/${view.progress.total} done`);
       if (view.experiment) {
@@ -462,6 +478,15 @@ async function run(
       return say(app.planFor(ref(rest[0]), date)), 0;
     }
 
+    case 'deadline': {
+      const when = rest[1];
+      if (!when) throw new Error('When? pt deadline <ref> YYYY-MM-DD, or none to clear it.');
+      if (when !== 'none' && !/^\d{4}-\d{2}-\d{2}$/.test(when)) {
+        throw new Error(`Cannot read "${when}" as a day. Use YYYY-MM-DD, or none to clear it.`);
+      }
+      return say(app.updateNode(ref(rest[0]), { deadline: when === 'none' ? null : when })), 0;
+    }
+
     case 'wait': {
       const until = one(flags['until']);
       return say(app.wait(ref(rest[0]), rest.slice(1).join(' '), until)), 0;
@@ -542,12 +567,8 @@ async function run(
         // The id is the canonical handle, but the name the user just typed to
         // create the type has to work too — "collagen sponge" failing right
         // after `scaffold type "Collagen sponge"` succeeded reads as a bug.
-        const token = rest[1] ?? '';
-        const type =
-          app.state.scaffoldTypes.find((t) => t.id === token) ??
-          app.state.scaffoldTypes.find((t) => t.name.toLowerCase() === token.toLowerCase());
-        if (!type) throw notFound('scaffold type', token);
-        return made(app.addBatch(type.id, Number(rest[2]))), 0;
+        const typeId = typeIdOf(rest[1] ?? '');
+        return made(app.addBatch(typeId, Number(rest[2]), { label: one(flags['label']), fabricatedOn: one(flags['on']) })), 0;
       }
       throw new Error('Use "scaffold type <name>" or "scaffold add <type> <count>".');
     }
@@ -599,8 +620,8 @@ async function run(
         const protocol = protocolOf(app, rest[1]);
         const parse = (name: string) =>
           list(flags[name]).map((token) => {
-            const [typeId, quantity] = split(token, `Use --${name} TYPE:AMOUNT.`);
-            return { typeId, quantity };
+            const [type, quantity] = split(token, `Use --${name} TYPE:AMOUNT.`);
+            return { typeId: typeIdOf(type), quantity };
           });
         return say(app.setProtocolIO(protocol.id, { consumes: parse('takes'), produces: parse('makes') })), 0;
       }
@@ -671,7 +692,10 @@ async function run(
       const inventory = app.inventory();
       if (json) return out(inventory.runs), 0;
       for (const item of inventory.runs) {
-        out(`${item.id}  ${item.protocolName}  ${item.done}/${item.total}  ${item.batchLabels.join(', ')}`);
+        const spending = item.spent.length
+          ? dim(`  spending ${item.spent.map((s) => `${describeQuantity(s.quantity, s.name, s.unit)}${s.label ? ` (${s.label})` : ''}`).join(', ')}`)
+          : '';
+        out(`${item.id}  ${item.protocolName}  ${item.done}/${item.total}  ${item.batchLabels.join(', ')}${spending}`);
         for (const step of item.steps) {
           out(`  [${step.done ? 'x' : ' '}] ${step.id.padEnd(4)} ${step.at}  ${step.name}${step.overdue ? '  (due)' : ''}`);
         }

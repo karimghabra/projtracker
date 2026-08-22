@@ -48,7 +48,7 @@ import {
 import { runIsLive, scheduleRun } from '../core/protocols.ts';
 import type { Ancestor } from '../core/lineage.ts';
 import { ancestorsOf, descendantsOf } from '../core/lineage.ts';
-import { describeQuantity, summariseLots } from '../core/inventory.ts';
+import { describeQuantity, roundQuantity, summariseLots } from '../core/inventory.ts';
 import type { Reminder } from '../core/model.ts';
 import type { TodayItem } from '../core/planner.ts';
 import { missedFor, todayItems } from '../core/planner.ts';
@@ -1291,6 +1291,8 @@ export interface RunView {
    * wrong one.
    */
   quantityLabel: string;
+  /** What the run took off the shelf when it started — material spent, not acted on. */
+  spent: { batchId: string; quantity: number; name: string; label?: string; unit?: string }[];
   startedAt: string;
   steps: { id: string; name: string; at: string; until?: string; done: boolean; overdue: boolean }[];
   done: number;
@@ -1485,6 +1487,16 @@ export function inventoryView(state: State, today: DateOnly, now: string): Inven
           .filter((b): b is BatchView => Boolean(b))
           .map((b) => ({ quantity: b.count, unit: unitOf.get(b.typeId) })),
       ),
+      spent: (run.consumed ?? []).map((took) => {
+        const batch = batches.find((b) => b.id === took.batchId);
+        return {
+          batchId: took.batchId,
+          quantity: took.quantity,
+          name: batch?.typeName ?? took.batchId,
+          label: batch?.label,
+          unit: batch ? unitOf.get(batch.typeId) : undefined,
+        };
+      }),
       startedAt: run.startedAt,
       steps: scheduled.map((s) => ({
         id: s.step.id,
@@ -1523,6 +1535,8 @@ export function inventoryView(state: State, today: DateOnly, now: string): Inven
       hours: p.steps.reduce((max, s) => Math.max(max, s.offsetHours + (s.durationHours ?? 0)), 0),
       builtin: !!p.builtin,
       notes: p.notes,
+      consumes: p.consumes ?? [],
+      produces: p.produces ?? [],
     })),
     runs: runs.sort((a, b) =>
       a.startedAt !== b.startedAt ? (a.startedAt < b.startedAt ? 1 : -1) : a.id < b.id ? 1 : -1,
@@ -1609,8 +1623,15 @@ export function logView(state: State, month?: string): LogEntry[] {
 
   const typeName = new Map(state.scaffoldTypes.map((t) => [t.id, t.name] as const));
   const unitOf = new Map(state.scaffoldTypes.map((t) => [t.id, t.unit] as const));
+  // A batch's count is what is left; the record says what was made. Runs keep
+  // what they took, so the original is the remainder plus everything spent.
+  const spentFrom = new Map<string, number>();
+  for (const run of state.runs) {
+    for (const took of run.consumed ?? []) spentFrom.set(took.batchId, (spentFrom.get(took.batchId) ?? 0) + took.quantity);
+  }
   for (const batch of state.batches) {
     const name = typeName.get(batch.typeId) ?? batch.typeId;
+    const made = roundQuantity(batch.count + (spentFrom.get(batch.id) ?? 0));
     if (inMonth(batch.fabricatedOn)) {
       // The first history entry is the fabrication itself; its stamp keeps the
       // hour when the record was made the same day, and a back-dated batch
@@ -1619,7 +1640,7 @@ export function logView(state: State, month?: string): LogEntry[] {
       entries.push({
         at: first && first.at.startsWith(batch.fabricatedOn) ? first.at : `${batch.fabricatedOn}T12:00`,
         kind: 'batch',
-        text: `Fabricated ${describeQuantity(batch.count, name, unitOf.get(batch.typeId))}${batch.label ? ` — ${batch.label}` : ''}`,
+        text: `Fabricated ${describeQuantity(made, name, unitOf.get(batch.typeId))}${batch.label ? ` — ${batch.label}` : ''}`,
       });
     }
     for (const step of batch.history.slice(1)) {
