@@ -28,6 +28,7 @@
     "pack": "npm run build && electron-builder --win --publish never",
     "screenshots": "playwright test tests/e2e/screenshots.spec.ts",
     "audit:visual": "playwright test visual-audit",
+    "cli:link": "npm run build:electron && npm link",
     "pack:all": "npm run build && electron-builder --win --linux --publish never",
     "icon": "python scripts/make-icon.py",
     "test:desktop": "playwright test --config playwright.desktop.config.ts",
@@ -59,6 +60,7 @@
     "files": [
       "dist-ui/**/*",
       "dist-electron/**/*",
+      "dist/cli/**/*",
       "package.json",
       "!**/*.map"
     ],

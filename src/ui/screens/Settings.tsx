@@ -80,6 +80,23 @@ export function SettingsDialog({
             <button className="btn" data-testid="reveal-vault" onClick={() => void bridge.revealVault()}>
               Open the folder
             </button>
+            {bridge.installCli && (
+              <button
+                className="btn"
+                data-testid="install-cli"
+                title="Put the pt command on your PATH, so a terminal — or an assistant — can drive this vault"
+                onClick={() => {
+                  void bridge
+                    .installCli!()
+                    .then((result) => store.toast(result.message))
+                    .catch((error: unknown) =>
+                      store.toast(error instanceof Error ? error.message : 'Could not install pt.', 'error'),
+                    );
+                }}
+              >
+                Install the pt command
+              </button>
+            )}
           </div>
         )}
 

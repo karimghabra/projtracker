@@ -28,6 +28,9 @@ import {
   startupVault,
   writeStoredVault,
 } from './vaultLocation.ts';
+import { chmodSync as fsChmod, mkdirSync as fsMkdir, watch as fsWatch, writeFileSync as fsWrite } from 'node:fs';
+import type { FSWatcher } from 'node:fs';
+import { homedir as osHomedir } from 'node:os';
 
 /**
  * The directory this file was loaded from.
@@ -41,6 +44,100 @@ const here = __dirname;
 const isDev = !app.isPackaged;
 
 let vaultRoot = '';
+
+// ----------------------------------------------------- the other hand
+
+/**
+ * Writes this window made, by vault-relative path and when. The watcher below
+ * reports every change on disk, this window's own included; an own write that
+ * triggered a reload would rebuild the board on every keystroke and throw the
+ * undo history away each time. A path written here in the last two seconds is
+ * ours and is ignored; everything else is the other hand — the CLI, a sync, an
+ * editor — and the board is rebuilt from disk so it shows what is true.
+ */
+const selfWrites = new Map<string, number>();
+function noteSelfWrite(relativePath: string): void {
+  selfWrites.set(relativePath.replace(/\\/g, '/'), Date.now());
+}
+
+let watcher: FSWatcher | null = null;
+function watchVault(): void {
+  watcher?.close();
+  watcher = null;
+  let timer: NodeJS.Timeout | null = null;
+  try {
+    watcher = fsWatch(vaultRoot, { recursive: true }, (_event, filename) => {
+      const rel = (filename ? String(filename) : '').replace(/\\/g, '/');
+      // The undo history is a cache the CLI and the app each keep; a change
+      // there is not a change to the record.
+      if (rel.startsWith('.history')) return;
+      const own = selfWrites.get(rel);
+      if (own !== undefined && Date.now() - own < 2000) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        for (const window of BrowserWindow.getAllWindows()) window.webContents.send('pt:vaultChanged');
+      }, 400);
+    });
+  } catch {
+    // A platform without a recursive watcher: the store still refuses a stale
+    // write, which keeps the record honest if not live.
+  }
+}
+
+/** The bundled CLI, wherever this build keeps it. */
+function cliScript(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'app.asar', 'dist', 'cli', 'bin.js')
+    : join(here, '..', 'dist', 'cli', 'bin.js');
+}
+
+/**
+ * Put `pt` on the PATH.
+ *
+ * A shim that runs this very executable as Node (Electron's
+ * ELECTRON_RUN_AS_NODE) against the bundled CLI — the same trick every
+ * Electron editor uses for its command-line tool — written into a folder
+ * that is on the user's PATH by default where one exists (WindowsApps on
+ * Windows, ~/.local/bin elsewhere). PT_CLI_DIR overrides the folder, which is
+ * how the packaged-app test keeps it out of the real one.
+ */
+function installCli(): { path: string; onPath: boolean; message: string } {
+  const exe = process.execPath;
+  const script = cliScript();
+  const override = process.env['PT_CLI_DIR'];
+  const onPath = (dir: string, sep: string) =>
+    (process.env['PATH'] ?? '')
+      .split(sep)
+      .some((p) => resolve(p.trim()).toLowerCase() === resolve(dir).toLowerCase());
+
+  if (process.platform === 'win32') {
+    const dir = override ?? join(process.env['LOCALAPPDATA'] ?? join(osHomedir(), 'AppData', 'Local'), 'Microsoft', 'WindowsApps');
+    fsMkdir(dir, { recursive: true });
+    const file = join(dir, 'pt.cmd');
+    fsWrite(file, `@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\n"${exe}" "${script}" %*\r\n`, 'utf8');
+    const ready = onPath(dir, ';');
+    return {
+      path: file,
+      onPath: ready,
+      message: ready
+        ? `Installed pt at ${file}. Open a new terminal and type pt.`
+        : `Installed pt at ${file}. Add ${dir} to your PATH to run it from anywhere.`,
+    };
+  }
+  const dir = override ?? join(osHomedir(), '.local', 'bin');
+  fsMkdir(dir, { recursive: true });
+  const file = join(dir, 'pt');
+  fsWrite(file, `#!/bin/sh\nELECTRON_RUN_AS_NODE=1 exec "${exe}" "${script}" "$@"\n`, 'utf8');
+  fsChmod(file, 0o755);
+  const ready = onPath(dir, ':');
+  return {
+    path: file,
+    onPath: ready,
+    message: ready
+      ? `Installed pt at ${file}. Open a new terminal and type pt.`
+      : `Installed pt at ${file}. Add ${dir} to your PATH to run it from anywhere.`,
+  };
+}
 
 /**
  * One sentence about where the vault is, when there is something to say: the
@@ -485,6 +582,7 @@ function registerHandlers(): void {
   });
 
   ipcMain.on('pt:write', (event, path: string, text: string) => {
+    noteSelfWrite(path);
     const full = safePath(path);
     mkdirSync(dirname(full), { recursive: true });
     // Written as UTF-8 with LF exactly as the serializer produced it; the
@@ -502,6 +600,7 @@ function registerHandlers(): void {
   });
 
   ipcMain.on('pt:remove', (event, path: string) => {
+    noteSelfWrite(path);
     try {
       rmSync(safePath(path), { force: true });
     } catch {
@@ -509,6 +608,8 @@ function registerHandlers(): void {
     }
     event.returnValue = true;
   });
+
+  ipcMain.handle('pt:installCli', () => installCli());
 
   ipcMain.on('pt:vaultPath', (event) => {
     event.returnValue = vaultRoot;
@@ -545,6 +646,7 @@ function registerHandlers(): void {
     // folder whose path is the one on disk, rather than at one it will forget.
     writeStoredVault(vaultLocationFile(), target);
     vaultRoot = target;
+    watchVault();
 
     vaultNotice =
       verdict.kind === 'copy'
@@ -621,6 +723,7 @@ if (!single) {
     registerHandlers();
     registerSheetsHandlers();
     registerGitHandlers();
+    watchVault();
     createWindow();
 
     app.on('activate', () => {

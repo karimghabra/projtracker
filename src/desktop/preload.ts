@@ -75,6 +75,13 @@ contextBridge.exposeInMainWorld('protracker', {
   chooseVault: (): Promise<{ path: string; refused?: string } | null> =>
     ipcRenderer.invoke('pt:chooseVault'),
   revealVault: (): Promise<boolean> => ipcRenderer.invoke('pt:revealVault'),
+  /** Write the `pt` shim onto the PATH, and say where it went. */
+  installCli: (): Promise<{ path: string; onPath: boolean; message: string }> =>
+    ipcRenderer.invoke('pt:installCli'),
+  /** The vault changed on disk by a hand other than this window's. */
+  onVaultChanged: (listener: () => void): void => {
+    ipcRenderer.on('pt:vaultChanged', () => listener());
+  },
 
   /**
    * The vault on GitHub. Same shape and same reason as `sheets`: it needs a

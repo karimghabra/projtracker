@@ -11,6 +11,13 @@ const choice = chooseVault();
 const store = new UiStore(choice.vault, choice.location);
 initStore(store);
 
+// Another hand wrote the vault — the CLI, a sync, an editor. The board is the
+// files, so it is rebuilt from them; the toast says why the undo stack went.
+window.protracker?.onVaultChanged?.(() => {
+  store.reload();
+  store.toast('The vault changed outside the app — reloaded from disk.');
+});
+
 /**
  * A handle on the running app, for tests and for debugging a real vault from
  * the console. It grants nothing the page does not already have — the command

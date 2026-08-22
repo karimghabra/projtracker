@@ -89,6 +89,10 @@ export interface DesktopBridge {
   /** Null when cancelled; `refused` when the folder could not be used. */
   chooseVault(): Promise<{ path: string; refused?: string } | null>;
   revealVault(): Promise<boolean>;
+  /** Absent in builds before the CLI shipped with the app. */
+  installCli?(): Promise<{ path: string; onPath: boolean; message: string }>;
+  /** Absent in builds before the app watched its vault. */
+  onVaultChanged?(listener: () => void): void;
   /** Absent in the browser build, which has no key and no socket. */
   sheets?: SheetsBridge;
   git?: GitBridge;

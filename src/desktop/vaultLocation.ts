@@ -15,6 +15,7 @@
 
 import type { Dirent } from 'node:fs';
 import { copyFileSync, existsSync, readFileSync, readdirSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 /**
@@ -202,4 +203,42 @@ export function ensureVault(path: string): string {
   const full = resolve(path);
   if (!existsSync(full)) mkdirSync(full, { recursive: true });
   return full;
+}
+
+// ------------------------------------------------------------- the app's vault
+
+/**
+ * Where the desktop app keeps its vault on this machine, if it has one.
+ *
+ * The CLI used to default to `~/.protracker/vault` while the app kept its
+ * vault under Electron's user-data folder, so an assistant driving `pt` wrote
+ * into a second, empty vault and the board never changed. The app's folder is
+ * the one that matters: the folder it was pointed at in Settings (written
+ * beside the app in `vault-location.json`), else its default. Only a folder
+ * that actually holds a vault counts, so a fresh machine still falls through
+ * to the CLI's own default rather than inventing one in the app's name.
+ */
+export function desktopVault(
+  platform: NodeJS.Platform = process.platform,
+  home: string = homedir(),
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  const roots =
+    platform === 'win32'
+      ? [env['APPDATA'] ?? join(home, 'AppData', 'Roaming')]
+      : platform === 'darwin'
+        ? [join(home, 'Library', 'Application Support')]
+        : [env['XDG_CONFIG_HOME'] ?? join(home, '.config')];
+  for (const root of roots) {
+    // Electron names the folder after the app; the installer's product name
+    // differs only in case, which matters on two of the three platforms.
+    for (const name of ['protracker', 'Protracker']) {
+      const userData = join(root, name);
+      const stored = readStoredVault(join(userData, 'vault-location.json'));
+      for (const candidate of [stored, join(userData, 'vault')]) {
+        if (candidate && holdsVault(candidate)) return candidate;
+      }
+    }
+  }
+  return null;
 }
