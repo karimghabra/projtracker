@@ -505,13 +505,13 @@ async function run(
       if (!on) throw new Error('When? Pass --on YYYY-MM-DD.');
       const spanFlag = one(flags['span']);
       const span = spanFlag !== undefined ? Number(spanFlag) : undefined;
-      return say(app.addReminder(rest.join(' '), on, { spanDays: span })), 0;
+      return made(app.addReminder(rest.join(' '), on, { spanDays: span })), 0;
     }
 
     case 'note': {
       const nodeFlag = one(flags['node']);
       const node = nodeFlag !== undefined ? ref(nodeFlag) : undefined;
-      return say(app.capture(rest.join(' '), node)), 0;
+      return made(app.capture(rest.join(' '), node)), 0;
     }
 
     case 'journal': {

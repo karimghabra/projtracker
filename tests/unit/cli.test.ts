@@ -109,6 +109,17 @@ describe('pt late', () => {
   });
 });
 
+describe('everything that mints an id says it', () => {
+  it('remind and note print their ids, the way add does', () => {
+    const remind = pt('remind', 'Defrost the freezer', '--on', '2030-01-01');
+    expect(remind.status).toBe(0);
+    expect(remind.stdout).toMatch(/^r\w+\s+Reminder/);
+    const note = pt('note', 'Humidity was low.');
+    expect(note.status).toBe(0);
+    expect(note.stdout).toMatch(/^j\w+\s+Noted/);
+  });
+});
+
 describe('pt tree', () => {
   it('prints every node\'s ref beside its name, so the next command can use it', () => {
     pt('add', 'project', 'Refs on the tree');

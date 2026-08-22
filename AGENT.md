@@ -30,9 +30,11 @@ Every invocation is `pt [--vault DIR] [--json] <command> [args]`.
   the one the CLI is using). Point both at the same directory and they share
   the record.
 - **`--new`** — start a vault at a path that has none. It takes effect
-  *alongside a command*: `pt --vault DIR --new add project "X"`. Alone, it is
-  refused with a hint. A mistyped `--vault` path without `--new` is refused
-  too, rather than silently creating an empty vault.
+  *alongside a command*, any command: `pt --vault DIR --new add project "X"`
+  or `pt --vault DIR --new scaffold type "Collagen sponge"`. Alone, it is
+  refused with a hint. The vault directory is created for you (its parent
+  must exist). A mistyped `--vault` path without `--new` is refused too,
+  rather than silently creating an empty vault.
 - **`--json`** — structured output on stdout, for every read and for every
   write's confirmation. Errors under `--json` are `{ "ok": false, "code":
   "...", "message": "..." }` with exit code 1. Prefer `--json` for anything
@@ -52,8 +54,12 @@ Project › Milestone › Goal › Task | Experiment
   a **slug** (the last segment of its ref). A `<ref>` argument accepts any of:
   the id, the full dotted path, the exact name, or the exact slug — refused
   by name when a name or slug matches two nodes. `pt tree` prints every ref;
-  every `add` prints the id it minted. **Keep the id from the `add` output**;
-  it is the cheapest, most stable handle.
+  **everything that mints an id prints it** — `add` (`n4dmh`), `scaffold
+  type` (`collagen-sponge`), `scaffold add` (`b2dmh`), `protocol add`
+  (`dialysis`), `run` (`x3dmh`), `remind` (`r5dmh`), `note` (`j6dmh`). Keep
+  the id from the output; it is the cheapest, most stable handle. `pt tree
+  <ref>` is rooted *inside* the node you name: it lists that node's children
+  downward, not the node itself.
 - Children of a goal are **sequential by default**: `--seq 1`, `--seq 2` set
   the order; equal numbers run in parallel. A task is *blocked* until earlier
   siblings are done, *ready* when not, *waiting* under an external hold,
@@ -72,9 +78,12 @@ Project › Milestone › Goal › Task | Experiment
   addressed by **id or name** in every verb (`collagen-sponge` or `"Collagen
   sponge"`). Batches are addressed by id (`b2dmh`), which `scaffold add` and
   `scaffolds` print.
-- **Protocols** are timed step templates. A *recipe* says what a run **takes
-  off the shelf** (spent when the run starts) and **puts back** (minted as a
-  new batch when the last step is ticked). A *run* either acts on batches
+- **Protocols** are timed step templates; their steps get ids `s1`, `s2`, …
+  in the order added (read them back from `--json protocols` or the `steps[]`
+  of `--json runs`). A *recipe* says what a run **takes off the shelf** (spent
+  when the run starts) and **puts back** (minted as a new batch when the last
+  step is ticked). **Every type a recipe names must already exist** — create
+  the output type with `scaffold type` before setting the recipe. A *run* either acts on batches
   (named positionally, handed back crosslinked), spends material (`--take
   BATCH:AMOUNT`), belongs to a task (`--task REF`), or is of a protocol that
   produces something — a run of nothing is refused. **Lineage** links a
@@ -133,7 +142,8 @@ pt scaffold add "Collagen sponge" 8 --label "Batch 7" --on 2026-08-21   → b2dm
 pt scaffolds
 pt protocols                                              (edc-nhs and genipin ship with every vault)
 pt protocol add "Dialysis" --agent "acetic acid"          → dialysis    (warns if the name already exists)
-pt protocol step add dialysis "Swap bath" --at 0 [--for 2]
+pt protocol step add dialysis "Swap bath" --at 0 [--for 2]   → step s1
+pt scaffold type "Dialysed collagen"                      (a recipe's types must exist first)
 pt protocol recipe dialysis --takes "Raw collagen:1" --makes "Dialysed collagen:1"
 pt run edc-nhs --at 2026-08-21T09:00 --take b2dmh:4       → x3dmh  "Started …, spending 4 × Collagen sponge. 8 steps are now in your to-do list."
 pt run edc-nhs b2dmh                                      (act on the batch: it comes back crosslinked)
@@ -142,6 +152,8 @@ pt runs                                                   live runs, their steps
 pt step x3dmh s1 [--undo]                                 tick or untick a step; the last tick mints the recipe's outputs
 pt lineage <batch-id>                                     what it was made from, and what it became
 ```
+To find what a run produced, read `--json scaffolds`: the produced batch
+carries `madeBy: "<run id>"`. `lineage` on it then names what the run spent.
 
 **Hand the record over**
 ```
@@ -170,7 +182,9 @@ The shapes you will reason over most:
   `parentPath`.
 - `today`: `items[]` with `kind` (task | reminder), `title`, `source`
   (`planned`, `rolled-over`, …), `rolledFrom`, `ageDays`, `done`, and `node`.
-- `late`: `{ reminders[], tasks[], deadlines[] }`, each with `daysOver`.
+- `late`: `{ today, reminders[{ id, title, since, daysOver }], tasks[{ id,
+  name, parentPath, since, daysOver }], deadlines[{ id, name, parentPath,
+  due, daysOver }] }` — say "as of `today`" when you brief.
 - `log`: entries `{ at, kind: note|done|batch|batch-state|run|run-step, text,
   nodeId?, nodeName?, parentPath?, noteId?, period? }`, in time order.
 - `statement`: `{ from, to, days, projects[{ name, days, completed, notes,
@@ -190,8 +204,9 @@ The shapes you will reason over most:
   and ask again, from the produced batch's id.
 - **`show <batch-id>` says "No node"** — `show` is for nodes. Read a batch from
   `--json scaffolds`; read its history from `pt log`.
-- **A run's `batchIds` is empty** though it spent material: acting-on and
-  spending are different. Spent material is under `spent`.
+- **A run's `batchIds` is empty** (and `quantityLabel` reads "nothing
+  selected") though it spent material: acting-on and spending are different.
+  Spent material is under `spent`.
 - **`--json protocols`** (from `scaffolds`/`protocols`) carries `consumes` /
   `produces`; a recipe set with `protocol recipe` is visible there.
 - **An unknown flag is ignored, not refused.** If a write did not do what you
@@ -205,6 +220,10 @@ The shapes you will reason over most:
 - **Nothing dated disappears.** A planned task or reminder left undone rolls
   forward every day and says how late it is (`carried 3d`); `late` lists
   exactly those. Finishing or moving it is the way to make it stop.
+- **The manifest stamps the moment of recording.** A batch written down at
+  19:05 as "fabricated this morning" logs at 19:05 unless you pass `--on` a
+  date; a back-filled completion logs under the period you gave `--in`. Say
+  when things happened and the record will too.
 
 ## 6. How to behave as the assistant
 
