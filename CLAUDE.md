@@ -1,5 +1,7 @@
 Read `SPEC.md` first — it records the decisions everything else follows from,
 and most questions about "why is it like this" are answered there.
+`AGENT.md` is the guide for an agent *operating* the tool through the CLI;
+`BACKLOG.md` is where wants wait until they are built.
 
 Invariants, in the order they matter:
 
