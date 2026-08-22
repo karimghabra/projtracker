@@ -49,6 +49,8 @@ export interface Toast {
   id: number;
   text: string;
   tone: 'info' | 'error';
+  /** Set when the change this reports can be taken back from the toast itself. */
+  undoable?: boolean;
 }
 
 export class UiStore {
@@ -107,10 +109,19 @@ export class UiStore {
    * Run a command. Returns its result, or undefined if it failed — a component
    * can branch on that without knowing anything about error types.
    */
-  run<T>(fn: (app: App) => T, options: { silent?: boolean } = {}): T | undefined {
+  run<T>(fn: (app: App) => T, options: { silent?: boolean; undoable?: boolean } = {}): T | undefined {
     try {
+      // Undo is offered on the toast only when the command actually wrote a
+      // step — "No change." must not offer to take back the change before it.
+      const depth = this.app.history().past.length;
+      // Undo and redo move the stack under every toast still showing a button,
+      // so those buttons stop being truthful and go.
+      if (options.undoable === false) this.toasts = this.toasts.map((t) => ({ ...t, undoable: undefined }));
       const result = fn(this.app);
-      if (!options.silent && isDelta(result)) this.toast(result.message);
+      if (!options.silent && isDelta(result)) {
+        const wrote = this.app.history().past.length > depth;
+        this.toast(result.message, 'info', (options.undoable ?? true) && wrote);
+      }
       this.emit();
       return result;
     } catch (error) {
@@ -120,9 +131,13 @@ export class UiStore {
     }
   }
 
-  toast(text: string, tone: Toast['tone'] = 'info'): void {
+  toast(text: string, tone: Toast['tone'] = 'info', undoable = false): void {
     const id = ++this.toastSeq;
-    this.toasts = [...this.toasts, { id, text, tone }];
+    // Only the latest change can be taken back from its toast — undo pops the
+    // top of the stack, whichever toast was pressed — so an older toast loses
+    // its button the moment a newer undoable one arrives.
+    const others = undoable ? this.toasts.map((t) => ({ ...t, undoable: undefined })) : this.toasts;
+    this.toasts = [...others, { id, text, tone, undoable: undoable || undefined }];
     this.emit();
     setTimeout(() => this.dismiss(id), tone === 'error' ? 6500 : 3200);
   }

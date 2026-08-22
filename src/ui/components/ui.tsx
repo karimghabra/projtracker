@@ -134,6 +134,18 @@ export function Toasts() {
       {store.toasts.map((toast) => (
         <div key={toast.id} className={toast.tone === 'error' ? 'toast error' : 'toast'} role="status">
           <span className="grow">{toast.text}</span>
+          {toast.undoable && (
+            <button
+              className="btn sm"
+              data-testid="toast-undo"
+              onClick={() => {
+                store.dismiss(toast.id);
+                store.run((a) => a.undo(), { undoable: false });
+              }}
+            >
+              Undo
+            </button>
+          )}
           <button
             className="btn ghost icon sm"
             onClick={() => store.dismiss(toast.id)}

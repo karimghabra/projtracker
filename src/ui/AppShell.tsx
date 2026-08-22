@@ -114,14 +114,14 @@ export function AppShell() {
       */
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
         event.preventDefault();
-        if (event.shiftKey) run((a) => a.redo());
-        else run((a) => a.undo());
+        if (event.shiftKey) run((a) => a.redo(), { undoable: false });
+        else run((a) => a.undo(), { undoable: false });
         return;
       }
       // Ctrl+Y is redo on Windows, and costs nothing to honour.
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y') {
         event.preventDefault();
-        run((a) => a.redo());
+        run((a) => a.redo(), { undoable: false });
         return;
       }
       /*
@@ -233,7 +233,7 @@ export function AppShell() {
             className="btn ghost icon"
             disabled={!history.canUndo}
             onMouseDown={(event) => event.preventDefault()}
-            onClick={() => run((a) => a.undo())}
+            onClick={() => run((a) => a.undo(), { undoable: false })}
             title={history.canUndo ? `Undo: ${history.past[0]}` : 'Nothing to undo'}
             aria-label="Undo"
             data-testid="undo"
@@ -244,7 +244,7 @@ export function AppShell() {
             className="btn ghost icon"
             disabled={!history.canRedo}
             onMouseDown={(event) => event.preventDefault()}
-            onClick={() => run((a) => a.redo())}
+            onClick={() => run((a) => a.redo(), { undoable: false })}
             title={history.canRedo ? `Redo: ${history.future[0]}` : 'Nothing to redo'}
             aria-label="Redo"
             data-testid="redo"
